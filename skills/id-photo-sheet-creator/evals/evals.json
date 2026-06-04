@@ -1,0 +1,50 @@
+{
+  "skill_name": "id-photo-sheet-creator",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "generate an image of 89mmx127mm (R5), it contains 2 row, each row has 3 same photos of provided image. it contains 2mm gaps for cutting",
+      "expected_output": "A print-ready JPEG (e.g. sheet.jpg) at 89x127mm portrait, 2x3 grid, 2mm margin, 2mm gap, 350dpi, full RGB color (not grayscale), with the original photo aspect preserved (contain-fit).",
+      "files": ["evals/files/portrait-sample.jpg"],
+      "expectations": [
+        "Output is a JPEG file with the .jpg extension",
+        "Image mode is RGB (not Grayscale or L)",
+        "Image DPI metadata is set to 350x350",
+        "Pixel dimensions are 1226x1750 (89x127mm at 350dpi)",
+        "A pixel sampled at a face location is colored (e.g. R, G, B differ), not a uniform gray value",
+        "Layout is 2 rows x 3 columns of the same photo",
+        "A pixel sampled in the gap between cells is white (255,255,255)",
+        "The skill used scripts/build_sheet.py with Pillow (not ImageMagick)"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "make me a 4x6 print sheet with 4 copies of my passport photo, 3mm white border, 5mm gaps for scissors. I want 300 DPI, JPEG output.",
+      "expected_output": "A JPEG at 102x152mm (4x6 inch) containing 2x2 grid of the photo, 3mm margin, 5mm gaps, 300dpi, RGB color preserved.",
+      "files": ["evals/files/portrait-sample.jpg"],
+      "expectations": [
+        "Sheet dimensions are 102x152mm (1200x1800px at 300dpi)",
+        "Layout is 2 rows x 2 columns",
+        "Outer margin is 3mm",
+        "Gap between cells is 5mm",
+        "DPI metadata is 300x300",
+        "Image mode is RGB"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "用我提供的照片做一版 R5 89x127mm 的证件照排版，2 行 3 列，2mm 切割间隙，350dpi 输出 JPEG。注意保留原图比例不要裁脸。",
+      "expected_output": "A Chinese-language request that the skill understands: produces a print-ready 89x127mm portrait sheet with 2x3 grid, 2mm gaps, 350dpi, contain fit (face not cropped), RGB color.",
+      "files": ["evals/files/portrait-sample.jpg"],
+      "expectations": [
+        "Skill triggered on a Chinese-language prompt mentioning 证件照 / 排版",
+        "Output sheet is 89x127mm portrait",
+        "Layout is 2 rows x 3 columns",
+        "Gap is 2mm",
+        "DPI is 350",
+        "Fit mode is contain (face is letterboxed, not cropped)",
+        "Output is RGB color"
+      ]
+    }
+  ]
+}
