@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Thin wrapper around scripts/restore.py so callers don't need to know the path.
+# Discovers the script's own location, then execs Python with all args.
+#
+# Usage:
+#   restore-zcode-session resolve latest
+#   restore-zcode-session dump sess_abc… --max-messages 30
+#   restore-zcode-session files sess_abc…
+#   restore-zcode-session self-test
+#
+# This file lives at the skill root so the skill stays self-contained: copy
+# the whole directory anywhere and the wrapper still works.
+
+set -euo pipefail
+
+# Resolve the directory of this wrapper (the skill root), then locate the
+# script relative to it. Handles symlinks via readlink -f.
+_self="${BASH_SOURCE[0]}"
+if command -v readlink >/dev/null 2>&1; then
+  _self="$(readlink -f "$_self" 2>/dev/null || echo "$_self")"
+fi
+_skill_dir="$(cd "$(dirname "$_self")" && pwd)"
+_script="${_skill_dir}/scripts/restore.py"
+
+if [[ ! -f "$_script" ]]; then
+  echo "restore-zcode-session: cannot find scripts/restore.py at $_script" >&2
+  echo "  Is the skill installed correctly? Re-install or check the path." >&2
+  exit 127
+fi
+
+exec python3 "$_script" "$@"

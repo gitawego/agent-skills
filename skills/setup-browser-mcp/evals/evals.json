@@ -1,0 +1,33 @@
+{
+  "skill_name": "setup-browser-mcp",
+  "evals": [
+    {
+      "id": 1,
+      "eval_name": "fresh-install-no-sudo-linux",
+      "prompt": "I just set up a fresh CachyOS container with no Chrome and no MCPs. Install Chromium to my home dir and set up both chrome-devtools-mcp and playwright-mcp. Verify they connect.",
+      "expected_output": "Skill runs scripts/install_playwright.sh, captures the resolved chrome path, writes .mcp.json with both servers, runs claude mcp get on each, reports connection status. Final report tells user the chrome path, config location, and that both servers are Connected.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "eval_name": "failed-connect-diagnose",
+      "prompt": "My chrome-devtools MCP keeps saying Failed to connect when I run claude mcp get. Help me fix it.",
+      "expected_output": "Skill reads the existing config, identifies the bug (most commonly --autoConnect without a running Chrome, or a stale executable-path after a Playwright rebuild), edits the args, re-verifies. Reports what was wrong and the fix applied.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "eval_name": "idempotent-rerun",
+      "prompt": "I already have chrome-devtools-mcp and playwright-mcp configured and working. Re-run the setup just to confirm everything is still good.",
+      "expected_output": "Skill detects existing install and config, does not re-run install_playwright.sh (or re-runs and the script early-exits reporting the existing chrome path), does not rewrite .mcp.json unnecessarily, runs claude mcp get on both, reports both Connected and the chrome path. Total work should be minimal.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "eval_name": "user-scope-config",
+      "prompt": "I want chrome-devtools-mcp available in all my projects, not just one. Configure it at user scope (~/.claude.json).",
+      "expected_output": "Skill uses claude mcp add --scope user (or writes ~/.claude.json directly), configures only chrome-devtools (per the user's request), verifies, reports scope: User config and Connected. Note that user-scope entries are auto-approved, unlike project-scope.",
+      "files": []
+    }
+  ]
+}
