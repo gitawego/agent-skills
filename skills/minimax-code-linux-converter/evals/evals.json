@@ -1,0 +1,29 @@
+{
+  "skill_name": "minimax-code-linux-converter",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "I have /home/me/Downloads/MiniMax Code-3.0.46.dmg. Convert it to a Linux portable folder here, don't install anything.",
+      "expected_output": "Uses the bundled conversion script with --dmg, builds in the current working directory, reports the output folder and run command, and does not ask to install because the user explicitly said not to install.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "prompt": "Download MiniMax Code 3.0.46 from the minimax release CDN and build the linux version in ./builds/minimax-code. If it works, ask me whether I want it installed.",
+      "expected_output": "Uses the bundled conversion script with --version 3.0.46 and --out ./builds/minimax-code without --install; after success, asks whether to install/register the build for launcher and SSO callbacks.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "The converted MiniMax Code says 服务启动失败. Rebuild it from the DMG using the skill and make sure the daemon resources and sqlite native module are handled.",
+      "expected_output": "Runs or recommends the bundled converter, noting that it copies bundled daemon resources and rebuilds better-sqlite3 for Electron ABI, then asks whether to install/register after a successful portable build.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Convert /home/me/Downloads/MiniMax Code-3.0.46.dmg to Linux and install it so SSO redirects work from my browser. Replace the old install if needed.",
+      "expected_output": "Uses the bundled conversion script with --dmg and --install; because the user explicitly allowed replacement, includes --replace-install if the install path already exists or if doing a one-shot replace install.",
+      "files": []
+    }
+  ]
+}
