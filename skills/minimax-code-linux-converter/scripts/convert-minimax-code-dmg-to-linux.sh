@@ -205,10 +205,69 @@ fi
 log "Removing macOS metadata sidecar files"
 find "$OUT/resources" -name '*:com.apple.*' -type f -delete || true
 
+
+log "Patching Linux tray menu behavior"
+TRAY_JS="$OUT/resources/app/dist/main/modules/tray/index.js"
+if [ -f "$TRAY_JS" ]; then
+  python - "$TRAY_JS" <<'PYTRAY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+old = """function applyTrayBehavior(t) {
+    t.removeAllListeners('click');
+    t.removeAllListeners('right-click');
+    t.removeAllListeners('double-click');
+    // Don't use setContextMenu — it intercepts left-click on macOS
+    t.setContextMenu(null);
+    t.on('click', () => {
+        (0, window_1.bringToFront)();
+    });
+    t.on('right-click', () => {
+        t.popUpContextMenu(createContextMenu());
+    });
+}
+"""
+new = """function applyTrayBehavior(t) {
+    t.removeAllListeners('click');
+    t.removeAllListeners('right-click');
+    t.removeAllListeners('double-click');
+    if (process.platform === 'linux') {
+        // GNOME/AppIndicator often does not deliver Electron's right-click event.
+        // Attaching the context menu is the portable Linux path and exposes Quit.
+        t.setContextMenu(createContextMenu());
+        t.on('click', () => {
+            (0, window_1.bringToFront)();
+        });
+        return;
+    }
+    // Don't use setContextMenu — it intercepts left-click on macOS
+    t.setContextMenu(null);
+    t.on('click', () => {
+        (0, window_1.bringToFront)();
+    });
+    t.on('right-click', () => {
+        t.popUpContextMenu(createContextMenu());
+    });
+}
+"""
+if new in s:
+    print('Linux tray patch already present')
+elif old in s:
+    p.write_text(s.replace(old, new))
+    print('Linux tray patch applied')
+else:
+    print('WARNING: tray behavior block not found; leaving unchanged')
+PYTRAY
+else
+  warn "Tray module not found; skipping Linux tray menu patch"
+fi
+
 cat > "$OUT/run-minimax-code" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+HERE="$(cd "$(dirname "$SELF")" && pwd)"
 exec "$HERE/minimax-code" --no-sandbox "$@"
 SH
 chmod +x "$OUT/run-minimax-code"
