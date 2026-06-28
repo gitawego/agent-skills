@@ -1,0 +1,55 @@
+{
+  "skill_name": "image-sprites-creator",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I just dropped a sprite sheet at /tmp/eval-inputs/sample-spritesheet.png — a 3x2 grid on a checkered background. Build me a Phaser 3 atlas with one animation per cell (idle, walk, run, jump, attack, hurt). Save the atlas to /tmp/eval-outputs/eval-1/.",
+      "expected_output": "A 6-frame Phaser 3 atlas with 6 animations at /tmp/eval-outputs/eval-1/ — atlas.png (transparent sprites), atlas.json (with 6 frame entries and 6 animation entries), and clean 256x256 PNGs in a tmp/ subfolder.",
+      "files": ["assets/sample-spritesheet.png"],
+      "expectations": [
+        "atlas.png is created and is a valid PNG image",
+        "atlas.json contains exactly 6 entries in the `frames` object",
+        "atlas.json contains exactly 6 entries in the `animations` array",
+        "Each animation references frames that exist in the frames object",
+        "The output frames have transparent backgrounds (the checkered bg is removed)"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "I have a sprite sheet at /tmp/eval-inputs/irregular-spritesheet.png — 4 hero poses in row 1 (at x=0,200,400,600, each 200x256) plus a 'MENU' label cell at x=800. The bg is solid green (#00ff00). I want a 4-frame 'hero' animation, not the menu cell. Process the file and write the atlas to /tmp/eval-outputs/eval-2/. Use the cell rectangles, not auto-grid (the cells are uniform here but I want to make sure it works).",
+      "expected_output": "A 4-frame Phaser 3 atlas at /tmp/eval-outputs/eval-2/ — 4 transparent hero frames in the atlas (not 5; the MENU label is skipped), with 1 'hero' animation containing all 4 frames. No green background remains.",
+      "files": ["assets/irregular-spritesheet.png"],
+      "expectations": [
+        "atlas.png is created and is a valid PNG",
+        "atlas.json contains exactly 4 frame entries (NOT 5 — the MENU cell was skipped)",
+        "atlas.json contains exactly 1 'hero' animation referencing all 4 frames",
+        "The output frames have transparent backgrounds (green was removed via chroma key)"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "I have a single 256x256 hero PNG at /tmp/eval-inputs/green-spritesheet.png with a solid #00ff00 green background. I just need one transparent 256x256 PNG, no atlas, no animations. The hero should be the only output, with the green removed. Save the clean version to /tmp/eval-outputs/eval-3/hero.png.",
+      "expected_output": "A single clean transparent 256x256 PNG of the hero at /tmp/eval-outputs/eval-3/hero.png — no green background, hero is centered and fills most of the frame.",
+      "files": ["assets/green-spritesheet.png"],
+      "expectations": [
+        "Output file exists at /tmp/eval-outputs/eval-3/hero.png",
+        "Output is exactly 256x256 px",
+        "Output has an alpha channel (RGBA mode)",
+        "Output has transparent background where the green used to be",
+        "The hero character is still visible in the output"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "I'm making a retro pixel-art game and I have a sprite sheet at /tmp/eval-inputs/sample-spritesheet.png (the bundled one — 3 cols x 2 rows, 6 cells). I want to use grid mode to extract the 6 cells, and then re-pack the atlas at 128x128 frame size (smaller, more retro) instead of the default 256x256. Save everything to /tmp/eval-outputs/eval-4/.",
+      "expected_output": "A 6-frame atlas at 128x128 per frame. With --cols 3 and 6 cells, the atlas is 2 rows × 3 columns of 128x128 = 384x256. All 6 frames are transparent, packed correctly.",
+      "files": ["assets/sample-spritesheet.png"],
+      "expectations": [
+        "atlas.png is created",
+        "atlas dimensions are 384x256 (3 cols x 2 rows of 128x128 cells)",
+        "Each frame in atlas.json has dimensions 128x128",
+        "All 6 frames are present in atlas.json"
+      ]
+    }
+  ]
+}
