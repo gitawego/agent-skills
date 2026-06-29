@@ -110,7 +110,7 @@ def square_center(img: Image.Image) -> Image.Image:
     return canvas
 
 
-def process_one(src: Path, dst: Path, method: str, key_hex: str | None, top_anchor: bool) -> None:
+def process_one(src: Path, dst: Path, method: str, key_hex: str | None, top_anchor: bool, pad: int, frame_size: int) -> None:
     raw = Image.open(src)
     arr = np.array(raw)
 
@@ -137,7 +137,11 @@ def process_one(src: Path, dst: Path, method: str, key_hex: str | None, top_anch
     else:
         squared = square_bottom_anchor(cleaned)
 
-    final = squared.resize((256, 256), Image.Resampling.LANCZOS)
+    final = squared.resize((frame_size, frame_size), Image.Resampling.LANCZOS)
+    if pad > 0:
+        padded = Image.new("RGBA", (frame_size + 2 * pad, frame_size + 2 * pad), (0, 0, 0, 0))
+        padded.paste(final, (pad, pad), final)
+        final = padded.resize((frame_size, frame_size), Image.Resampling.LANCZOS)
     final.save(dst, "PNG", optimize=True)
 
 
@@ -150,10 +154,19 @@ def main() -> int:
     p.add_argument("--top-anchor", action="store_true", help="Center-crop instead of bottom-anchored")
     p.add_argument("--first-key", default=None,
                    help="Method to use for the very first frame (overrides auto-detection result)")
+    p.add_argument("--pad", type=int, default=0,
+                   help="Extra transparent padding (px) around each cleaned frame")
+    p.add_argument("--frame-size", type=int, default=256,
+                   help="Output frame size in pixels (default 256)")
+    p.add_argument("--per-frame", action="store_true",
+                   help="Auto-detect method per-frame (default: one decision for all frames)")
     args = p.parse_args()
 
     in_dir = Path(args.input)
     out_dir = Path(args.output)
+    if not in_dir.is_dir():
+        print(f"✗ Input directory does not exist: {in_dir}", file=sys.stderr)
+        return 1
     out_dir.mkdir(parents=True, exist_ok=True)
 
     sources = sorted(in_dir.glob("*.png"))
@@ -164,7 +177,10 @@ def main() -> int:
     method = args.method
     key = args.chroma
 
-    if method == "auto":
+    # If the user explicitly passed --chroma, force chroma-key regardless of --method.
+    if key is not None:
+        method = "chroma"
+    elif method == "auto":
         # Inspect the first frame to pick a method
         first = np.array(Image.open(sources[0]))
         detected = detect_chroma_color(first)
@@ -184,7 +200,7 @@ def main() -> int:
     for i, src in enumerate(sources, 1):
         dst = out_dir / src.name
         try:
-            process_one(src, dst, method, key, args.top_anchor)
+            process_one(src, dst, method, key, args.top_anchor, args.pad, args.frame_size)
             if i == 1 or i % 8 == 0 or i == len(sources):
                 print(f"  [{i}/{len(sources)}] {src.name} OK ({method})")
         except Exception as e:

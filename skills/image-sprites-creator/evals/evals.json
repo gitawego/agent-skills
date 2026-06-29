@@ -50,6 +50,53 @@
         "Each frame in atlas.json has dimensions 128x128",
         "All 6 frames are present in atlas.json"
       ]
+    },
+    {
+      "id": 5,
+      "prompt": "I have a sprite sheet at /tmp/eval-inputs/sample-spritesheet.png (768x512, 3x2 grid). I want to use grid mode with --cols 7 --rows 3 — but I'm not sure if that will work. Build the atlas at /tmp/eval-outputs/eval-5/. (Note: 7 doesn't divide 768 cleanly — this should fail with a clear error message that tells me what the closest valid grid would be.)",
+      "expected_output": "The command should fail with a clear, short error message like \"✗ --cols 7 doesn't divide width 768 cleanly (leftover Xpx). Nearest valid: --cols 8 --rows 3.\" — NOT a stack trace, NOT silent success with bogus frames.",
+      "files": ["assets/sample-spritesheet.png"],
+      "expectations": [
+        "Process exits with non-zero status",
+        "Error message does NOT contain 'node_modules' or stack-trace paths",
+        "Error message mentions '--cols' or 'grid' and the leftover pixel count",
+        "Error message suggests a valid (cols, rows) alternative"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "I have a sprite sheet at /tmp/eval-inputs/green-spritesheet.png (256x256) and I want to extract a single cell at (x=300, y=0, w=100, h=100) using mapped mode. Save the extracted cell to /tmp/eval-outputs/eval-6/. (Note: x=300 is outside the 256-wide image — this should fail with a clear bounds error, NOT a sharp stack trace.)",
+      "expected_output": "Process should exit with non-zero status and print a clear error like \"✗ cell extends past image right edge: x+w=400 > width=256\". No sharp stack trace should leak to the user.",
+      "files": ["assets/green-spritesheet.png"],
+      "expectations": [
+        "Process exits with non-zero status",
+        "Error message does NOT contain 'sharp' or 'node_modules'",
+        "Error message mentions the cell's key and the bound violation",
+        "Error message is a single line, not multi-line stack trace"
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "I have a sprite sheet at /tmp/eval-inputs/sample-spritesheet.png (768x512) and I want to extract 32 cells in a specific non-grid layout. The map is too big for --map inline, so I'd like to put it in a JSON file. Save the map to /tmp/eval-inputs/big-map.json with 32 cells (use any coordinates that fit, e.g. 8 cols x 4 rows in 96x128 each), then use --map-file /tmp/eval-inputs/big-map.json to extract them, and build the atlas at /tmp/eval-outputs/eval-7/.",
+      "expected_output": "A 32-frame atlas at /tmp/eval-outputs/eval-7/. The skill should accept --map-file (or equivalent) and extract cells from the JSON file directly without me having to inline the JSON on the command line.",
+      "files": ["assets/sample-spritesheet.png"],
+      "expectations": [
+        "atlas.png is created",
+        "atlas.json contains 32 frame entries (frame_00 through frame_31 or similar)",
+        "All 32 source PNGs are extracted to a tmp/ subfolder",
+        "The pipeline didn't require inlining a 1KB+ JSON on the command line"
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "I have a sprite sheet at /tmp/eval-inputs/sample-spritesheet.png (768x512, 3x2 grid). Each cell is 256x256 in the source. I want the extracted cells resized to 64x64 (small, pixel-art style) BEFORE background removal. Save the final clean 64x64 frames to /tmp/eval-outputs/eval-8/.",
+      "expected_output": "6 clean 64x64 transparent PNGs at /tmp/eval-outputs/eval-8/. The resize should happen at the extract step so background removal works on the smaller images (faster, cleaner edges).",
+      "files": ["assets/sample-spritesheet.png"],
+      "expectations": [
+        "All 6 output PNGs are exactly 64x64 pixels",
+        "Output PNGs have transparent backgrounds",
+        "The shapes are still recognizable (not garbled)"
+      ]
     }
   ]
 }
