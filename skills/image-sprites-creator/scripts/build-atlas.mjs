@@ -32,7 +32,7 @@
  */
 import sharp from 'sharp';
 import { createCanvas } from 'canvas';
-import { mkdir, writeFile, readdir } from 'node:fs/promises';
+import { mkdir, writeFile, readdir, readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -61,30 +61,70 @@ function fail(msg) {
   process.exit(1);
 }
 
+function shortError(err) {
+  if (err && err.message) return err.message.split('\n')[0].slice(0, 200);
+  return String(err);
+}
+
+/** Pick the smallest column count that fits all frames within the canvas. */
+function chooseCols(frameCount, frameSize, requestedCols) {
+  // Goal: pack `frameCount` items into a roughly-square grid where width <= height*2.
+  const target = Math.max(1, Math.ceil(Math.sqrt(frameCount)));
+  for (let c = Math.min(requestedCols, frameCount); c >= 1; c--) {
+    const rows = Math.ceil(frameCount / c);
+    if (rows <= c * 2) return c;
+  }
+  return 1;
+}
+
 async function main() {
   const args = parseArgs(process.argv);
+  const verbose = !!args.verbose;
   const inDir = args.in ? resolve(args.in) : null;
   const outDir = args.out ? resolve(args.out) : null;
   if (!inDir) fail('Missing --in <dir>');
   if (!outDir) fail('Missing --out <dir>');
 
   const frameSize = parseInt(args['frame-size'] || '256', 10);
-  const cols = parseInt(args.cols || '8', 10);
+  if (!Number.isFinite(frameSize) || frameSize <= 0) {
+    fail(`--frame-size must be a positive integer (got ${args['frame-size']})`);
+  }
+  const requestedCols = parseInt(args.cols || '8', 10);
+  if (!Number.isFinite(requestedCols) || requestedCols <= 0) {
+    fail(`--cols must be a positive integer (got ${args.cols})`);
+  }
 
   await mkdir(outDir, { recursive: true });
 
   // Discover frames
-  const files = (await readdir(inDir)).filter((f) => f.endsWith('.png')).sort();
+  let files;
+  try {
+    files = (await readdir(inDir)).filter((f) => f.endsWith('.png')).sort();
+  } catch (err) {
+    if (verbose) throw err;
+    fail(`Cannot read input dir: ${shortError(err)}`);
+  }
   if (files.length === 0) fail(`No PNG files found in ${inDir}`);
 
   // Load animations config
   let animsConfig = { animations: [] };
   if (args['animations-json']) {
-    const { readFile } = await import('node:fs/promises');
-    const text = await readFile(resolve(args['animations-json']), 'utf-8');
-    animsConfig = JSON.parse(text);
+    let text;
+    try {
+      text = await readFile(resolve(args['animations-json']), 'utf-8');
+    } catch (err) {
+      if (verbose) throw err;
+      fail(`Cannot read --animations-json: ${shortError(err)}`);
+    }
+    try {
+      animsConfig = JSON.parse(text);
+    } catch (e) {
+      fail(`--animations-json is not valid JSON: ${e.message}`);
+    }
+    if (!Array.isArray(animsConfig.animations)) {
+      fail(`--animations-json must have an "animations" array`);
+    }
   } else if (args.animations) {
-    // Inline "name:idx1,idx2|name:idx3,idx4" format
     const anims = [];
     for (const part of args.animations.split('|')) {
       const [name, idxs] = part.split(':');
@@ -112,6 +152,13 @@ async function main() {
   }
 
   if (allKeys.length === 0) fail('No frames resolved');
+
+  // Choose cols: --atlas-fill forces the requested width, otherwise auto-fit.
+  const cols = args['atlas-fill'] ? Math.min(requestedCols, allKeys.length) :
+                                   chooseCols(allKeys.length, frameSize, requestedCols);
+  if (!args['atlas-fill'] && cols !== requestedCols) {
+    console.log(`  (auto-fit: ${allKeys.length} frames → ${cols} cols instead of requested ${requestedCols})`);
+  }
 
   // Compute atlas dimensions
   const rows = Math.ceil(allKeys.length / cols);
@@ -195,6 +242,12 @@ async function loadImageFromBuffer(buf) {
 }
 
 main().catch((err) => {
-  console.error('build-atlas failed:', err);
+  const args = process.argv.slice(2);
+  const verbose = args.includes('--verbose');
+  if (verbose) {
+    console.error(err);
+  } else {
+    console.error(`✗ ${err && err.message ? err.message.split('\n')[0] : err}`);
+  }
   process.exit(1);
 });
