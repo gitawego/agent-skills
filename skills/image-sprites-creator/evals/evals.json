@@ -3,8 +3,8 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "I just dropped a sprite sheet at /tmp/eval-inputs/sample-spritesheet.png — a 3x2 grid on a checkered background. Build me a Phaser 3 atlas with one animation per cell (idle, walk, run, jump, attack, hurt). Save the atlas to /tmp/eval-outputs/eval-1/.",
-      "expected_output": "A 6-frame Phaser 3 atlas with 6 animations at /tmp/eval-outputs/eval-1/ — atlas.png (transparent sprites), atlas.json (with 6 frame entries and 6 animation entries), and clean 256x256 PNGs in a tmp/ subfolder.",
+      "prompt": "I just dropped a sprite sheet at /tmp/eval-inputs/sample-spritesheet.png — a 3x2 grid on a checkered background. Build me a sprite atlas with one animation per cell (idle, walk, run, jump, attack, hurt). Save the atlas to /tmp/eval-outputs/eval-1/.",
+      "expected_output": "A 6-frame sprite atlas with 6 animations at /tmp/eval-outputs/eval-1/ — atlas.png (transparent sprites), atlas.json (with 6 frame entries and 6 animation entries), and clean 256x256 PNGs in a tmp/ subfolder.",
       "files": ["assets/sample-spritesheet.png"],
       "expectations": [
         "atlas.png is created and is a valid PNG image",
@@ -17,7 +17,7 @@
     {
       "id": 2,
       "prompt": "I have a sprite sheet at /tmp/eval-inputs/irregular-spritesheet.png — 4 hero poses in row 1 (at x=0,200,400,600, each 200x256) plus a 'MENU' label cell at x=800. The bg is solid green (#00ff00). I want a 4-frame 'hero' animation, not the menu cell. Process the file and write the atlas to /tmp/eval-outputs/eval-2/. Use the cell rectangles, not auto-grid (the cells are uniform here but I want to make sure it works).",
-      "expected_output": "A 4-frame Phaser 3 atlas at /tmp/eval-outputs/eval-2/ — 4 transparent hero frames in the atlas (not 5; the MENU label is skipped), with 1 'hero' animation containing all 4 frames. No green background remains.",
+      "expected_output": "A 4-frame sprite atlas at /tmp/eval-outputs/eval-2/ — 4 transparent hero frames in the atlas (not 5; the MENU label is skipped), with 1 'hero' animation containing all 4 frames. No green background remains.",
       "files": ["assets/irregular-spritesheet.png"],
       "expectations": [
         "atlas.png is created and is a valid PNG",

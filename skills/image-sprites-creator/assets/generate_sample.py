@@ -36,7 +36,7 @@ ANIMS = list(COLORS.keys())
 
 
 def checkered_bg(w: int, h: int, square: int = 32) -> Image.Image:
-    """Gray checkered background (Phaser docs style)."""
+    """Gray checkered background (standard checkered pattern)."""
     img = Image.new("RGBA", (w, h), (90, 90, 90, 255))
     px = img.load()
     for y in range(0, h, square):

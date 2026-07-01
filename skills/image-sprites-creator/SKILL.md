@@ -1,21 +1,22 @@
 ---
 name: image-sprites-creator
 description: >
-  Turn a sprite sheet (PNG or JPG) into a production-ready Phaser 3 atlas.
-  Use this skill whenever the user has a sprite sheet image and wants to
-  extract individual character frames, build a game-ready atlas, split a sheet
-  into PNGs, remove a checkered or solid background, or says things like
-  "extract frames from this sprite sheet" / "make a Phaser atlas" / "split
-  this sheet into individual sprites" / "turn my character sheet into a game
-  atlas" / "this sheet has a label cell I want to skip" / "make my sprites
-  smaller / pixel-art size". Handles the full pipeline: cell-aware cropping →
-  background removal (neural matting for tricky backgrounds, chroma key for
-  solid colors) → square-centering with bottom-anchored feet → packing into
-  atlas.png + Phaser 3 atlas.json. Includes a bundled sample sheet for
-  self-testing. Validates grid dimensions and cell bounds so a misclicked
-  --cols can't silently produce garbage frames; auto-fits the atlas canvas
-  size; supports --map-file for large cell maps and --resize for shrinking
-  big source sprites.
+  Turn a sprite sheet (PNG or JPG) into a production-ready sprite atlas for
+  any game engine (Godot, Unity, Phaser, Defold, etc.). Use this skill
+  whenever the user has a sprite sheet image and wants to extract individual
+  character frames, build a game-ready atlas, split a sheet into PNGs, remove
+  a checkered or solid background, or says things like "extract frames from
+  this sprite sheet" / "make a sprite atlas" / "split this sheet into
+  individual sprites" / "turn my character sheet into a game atlas" / "this
+  sheet has a label cell I want to skip" / "make my sprites smaller / pixel-
+  art size" / "build Godot SpriteFrames" / "I need a texture atlas for Unity".
+  Handles the full pipeline: cell-aware cropping → background removal (neural
+  matting for tricky backgrounds, chroma key for solid colors) →
+  square-centering with bottom-anchored feet → packing into atlas.png +
+  atlas.json. Includes a bundled sample sheet for self-testing. Validates grid
+  dimensions and cell bounds so a misclicked --cols can't silently produce
+  garbage frames; auto-fits the atlas canvas size; supports --map-file for
+  large cell maps and --resize for shrinking big source sprites.
 ---
 
 # Image Sprites Creator
@@ -26,9 +27,10 @@ Given one sprite sheet image (PNG/JPG), produces a complete game atlas:
 
 - `tmp/sprites_raw/{key}.png` — raw 1:1 crops of each cell
 - `tmp/sprites/{key}.png` — clean transparent frames (default 256×256)
-- `atlas.png` + `atlas.json` — final packed atlas (Phaser 3 Multi-Atlas format)
+- `atlas.png` + `atlas.json` — final packed atlas
 
-The atlas is ready to load with `this.load.atlas('name', 'atlas.png', 'atlas.json')` in Phaser 3, and works in Phaser 4 and Love2D with minor adapter changes.
+The atlas JSON follows the widely-used **TexturePacker JSON (Array) format**, which
+works across every major game engine. See [Loading in your engine](#loading-in-your-engine) below.
 
 ## Two modes of operation
 
@@ -79,7 +81,7 @@ python3 scripts/remove-bg.py tmp/sprites_raw tmp/sprites
 # Optional: produce retro / smaller frames
 python3 scripts/remove-bg.py tmp/sprites_raw tmp/sprites --frame-size 128
 
-# Step 3 — pack into atlas + write Phaser 3 JSON (auto-fits canvas size)
+# Step 3 — pack into atlas + write atlas.json (auto-fits canvas size)
 node scripts/build-atlas.mjs \
   --in tmp/sprites \
   --out public/assets/atlas \
@@ -90,18 +92,35 @@ A `--map` value is a JSON array. Each entry has `key` (frame name, e.g. `idle_00
 
 The `--animations` value in grid mode is a `|`-separated list of `name:idx,idx,idx` triples that maps animation names to the frame indices they contain. It also writes a `animations.json` file you can pass to `build-atlas.mjs` via `--animations-json`.
 
-## Background removal — three methods, auto-selected
+## Loading in your engine
+
+The `atlas.json` uses the **TexturePacker JSON (Array) format** — the most widely-compatible sprite atlas format. Here's how to load it in popular engines:
+
+| Engine | How to load |
+|---|---|
+| **Godot** | Import `atlas.png` + `atlas.json` as a [SpriteSheet in the SpriteFrames bottom panel](https://docs.godotengine.org/en/stable/tutorials/assets_pipeline/importing_images.html#spritesheets). Or use the [Godot TexturePacker Importer](https://github.com/agmcleod/godot-texture-packer) addon to import the JSON directly. |
+| **Unity** | Drop `atlas.png` into your project (set Texture Type → Sprite(2D) → Sprite Mode → Multiple). Then open Sprite Editor → Automatic slice or apply a custom rect from the JSON. Or use a TexturePacker importer asset. |
+| **Phaser 3/4** | `this.load.atlas('name', 'atlas.png', 'atlas.json')` — native support (Phaser calls it "Multi-Atlas" format). |
+| **Defold** | Import the PNG and create an Atlas resource from the Editor. The JSON can be used as a reference for slice coordinates. |
+| **Love2D** | Use [love.graphics.newImage](https://love2d.org/wiki/love.graphics.newImage) for the atlas PNG and parse `atlas.json` with [dkjson](https://github.com/LuaDist/dkjson) to build Quads. |
+
+If your engine needs a different atlas format (e.g., `.tres` for Godot 4, `.sprite` for Unity), the skill produces the JSON — you can convert it in your asset pipeline.
+
+## Background removal — four methods, auto-selected
 
 `remove-bg.py` picks the best method by inspecting the source:
 
 | Source background | Method used | Notes |
 |---|---|---|
-| Solid white / near-white | chroma key (white) | Fast, no model needed |
+| Solid white / near-white | chroma key (white) | Fast, soft edges with `--chroma-softness` |
 | Solid green / near-green | chroma key (green) | Standard "green screen" workflow |
 | Any other solid color (low variance on edges) | chroma key (auto color) | Detects the dominant edge color |
+| Light or dark backgrounds for VFX/glows | luminance key | Brightness-based alpha. Preserves soft shading and outer glows. |
 | Checkered / photographic / mixed | rembg (U²-Net) | Best for hand-drawn art, ~170MB model on first run |
 
-Override with `--method rembg|chroma|none`. Pass `--chroma "#00ff00"` to force a specific key color.
+Override with `--method rembg|chroma|luminance|none`. Pass `--chroma "#hex"` to force a specific key color.
+
+**Uniform scaling is supported via `--uniform`.** When enabled, it pads all frames based on the global max content size instead of scaling each frame individually. This preserves relative frame sizes and prevents characters from jumping or bouncing unnaturally.
 
 **Bottom-anchoring is the default.** Character feet stay on the same baseline across walk/run/jump frames so the animation doesn't bounce. Pass `--top-anchor` for items / icons / symmetric objects that should be bbox-centered.
 
@@ -109,7 +128,7 @@ The rembg model loads once and reuses across all frames (one session, not per-fr
 
 ## Output format
 
-`atlas.json` is Phaser 3 Multi-Atlas format. Schema:
+`atlas.json` follows the **TexturePacker JSON (Array) format**. Schema:
 
 ```json
 {
@@ -133,6 +152,8 @@ The rembg model loads once and reuses across all frames (one session, not per-fr
   ]
 }
 ```
+
+This is the same format used by TexturePacker, and is compatible with Phaser 3/4, HaxeFlixel, and various engine importers. The `animations` array is a skill addition (not part of the TexturePacker spec) that documents the intended animation layout — engines that don't read it natively can ignore it.
 
 Default frame size is 256×256. Override with `--frame-size` (or pass `--frame-size 128` to `remove-bg.py` for retro pixel-art). Atlas columns are **auto-fit** by default — the script picks the smallest `cols` that packs all frames into a roughly-square canvas (no wasted pixels). Pass `--atlas-fill` to force the requested `--cols` width even if it leaves empty cells, or `--cols N` to set a different preferred width.
 
@@ -226,8 +247,15 @@ python3 -m pip install --user "rembg[cpu]" onnxruntime
 |---|---|---|
 | `input` dir | required | Raw cropped frames |
 | `output` dir | required | Clean frames |
-| `--method auto\|rembg\|chroma\|none` | auto | Auto picks chroma/rembg per source |
+| `--method auto\|rembg\|chroma\|luminance\|none` | auto | Auto picks chroma/rembg per source. `luminance` uses brightness to key. |
 | `--chroma "#hex"` | — | Force a chroma key color (overrides auto-detect) |
+| `--chroma-softness N` | 15 | Softness margin for chroma keying (smooths edges) |
+| `--lum-floor N` | 15.0 | Brightness floor (0-255) for luminance key transparency |
+| `--lum-ceil N` | 200.0 | Brightness ceiling (0-255) for luminance key opaqueness |
+| `--lum-gamma N` | 1.4 | Gamma mapping exponent for luminance key alpha curve |
+| `--lum-invert` | off | Invert luminance keying (for dark shapes on light bg) |
+| `--remove-bleed` | off | Symmetrically detect and erase adjacent row bleed-through / hanging tails |
+| `--uniform` | off | Scale all frames uniformly based on global max bounding box size |
 | `--top-anchor` | off | Center-crop instead of bottom-anchored |
 | `--first-key <name>` | — | Force method for the very first frame only |
 | `--frame-size N` | 256 | Output frame size |
@@ -249,20 +277,24 @@ python3 -m pip install --user "rembg[cpu]" onnxruntime
 
 ## Common pitfalls
 
+- **Size jumping in animations**: By default, frames are scaled independently, meaning a character crouching or dissolving might be stretched to fill the full frame height. Pass `--uniform` to scale all frames consistently based on the global maximum bounding box.
+- **Bleed-through and hanging tails**: If adjacent rows in the spritesheet overlap (e.g., tail hanging into the row below), pass `--remove-bleed` to automatically erase adjacent cell remnants.
 - **Mode B with irregular cells**: if the source has label cells or non-uniform sizes, the auto-grid will misalign. Switch to Mode A with explicit rectangles.
 - **rembg first run is slow**: the model download takes 10–30s. Subsequent runs reuse the cached model.
 - **Bottom-anchor assumption**: the skill assumes the character stands on the bottom edge of each cell. If the source has the character floating in the middle, the output will look wrong. Either crop differently or use `--top-anchor`.
-- **Phaser expects exact key names**: animation `frames` in `atlas.json` must match the `key` field in each `frames` entry. Mismatches silently fail (the animation "exists" but plays the wrong frame).
+- **Engine-specific key sensitivity**: Some engines (especially Phaser) are strict about frame key names — the animation `frames` array must reference exact frame keys from the `frames` object, or the animation silently fails. Verify key consistency after building.
 - **Atlas dimensions**: with auto-fit enabled, a 6-frame atlas is 1536×256 (6 cols), a 32-frame atlas is 2048×1024 (8 cols, the upper edge for older WebGL). Pass `--atlas-fill --cols 16` for very small atlases, or `--frame-size 128` for a half-resolution retro atlas.
+- **Animation data is advisory**: the `animations` array in `atlas.json` is an extension — engines like Godot and Unity will not read it natively. The user will need to define animation clips in their engine's editor, or write a converter. Use the `--animations` / `--animations-json` flags primarily as documentation of the intended animation layout.
 
 ## Things to confirm with the user
 
-1. **Mapped vs grid mode** — ask if the source has irregular cells (label cells, mixed sizes). When in doubt, default to mapped.
-2. **Frame size** — 256 is a good default for HD screens (1.5x at 384px tall). Use 128 for mobile/retro, 512 for very high DPI.
-3. **Background type** — most hand-drawn art is on a checkered or photographic background, which means rembg will be used. If the user has a clean green/white background, chroma key is ~10x faster and produces crisper edges. If you pass `--chroma "#hex"`, that overrides auto-detection.
-4. **Animation frame order** — frame indices in `--animations` go left-to-right, top-to-bottom in grid mode. The user may want a specific order (e.g. walk cycle should peak in the middle); verify the output and adjust.
-5. **Large cell maps** — if the user has more than ~10 cells to specify, ask whether they'd rather pass `--map-file <path>` than inline `--map` on the command line.
-6. **Source resolution** — if source cells are much larger than the final frame size (e.g. 1024×1024 source → 256×256 final), suggest `--resize N` at extract time so background removal runs on the smaller image (faster, cleaner edges).
+1. **Target engine** — Godot, Unity, Phaser, or something else? The loading advice and engine-specific gotchas differ.
+2. **Mapped vs grid mode** — ask if the source has irregular cells (label cells, mixed sizes). When in doubt, default to mapped.
+3. **Frame size** — 256 is a good default for HD screens (1.5x at 384px tall). Use 128 for mobile/retro, 512 for very high DPI.
+4. **Background type** — most hand-drawn art is on a checkered or photographic background, which means rembg will be used. If the user has a clean green/white background, chroma key is ~10x faster and produces crisper edges. If you pass `--chroma "#hex"`, that overrides auto-detection.
+5. **Animation frame order** — frame indices in `--animations` go left-to-right, top-to-bottom in grid mode. The user may want a specific order (e.g. walk cycle should peak in the middle); verify the output and adjust.
+6. **Large cell maps** — if the user has more than ~10 cells to specify, ask whether they'd rather pass `--map-file <path>` than inline `--map` on the command line.
+7. **Source resolution** — if source cells are much larger than the final frame size (e.g. 1024×1024 source → 256×256 final), suggest `--resize N` at extract time so background removal runs on the smaller image (faster, cleaner edges).
 
 ## What the skill does NOT do
 
@@ -270,4 +302,5 @@ python3 -m pip install --user "rembg[cpu]" onnxruntime
 - No sprite-sheet auto-detection of irregular cell sizes (irregular cells → use Mode A with measured coordinates).
 - No sprite trimming (every frame is the full cell size). If the user needs trimmed sprites, edit the atlas JSON after the fact or pre-crop the source.
 - No mipmaps or texture-packing optimization (basic grid pack only).
-- No Phaser / engine integration code (atlas loading, animation registration) — the skill produces the assets; engine glue is the user's job.
+- **No engine-specific resource files** — the skill outputs `atlas.png` + `atlas.json`. It does not produce Godot `.tres`/`.tscn`, Unity `.sprite`, or Phaser loader code. Engine integration (animation clips, sprite setup) is the user's job.
+- No animation conversion to engine-native formats — the `animations` array in JSON is documentation data, not a drop-in animation asset.
