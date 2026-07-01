@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * build-atlas.mjs — Compose individual frame PNGs into a Phaser 3 atlas
+ * build-atlas.mjs — Compose individual frame PNGs into a sprite atlas
  * (atlas.png + atlas.json).
  *
  * Two ways to declare animations:
@@ -202,7 +202,7 @@ async function main() {
   const atlasPng = canvas.toBuffer('image/png');
   await writeFile(outPng, atlasPng);
 
-  // Write atlas.json (Phaser 3 Multi-Atlas format)
+  // Write atlas.json (standard sprite atlas format — TexturePacker JSON-Array compatible)
   const animations = animsConfig.animations
     .filter((a) => a.frames && a.frames.length > 0)
     .map((a) => ({
