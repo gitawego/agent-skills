@@ -1,0 +1,50 @@
+{
+  "skill_name": "android-compose-design-systems",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "I'm building a meditation app and want a soft, tactile UI. Can you create a Jetpack Compose login screen in the neumorphic (soft UI) style? The inputs should look sunken into the background, the login button should look raised, and everything should use the same background color so it looks seamless. Include a remember-me toggle and a 'forgot password' link.",
+      "expected_output": "A Compose login screen using the neumorphic engine: NeumTheme wrapper, sunken input fields (neumConcave), raised button (neumConvex) that sinks on press, neumorphic switch for remember-me, correct background-matching colors with dual-tone shadows.",
+      "files": [],
+      "expectations": [
+        "Input fields use the sunken surface (neumConcave or equivalent concave modifier) with the same background color as the rest of the screen",
+        "The login button is raised (convex) at rest and switches to concave when pressed",
+        "Tap/press animation uses detectTapGestures (or equivalent) rather than a Material ripple indication",
+        "All surfaces derive from a single shared background color so the layout reads as seamless",
+        "Dual-tone shadows are drawn with BlurMaskFilter (light top-left highlight + dark bottom-right shadow)",
+        "The remember-me toggle fires LongPress haptic feedback",
+        "Code is complete and compilable: no TODO placeholders or '...' stubs"
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "I want a premium frosted-glass music player screen in Jetpack Compose. It should have a colorful ambient mesh background with translucent glass cards showing the album art, a glass progress slider for the track, and glass buttons for play/pause. Make the borders look like lit glass edges.",
+      "expected_output": "A Compose music player screen using the glassmorphism engine: GlassTheme with GlassMeshBackground, glassConvex cards with gradient borders and inner highlights, glass concave slider track with raised thumb, glass buttons using GlassAccent colors, text with proper contrast over the mesh.",
+      "files": [],
+      "expectations": [
+        "The screen is wrapped in a glass root theme (GlassTheme or equivalent) that supplies the glass tokens",
+        "A mesh background with multiple radial-gradient light spots is drawn beneath the UI",
+        "Glass surfaces use a translucent tint plus a gradient border and a top inner highlight",
+        "Glass surface alignment registers against the global mesh (positionInWindow or equivalent)",
+        "The progress slider has a sunken track and a raised thumb",
+        "Text colors come from the token set with sufficient contrast over the mesh",
+        "Code is complete and compilable: no TODO placeholders or '...' stubs"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Build a Xiaomi HyperOS style settings screen in Jetpack Compose with a neumorphic look: raised category cards, sunken toggle switches, a settings group section, and a search bar at the top. Also add a skin switcher at the top of the screen that toggles the whole UI between the neumorphic look and a frosted glass look at runtime. Use the Mi brand colors.",
+      "expected_output": "A Compose settings screen using the hyper-neumorphic engine: AppTheme with LocalAppSkin state, neumorphicConvex cards, NeumorphicSwitch toggles, NeumorphicSearchBar, SettingsGroup/Section containers, and a working NEUMORPHISM↔GLASS skin switch that re-renders all components via the dual-engine Modifiers (isOverlay rules respected for any dialogs).",
+      "files": [],
+      "expectations": [
+        "A runtime skin switch (LocalAppSkin or equivalent) toggles the whole UI between neumorphic and glass looks",
+        "Surface modifiers route on the current skin (dual-engine convex/concave with a glass branch)",
+        "Toggle switches are sunken (concave track, raised thumb)",
+        "Xiaomi/HyperOS blue is used as the primary accent color",
+        "The screen includes a search bar and a settings-group section container",
+        "Any dialog/overlay uses isOverlay=true so glass mode carries its own mesh",
+        "Code is complete and compilable: no TODO placeholders or '...' stubs"
+      ]
+    }
+  ]
+}
