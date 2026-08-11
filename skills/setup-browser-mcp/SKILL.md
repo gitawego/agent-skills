@@ -21,6 +21,7 @@ This skill is for **Linux users without root**, especially CachyOS / Arch / Debi
 - The user is on macOS or has a system Chrome at `/Applications/Google Chrome.app` (use the upstream `chrome-devtools-mcp` README directly).
 - The user wants to add a *third* MCP server (e.g., Lighthouse, axe) — out of scope.
 - The user is on a non-Linux platform (Windows: use the platform installer; macOS: see above).
+- **The host is pi (pi-mcp-adapter), or the box is proot/container/arm64/low-RAM** — use the sibling `chrome-devtools-mcp-pi` skill instead. That skill installs the Playwright **headless-shell** (lightweight arm64 Chromium) and configures `~/.pi/agent/mcp.json` with a `CDP_READY` `!command` env that auto-starts the browser at MCP-connect time. Full Chrome/Chromium crashes under proot (network-service child crash loop) and OOMs constrained boxes, so this skill's `--executable-path` approach is the wrong fit there.
 
 ## What this skill produces
 
