@@ -85,7 +85,13 @@ What the script installs (each step skips when already satisfied):
 2. **glibc runtime deps**: `glib-glibc fontconfig-glibc freetype-glibc libdrm-glibc mesa-glibc` + the X11 family + `dbus-glibc alsa-lib-glibc libsqlite-glibc ttf-dejavu-glibc` from the glibc repo; then the five deb-only libs (nspr4, nss3, atk, Xdamage, udev, atspi, XRes) from Ubuntu ports / Debian mirrors into `$PREFIX/glibc/lib`.
 3. **headless-shell** rev 1234 (Chromium 151, arm64) → `~/.cache/ms-playwright/headless-shell-1234/chrome-linux/headless_shell`; patchelf'd + `compat/libc.so` shim + runner wrapper.
 4. **chrome-devtools-mcp@1.6.0** npm → `~/workspace/chrome-mcp` (overridable via `CHROME_MCP_DIR`).
-5. **`~/.pi/agent/mcp.json`** — `chrome-devtools` entry with `env.CDP_READY = "!bash <skill>/scripts/start-cdp.sh"`. pi-mcp-adapter runs that command at **server-connect time**, so CDP is always up before any browser tool call.
+5. **`~/.pi/agent/mcp.json`** — `chrome-devtools` entry with `lifecycle: "lazy"` +
+   `idleTimeout: 5` (pi-mcp-adapter spawns the MCP server only when a browser
+   tool is first called, and shuts it down after 5 min idle), plus a
+   `cdp-lifecycle.sh` wrapper command that **ensures CDP is up before the
+   server starts** and **tears down the whole headless-Chrome tree when the
+   server exits** (idle shutdown / crash / kill). No browser tool ever has to
+   start Chrome — and nothing lingers after the MCP server goes idle.
 6. **Verification** — starts CDP, checks `/json/version`, then a real **render check**: navigates a `data:` green page and decodes the screenshot's center pixel (proves fonts + compositor work, not just the socket).
 
 `--status` prints the full checklist and changes nothing. `--force` re-downloads the browser, reinstalls npm, and rewrites the config.
@@ -99,10 +105,12 @@ All defaults overridable: `CDP_HEADLESS_SHELL` (runner path), `CDP_PORT` (9222),
 The adapter reads `~/.pi/agent/mcp.json` at session startup. After first setup (or any config rewrite), **the user must run `/reload` in pi** (or restart pi). Then:
 
 ```text
-/mcp                          → chrome-devtools should appear with 29 tools
+/mcp                          → chrome-devtools should appear with 29 tools (lazy: not connected until first use)
 mcp({ search: "navigate" })   → tools resolve
-mcp({ tool: "chrome_devtools_list_pages" }) → live page list
+mcp({ tool: "chrome_devtools_list_pages" }) → live page list (spawns CDP on demand)
 ```
+
+After 5 min idle the MCP server and headless Chrome are shut down automatically; the next tool call starts them again.
 
 ## Verifying without pi
 
@@ -139,7 +147,7 @@ bash <skill>/scripts/setup-chrome-mcp.sh     # re-run ends with the render check
 
 ## Reference
 
-- Scripts bundled in this skill: `scripts/setup-chrome-mcp.sh` (self-contained idempotent installer), `scripts/start-cdp.sh` (idempotent CDP launcher).
+- Scripts bundled in this skill: `scripts/setup-chrome-mcp.sh` (self-contained idempotent installer), `scripts/start-cdp.sh` (idempotent CDP launcher), `scripts/cdp-lifecycle.sh` (ties Chrome's lifetime to the MCP server's — start on demand, teardown on exit).
 - Chrome DevTools MCP: https://github.com/ChromeDevTools/chrome-devtools-mcp
 - pi-mcp-adapter (config, `!command` env, `/reload`): https://www.npmjs.com/package/pi-mcp-adapter
 - Playwright browser downloads (arm64 builds exist for all browsers): https://playwright.dev/docs/browsers
