@@ -11,8 +11,10 @@
 #     libc. This script bridges the gap (patchelf + glibc rootfs + runner
 #     wrapper) or skips it entirely inside proot-distro (native glibc).
 #   * Installs chrome-devtools-mcp npm, then writes ~/.pi/agent/mcp.json with a
-#     CDP_READY "!command" env hook so the adapter auto-starts the browser at
-#     server-connect time. No agent has to remember to start Chrome first.
+#     lazy lifecycle (spawn on first tool use, idle-shutdown) and a
+#     cdp-lifecycle.sh wrapper that auto-starts the browser at server-connect
+#     time and tears Chrome down when the server exits. No agent has to
+#     remember to start Chrome — or stop it — manually.
 #
 # IDEMPOTENT: re-running is safe; every step checks what is already in place
 # and skips it. --force re-downloads the browser, reinstalls npm, and rewrites
@@ -250,35 +252,52 @@ ensure_npm() {
 }
 
 # ---------------------------------------------------------------------------
-# ~/.pi/agent/mcp.json — CDP_READY "!command" env makes pi-mcp-adapter run
-# start-cdp.sh at server-connect time, so CDP is always up before any tool call.
+# ~/.pi/agent/mcp.json — lazy lifecycle + cdp-lifecycle wrapper.
+#
+# lifecycle: "lazy" + idleTimeout make pi-mcp-adapter spawn the MCP server
+# only when a browser tool is first called, and shut it down after the idle
+# window. The cdp-lifecycle.sh wrapper ties headless Chrome's lifetime to the
+# MCP server's: it ensures CDP is up before the server starts, and tears the
+# whole Chrome tree down when the server exits (idle shutdown / crash / kill).
+# Without the wrapper, the CDP_READY !command starts Chrome but nothing ever
+# stops it — a lingering browser on a low-RAM box.
 # ---------------------------------------------------------------------------
 ensure_config() {
   mkdir -p "$(dirname "$MCP_CONFIG")"
-  if [[ -f "$MCP_CONFIG" ]] && grep -q 'CDP_READY' "$MCP_CONFIG" 2>/dev/null && [[ "$MODE" != "force" ]]; then
-    skip "pi MCP config declares chrome-devtools + CDP_READY auto-start"
+  if [[ -f "$MCP_CONFIG" ]] && grep -q 'cdp-lifecycle' "$MCP_CONFIG" 2>/dev/null && [[ "$MODE" != "force" ]]; then
+    skip "pi MCP config declares chrome-devtools via cdp-lifecycle (lazy)"
     return 0
+  fi
+  # The lifecycle wrapper lives next to this skill's start-cdp.sh.
+  local lifecycle
+  lifecycle="$SKILL_DIR/scripts/cdp-lifecycle.sh"
+  if [[ ! -f "$lifecycle" ]]; then
+    say "installing cdp-lifecycle.sh wrapper next to start-cdp.sh..."
+    cp "$SKILL_DIR/../../scripts/cdp-lifecycle.sh" "$lifecycle" 2>/dev/null \
+      || cp "$HOME/workspace/agent-skills/scripts/cdp-lifecycle.sh" "$lifecycle" 2>/dev/null \
+      || die "could not locate cdp-lifecycle.sh to install"
+    chmod +x "$lifecycle"
   fi
   cat > "$MCP_CONFIG" <<EOF
 {
   "mcpServers": {
     "chrome-devtools": {
-      "command": "node",
+      "command": "bash",
       "args": [
+        "$lifecycle",
         "$MCP_SERVER",
         "--browserUrl=http://127.0.0.1:${CDP_PORT:-9222}",
         "--headless=true",
         "--no-usage-statistics",
         "--no-performance-crux"
       ],
-      "env": {
-        "CDP_READY": "!bash $START_CDP"
-      }
+      "lifecycle": "lazy",
+      "idleTimeout": 5
     }
   }
 }
 EOF
-  ok "wrote $MCP_CONFIG (auto-starts CDP on server connect)"
+  ok "wrote $MCP_CONFIG (lazy MCP + cdp-lifecycle teardown)"
   say "NOTE: run /reload in pi to re-read the MCP config"
 }
 
@@ -353,10 +372,10 @@ if [[ "$MODE" == "status" ]]; then
   fi
   [[ -f "$MCP_SERVER" ]] && ok "chrome-devtools-mcp installed" || skip "chrome-devtools-mcp missing"
   [[ -x "$START_CDP" ]] && ok "start-cdp.sh present" || skip "start-cdp.sh missing"
-  if [[ -f "$MCP_CONFIG" ]] && grep -q 'CDP_READY' "$MCP_CONFIG" 2>/dev/null; then
-    ok "pi MCP config declares chrome-devtools + CDP_READY auto-start"
+  if [[ -f "$MCP_CONFIG" ]] && grep -q 'cdp-lifecycle' "$MCP_CONFIG" 2>/dev/null; then
+    ok "pi MCP config declares chrome-devtools via cdp-lifecycle (lazy)"
   else
-    skip "pi MCP config missing chrome-devtools/CDP_READY"
+    skip "pi MCP config missing chrome-devtools/cdp-lifecycle"
   fi
   if curl -fsS --max-time 2 "http://127.0.0.1:${CDP_PORT:-9222}/json/version" >/dev/null 2>&1; then
     ok "CDP up on 127.0.0.1:${CDP_PORT:-9222}"
