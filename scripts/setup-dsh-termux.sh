@@ -37,6 +37,21 @@
 #     - node --expose-internals in the launcher: the web profile enables
 #       cordis-plugin-hmr, which requires it. Without it:
 #       "--expose-internals is required for HMR service".
+#   * Bind the webserver on 0.0.0.0 (web profile only): the upstream
+#     dsh-web-app/lib/startup.js rejects `--host 0.0.0.0` with a "safety"
+#     error, and its cordis.patch.yml falls back to
+#     `ctx.webStartup.host ?? '127.0.0.1'`. On Android 11+ per-uid
+#     SELinux isolates loopback-bound sockets but lets `0.0.0.0`-bound
+#     ports through the shared bind namespace, so the host browser
+#     (Edge) reaches `127.0.0.1:<port>` only when the server listened
+#     on `0.0.0.0`. Verified end-to-end: OpenCode (Bun.serve defaults
+#     to `0.0.0.0`) reaches Edge; dsh web (defaults to `127.0.0.1`) does
+#     not. The runtime schema accepts both values, so the CLI guard is
+#     the only blocker. We pin host to `0.0.0.0` via an id-targeted
+#     patch to the web profile's cordis.patch.yml, applied before the
+#     CLI parser runs. Skipped when DSH_BIND_HOST=loopback or
+#     DSH_WEB_BIND=loopback is set (so a safety-sensitive deployment
+#     can opt out).
 #   * Runtime: sending a message dies with
 #     "EACCES: permission denied, link '.../session.jsonl.zstd.<hex>.tmp' ->
 #     '.../session.jsonl.zstd'": dsh's session persistence
@@ -63,11 +78,25 @@
 #   bash setup-dsh-termux.sh                          # install/upgrade/verify dsh (latest)
 #   DSH_VERSION=0.1.0-rc.6 bash setup-dsh-termux.sh   # pin a dsh version
 #   bash setup-dsh-termux.sh --force                  # rebuild everything
+#   bash setup-dsh-termux.sh --reinstall              # remove the install, then install fresh
+#   bash setup-dsh-termux.sh --reinstall --force      # remove, rebuild koffi, install fresh
+#   DSH_BIND_HOST=loopback bash setup-dsh-termux.sh    # opt out of the 0.0.0.0 webserver bind
 #
 # Notes:
+#   * Uses pnpm when available (much lower memory, faster — npm was
+#     observed being SIGKILLed mid-install twice on this device), npm
+#     otherwise. pnpm 10+ blocks build scripts unless allowlisted: the
+#     wrapper project writes pnpm-workspace.yaml with allowBuilds for
+#     node-pty (koffi ships its patched binary, so its script stays blocked).
 #   * npm 11 prints "install scripts not yet covered by allowScripts"
 #     warnings; the native install scripts still run (verified). If a future
 #     npm config blocks them, run: npm install-scripts approve koffi node-pty
+#   * The web profile's cordis.patch.yml is patched so the host-webserver
+#     row binds on 0.0.0.0 instead of the upstream default 127.0.0.1. The
+#     upstream CLI guard rejects `--host 0.0.0.0` but the runtime schema
+#     accepts both values, so the patch is the only way to set it. Set
+#     DSH_BIND_HOST=loopback (or DSH_WEB_BIND=loopback) to keep the
+#     upstream loopback-only default.
 
 set -euo pipefail
 
@@ -86,6 +115,9 @@ KOFFI_TGZ="$BUILD_DIR/koffi-$KOFFI_VERSION-termux.tgz"  # cached patched tarball
 PREFIX="$(dirname "$(dirname "$(command -v node)")")"   # Termux prefix (/data/.../usr)
 NODE_BIN="$(command -v node)"
 PREFIX_BIN="$PREFIX/bin"
+DSH_HOME_PROFILES="${DSH_HOME_PROFILES:-$HOME/.dsh/profiles}"  # dsh home; web profile lives here
+DSH_BIND_HOST="${DSH_BIND_HOST:-}"     # "" / "0.0.0.0" / "loopback" — overrides default 0.0.0.0 on web profile
+DSH_WEB_PORT="${DSH_WEB_PORT:-3080}"   # webserver port; also pinned by the patch when set
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 log()  { printf '\033[1;34m[setup-dsh]\033[0m %s\n' "$*"; }
@@ -148,7 +180,11 @@ PY
 
 ensure_koffi_tarball() {
   local force="${1:-}"
-  if [[ "$force" != "force" ]] && [ -f "$KOFFI_TGZ" ]; then
+  # Cache is only valid for the CURRENT recipe: a tarball still carrying
+  # the cnoke "install" script is from an older build and gets rebuilt.
+  # (grep -c, not grep -q: -q SIGPIPEs tar under pipefail.)
+  if [[ "$force" != "force" ]] && [ -f "$KOFFI_TGZ" ] \
+     && [ "$(tar -xOf "$KOFFI_TGZ" package/package.json 2>/dev/null | grep -c '"install"')" -eq 0 ]; then
     log "patched koffi tarball cached at $KOFFI_TGZ — skipping rebuild."
     return 0
   fi
@@ -173,6 +209,24 @@ ensure_koffi_tarball() {
 
     cp -r "$pkg_dir" "$work/package"
     patch_koffi_source "$work/package"
+
+    # The repacked tarball ships the built binary, so koffi's "install"
+    # script (a cnoke rebuild) is dead weight. Strip it: pnpm 12 rc hard-
+    # fails on any build script its allowBuilds doesn't cover, and it
+    # cannot match file: deps by name (verified); npm would otherwise
+    # waste minutes recompiling. Binary present -> no script needed.
+    python3 - "$work/package/package.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path) as f:
+    data = json.load(f)
+scripts = data.get("scripts", {})
+scripts.pop("install", None)
+assert "install" not in scripts, "koffi install script not stripped"
+data["scripts"] = scripts
+with open(path, "w") as f:
+    json.dump(data, f, indent=2)
+PY
 
     log "Building koffi from source (cnoke)..."
     out="$( ( cd "$work/package" && node ./cnoke.cjs -P . -D src/koffi --prebuild --release ) 2>&1 )" \
@@ -214,26 +268,78 @@ ensure_wrapper_project() {
   },
   "overrides": {
     "koffi": "file:$rel"
+  },
+  "pnpm": {
+    "overrides": {
+      "koffi": "file:$rel"
+    }
   }
 }
 JSON
+  # pnpm 10+ blocks dependency build scripts unless allowlisted. node-pty
+  # MUST build (no android-arm64 prebuilt). The rest are JS-level postinstalls
+  # or (koffi) no-ops because the patched tarball ships the binary.
+  # pnpm 12 rc reads BOTH overrides and allowBuilds from pnpm-workspace.yaml;
+  # package.json pnpm.overrides is ignored by it (verified).
+  cat > "$DSH_HOME_DIR/pnpm-workspace.yaml" <<YAML
+# Hoist everything to the root node_modules: the wrapper must behave like
+# the old npm -g install (script steps + dsh itself assume flat layout —
+# node-pty require in verify, the session-persistence patch path, and
+# sharp's wasm fallback visibility all break under pnpm's isolated layout).
+publicHoistPattern:
+  - "*"
+allowBuilds:
+  node-pty: true
+  koffi: true
+  protobufjs: true
+  "@google/genai": true
+  "@deepseek-ai/dsh-subprocess-local": true
+overrides:
+  koffi: file:$rel
+YAML
 }
 
 # ── 4. npm install (skips when the pinned version + natives already work) ─
 ensure_install() {
-  local force="${1:-}" installed_ver
+  local force="${1:-}" installed_ver installer
   if [[ "$force" != "force" ]] && [ -f "$DSH_HOME_DIR/node_modules/@deepseek-ai/dsh/package.json" ]; then
     installed_ver="$(python3 -c "import json;print(json.load(open('$DSH_HOME_DIR/node_modules/@deepseek-ai/dsh/package.json'))['version'])" 2>/dev/null || true)"
     if [ "$installed_ver" = "$DSH_VERSION" ] \
        && node -e "require('$DSH_HOME_DIR/node_modules/koffi'); require('$DSH_HOME_DIR/node_modules/node-pty');" 2>/dev/null; then
-      log "dsh $installed_ver already installed and native modules load — skipping npm install."
+      log "dsh $installed_ver already installed and native modules load — skipping install."
       return 0
     fi
     warn "found dsh '$installed_ver' but want '$DSH_VERSION' (or natives broken) — reinstalling."
   fi
-  log "npm install (first run takes several minutes)..."
-  ( cd "$DSH_HOME_DIR" && npm i >/dev/null ) || die "npm install failed — see $HOME/.npm/_logs"
-  log "npm install done."
+  # pnpm preferred: far less memory and faster than npm on this huge tree
+  # (npm was observed being SIGKILLed mid-reify twice on this device).
+  if command -v pnpm >/dev/null 2>&1; then
+    installer=pnpm
+  else
+    installer=npm
+    log "pnpm not found — falling back to npm (slower, more memory)"
+  fi
+  # Bound V8 heap: a spike then fails loudly with "JavaScript heap out of
+  # memory" instead of tripping Android's low-memory killer, which SIGKILLs
+  # the whole install tree silently (observed: npm died mid-reify with no
+  # error and no log line). Override the cap with NPM_HEAP_MB.
+  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=${NPM_HEAP_MB:-1536}"
+  local avail_mb
+  avail_mb="$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo 2>/dev/null || true)"
+  if [ -n "$avail_mb" ] && [ "$avail_mb" -lt 2048 ]; then
+    warn "only ${avail_mb} MB RAM free — install may get killed; stop dsh web/omp first"
+  fi
+  log "$installer install (first run takes several minutes; output streams below)..."
+  if [ "$installer" = pnpm ]; then
+    # pnpm's build-script env lacks npm's bundled node-gyp shim on PATH.
+    export PATH="$PREFIX/lib/node_modules/npm/bin/node-gyp-bin:$PATH"
+    ( cd "$DSH_HOME_DIR" && pnpm i ) \
+      || die "pnpm install failed (see pnpm error above)"
+  else
+    ( cd "$DSH_HOME_DIR" && npm i --no-audit --no-fund ) \
+      || die "npm install failed — see $HOME/.npm/_logs"
+  fi
+  log "$installer install done."
 }
 
 # ── 5. sharp: WASM fallback (web profile attachment plugin) ──────────────
@@ -250,8 +356,13 @@ ensure_sharp_wasm() {
     return 0
   fi
   log "sharp native load failed — installing @img/sharp-wasm32 fallback..."
-  ( cd "$DSH_HOME_DIR" && npm i @img/sharp-wasm32 >/dev/null 2>&1 ) \
-    || die "npm install @img/sharp-wasm32 failed"
+  if command -v pnpm >/dev/null 2>&1; then
+    ( cd "$DSH_HOME_DIR" && pnpm i @img/sharp-wasm32 >/dev/null 2>&1 ) \
+      || die "pnpm install @img/sharp-wasm32 failed"
+  else
+    ( cd "$DSH_HOME_DIR" && npm i @img/sharp-wasm32 >/dev/null 2>&1 ) \
+      || die "npm install @img/sharp-wasm32 failed"
+  fi
   node -e "require('$DSH_HOME_DIR/node_modules/sharp');" 2>/dev/null \
     || die "sharp still fails to load after installing @img/sharp-wasm32"
   log "sharp now loads via @img/sharp-wasm32."
@@ -344,7 +455,146 @@ ensure_dsh_bin() {
   log "Wrote dsh wrapper -> $dest"
 }
 
-# ── 8. Verify ────────────────────────────────────────────────────────────
+# ── 7b. Webserver bind (web profile only): 0.0.0.0 instead of 127.0.0.1 ─
+# Patches the web profile cordis.patch.yml so the host-webserver row binds on
+# 0.0.0.0. dsh-web-app/lib/startup.js rejects `--host 0.0.0.0` at the CLI parser
+# with "expose remote code execution" — but the runtime schema accepts both, so
+# this is the only path to set the bind on the host-webserver row. On Android 11+
+# this is required for the host browser (Edge) to reach the webserver at all:
+# per-uid SELinux isolates loopback-bound sockets but lets 0.0.0.0-bound ports
+# through the shared bind namespace. Verified end-to-end: OpenCode (Bun.serve
+# defaults to 0.0.0.0) reaches Edge; dsh web (defaults to 127.0.0.1) does not.
+# Idempotent: re-runs no-op. Skipped when DSH_BIND_HOST=loopback or
+# DSH_WEB_BIND=loopback is set.
+ensure_webserver_bind() {
+  # Respect the opt-out: the upstream default is 127.0.0.1, and a deployment
+  # that wants that strict default can set this env to opt out.
+  local override="${DSH_BIND_HOST:-${DSH_WEB_BIND:-0.0.0.0}}"
+  case "$override" in
+    ""|0.0.0.0|all) ;; # apply the fix
+    loopback|127.0.0.1)
+      log "DSH_BIND_HOST=loopback set — keeping the upstream 127.0.0.1 default."
+      return 0 ;;
+    *)
+      warn "DSH_BIND_HOST=$override is not a recognized value; expected 0.0.0.0 or loopback. Applying 0.0.0.0."
+      ;;
+  esac
+
+  local profile_dir="$DSH_HOME_PROFILES/web"
+  local patch="$profile_dir/cordis.patch.yml"
+
+  # Bail early if the web profile does not exist yet — ensure_install will
+  # create it on its first run. Don't try to materialize or recreate it here.
+  if [ ! -d "$profile_dir" ]; then
+    log "web profile not present yet ($profile_dir missing) — skipping webserver bind."
+    return 0
+  fi
+
+  mkdir -p "$profile_dir"
+
+  # The patch file is itself a YAML array; the host-webserver override is an
+  # entry inside that array. Detect an existing entry (any host value) so we
+  # know whether to add a new entry or update in place.
+  if grep -qE '^[[:space:]]*-[[:space:]]+id:[[:space:]]+host-webserver[[:space:]]*$' "$patch" 2>/dev/null; then
+    # Update the existing id-targeted row in place via awk. The script keeps
+    # every key inside the host-webserver row's config block (port, etc.)
+    # and rewrites only the host value to "0.0.0.0", inserting it if absent.
+    # Built to be idempotent: re-running on a file already pinned to 0.0.0.0
+    # leaves it unchanged byte-for-byte.
+    _dsh_web_bind_tmp="$DSH_HOME_PROFILES/.dsh-web-bind-helper.tmp"
+    awk -v target='  host: "0.0.0.0"' '
+        BEGIN { mode = 0; cfgindent = ""; hostemitted = 0 }
+        mode == 0 {
+            if ($0 ~ /^[ \t]*-[ \t]*id:[ \t]*host-webserver[ \t]*$/) {
+                print
+                mode = 1
+                next
+            }
+            print
+            next
+        }
+        mode == 1 {
+            if ($0 ~ /^[ \t]*config:[ \t]*$/) {
+                print
+                cfgindent = ""
+                if (match($0, /^[ \t]+/)) cfgindent = substr($0, 1, RSTART - 1) "  "
+
+                hostemitted = 0
+                mode = 2
+                next
+            }
+            print
+            mode = 3
+            next
+        }
+        mode == 2 {
+            if ($0 ~ /^[ \t]+host:[ \t]/) {
+                if (hostemitted == 0) {
+                    print cfgindent target
+                    hostemitted = 1
+                }
+                next
+            }
+            if ($0 ~ /^[ \t]+[A-Za-z_][A-Za-z0-9_]*:[ \t]*/) {
+                print
+                next
+            }
+            if (hostemitted == 0) {
+                print cfgindent target
+                hostemitted = 1
+            }
+            print
+            mode = 0
+            next
+        }
+    ' "$patch" > "$_dsh_web_bind_tmp" || die "awk failed to rewrite $patch"
+    if ! cmp -s "$patch" "$_dsh_web_bind_tmp"; then
+      mv "$_dsh_web_bind_tmp" "$patch"
+    else
+      rm -f "$_dsh_web_bind_tmp"
+    fi
+    log "webserver bind: ensured host=0.0.0.0 in $patch (existing row updated)"
+  else
+# host browser (Edge) can reach dsh web on Android 11+ (per-uid SELinux
+# isolates loopback-bound sockets; 0.0.0.0-bound ports share bind namespace).
+# Generated by setup-dsh-termux.sh. Remove this entry to revert.
+- id: host-webserver
+  config:
+    host: "0.0.0.0"
+YAML
+    log "webserver bind: appended host=0.0.0.0 entry to $patch"
+  fi
+}
+
+# ── 8. Remove (--reinstall) ──────────────────────────────────────────────
+# Deletes the live install (wrapper project) and any `dsh` bin wrapper so
+# the next ensure_* step installs from scratch. Keeps user data (sessions,
+# settings under ~/.dsh) and the patched-koffi tarball cache — add --force
+# to also rebuild koffi. Guarded against destructive DSH_HOME_DIR values.
+uninstall() {
+  case "$DSH_HOME_DIR" in
+    ""|/|"$HOME"|"$PREFIX"|"$PREFIX_BIN")
+      die "refusing to remove DSH_HOME_DIR=$DSH_HOME_DIR" ;;
+  esac
+  local running
+  running="$(pgrep -f 'dsh/lib/bin.js' 2>/dev/null | wc -l || true)"
+  if [ "$running" -gt 0 ]; then
+    warn "dsh is running ($running process(es)); old files stay open until it exits"
+  fi
+  if [ -e "$DSH_HOME_DIR" ]; then
+    log "removing install at $DSH_HOME_DIR ..."
+    rm -rf "$DSH_HOME_DIR"
+    log "removed."
+  else
+    log "no existing install at $DSH_HOME_DIR — nothing to remove."
+  fi
+  local stale
+  for stale in "$PREFIX_BIN/dsh" "$HOME/.local/bin/dsh"; do
+    if [ -e "$stale" ] || [ -L "$stale" ]; then rm -f "$stale"; fi
+  done
+}
+
+# ── 9. Verify ────────────────────────────────────────────────────────────
 verify() {
   log "Verifying..."
   command -v dsh >/dev/null 2>&1 || die "dsh not on PATH"
@@ -384,18 +634,20 @@ setTimeout(()=>process.exit(2),5000);" 2>/dev/null \
 
 # ── Main ─────────────────────────────────────────────────────────────────
 main() {
-  local force=""
+  local force="" reinstall=""
   for arg in "$@"; do
     case "$arg" in
       --force) force="force" ;;
-      -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-      *) die "unknown argument: $arg (only --force supported)" ;;
+      --reinstall) reinstall="yes" ;;
+      -h|--help) sed -n '2,72p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+      *) die "unknown argument: $arg (supported: --force, --reinstall)" ;;
     esac
   done
 
   is_termux || die "this script is for Termux (aarch64) only"
 
   log "target: dsh $DSH_VERSION (koffi $KOFFI_VERSION)"
+  [ "$reinstall" = "yes" ] && uninstall
   ensure_prereqs
   # Defines gyp's android_ndk_path so node-pty's node-gyp configure works.
   export npm_config_android_ndk_path="$PREFIX"
@@ -405,6 +657,7 @@ main() {
   ensure_sharp_wasm
   ensure_session_atomic_rename
   ensure_dsh_bin
+  ensure_webserver_bind
   verify
 }
 
