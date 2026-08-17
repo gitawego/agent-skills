@@ -415,6 +415,41 @@ PY
   grep -q "await rename(tmp, finalPath)" "$f" || die "session atomic-rename patch did not apply"
   log "patched session persistence: link() -> rename() fallback on EACCES"
 }
+# ── 7a. Kill any stale dsh web so the next boot can bind the port ───────
+# Background (verified on Termux): when a user Ctrl+C's the launcher that
+# spawned `nohup dsh web`, the SIGINT does not always reach the node child
+# (nohup detaches it from the controlling terminal, and the launcher's job
+# control is gone). The node process keeps the LISTEN socket bound, and the
+# next boot fails with EADDRINUSE. `pkill -f 'bin.js web'` may not match by
+# the prctl PR_SET_NAME from nohup, so we kill by full cmdline match.
+# Verified: SIGTERM stops the node child within 2s; SIGKILL is the fallback
+# if the agent has an AbortController that refuses SIGTERM.
+ensure_dsh_zombie_killed() {
+  local pids
+  pids=$(ps -eo pid,args 2>/dev/null | awk '/[l]ib\/bin\.js web/ { print $1 }')
+  if [ -z "$pids" ]; then
+    log "no stale dsh web process detected."
+    return 0
+  fi
+  log "stale dsh web process(es) detected: $pids — sending SIGTERM."
+  for p in $pids; do
+    kill -TERM "$p" 2>/dev/null || warn "kill -TERM $p failed"
+  done
+  local waited=0
+  while [ $waited -lt 10 ]; do
+    sleep 1
+    waited=$((waited + 1))
+    if ! kill -0 $pids 2>/dev/null; then
+      log "stale dsh web exited after ${waited}s."
+      return 0
+    fi
+  done
+  warn "dsh web did not exit after 10s of SIGTERM — escalating to SIGKILL."
+  for p in $pids; do
+    kill -KILL "$p" 2>/dev/null || warn "kill -KILL $p failed"
+  done
+  sleep 1
+}
 
 # ── 7. `dsh` on PATH: sh wrapper (symlinks break: no /usr for the shebang) ─
 ensure_dsh_bin() {
@@ -656,7 +691,7 @@ main() {
   ensure_install "$force"
   ensure_sharp_wasm
   ensure_session_atomic_rename
-  ensure_dsh_bin
+  ensure_dsh_zombie_killed
   ensure_webserver_bind
   verify
 }
