@@ -25,6 +25,7 @@
 #
 # Usage:
 #   bash setup-pnpm-termux.sh                # install/verify pnpm 12
+#   bash setup-pnpm-termux.sh --upgrade      # upgrade to latest release
 #   PNPM_VERSION=12.0.0-rc.3 bash setup-pnpm-termux.sh   # pin a version
 #   bash setup-pnpm-termux.sh --force        # re-download the binary
 #
@@ -97,6 +98,21 @@ ensure_glibc_runner() {
 }
 
 # ── 3. Download pnpm 12 standalone (glibc variant) ──────────────────────
+resolve_latest_version() {
+  # Query GitHub releases list (newest first) and pick the first v12.x.y.
+  # /releases/latest returns whichever major had the most recent release,
+  # which can be v11 — so we must filter explicitly.
+  local tag
+  tag="$(curl -fsSL 'https://api.github.com/repos/pnpm/pnpm/releases?per_page=20' \
+         | grep '"tag_name"' \
+         | grep '"v12\.' \
+         | head -1 \
+         | sed 's/.*"tag_name": *"v\([^"]*\)".*/\1/')" \
+    || die "failed to query latest pnpm v12 release from GitHub"
+  [[ -n "$tag" ]] || die "no v12 release found on GitHub"
+  echo "$tag"
+}
+
 detect_arch() {
   case "$(uname -m)" in
     aarch64|arm64) echo "arm64" ;;
@@ -123,9 +139,10 @@ ensure_pnpm_binary() {
   url="https://github.com/pnpm/pnpm/releases/download/v${PNPM_VERSION}/pnpm-linux-${arch}.tar.gz"
   log "Downloading pnpm ${PNPM_VERSION} ($arch)..."
   tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
   curl -fsSL "$url" -o "$tmp/pnpm.tar.gz" || die "download failed: $url"
-  tar -xzf "$tmp/pnpm.tar.gz" -C "$tmp" || die "extract failed"
+  # Hardlink warnings on Termux /data are harmless — files extract as
+  # regular copies; ignore tar's exit code and verify the binary below.
+  tar -xzf "$tmp/pnpm.tar.gz" -C "$tmp" 2>/dev/null || true
   [ -f "$tmp/pnpm" ] || die "tarball has no pnpm binary"
 
   mkdir -p "$PNPM_HOME"
@@ -136,6 +153,7 @@ ensure_pnpm_binary() {
   if [ -d "$PNPM_HOME/dist" ]; then mv "$PNPM_HOME/dist" "$PNPM_HOME/dist.old"; fi
   mv "$PNPM_HOME/dist.new" "$PNPM_HOME/dist"
   rm -rf "$PNPM_HOME/dist.old"
+  rm -rf "$tmp"
   log "Installed pnpm binary to $PNPM_BIN"
 }
 
@@ -220,13 +238,27 @@ verify() {
 
 # ── Main ─────────────────────────────────────────────────────────────────
 main() {
-  local force=""
-  [[ "${1:-}" = "--force" ]] && force="force"
+  local force="" upgrade=""
+  for arg in "$@"; do
+    case "$arg" in
+      --force)   force="force" ;;
+      --upgrade) upgrade="upgrade" ;;
+      *) die "unknown flag: $arg (use --force or --upgrade)" ;;
+    esac
+  done
 
   log "Termux pnpm setup (idempotent)"
   ensure_prereqs
   ensure_glibc_runner
+
+  if [[ "$upgrade" = "upgrade" ]]; then
+    local latest
+    latest="$(resolve_latest_version)"
+    log "latest stable pnpm: $latest"
+    PNPM_VERSION="$latest"
+  fi
   ensure_pnpm_binary "$force"
+
   ensure_wrapper
   ensure_pi_wrapper
   ensure_global_config
