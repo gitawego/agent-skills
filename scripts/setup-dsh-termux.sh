@@ -101,11 +101,32 @@
 set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────────
-# No DSH_VERSION env var -> resolve the latest published version (so plain
-# re-runs upgrade); fall back to the last known-good pin if npm is offline.
+# No DSH_VERSION env var -> resolve the newest published version across the
+# `latest` and `next` dist-tags, so a plain re-run upgrades to the newest
+# build (e.g. 0.1.0-rc.8 on `next` beats 0.1.0-rc.7 on `latest`); fall back
+# to the last known-good pin if npm is offline.
 DSH_VERSION="${DSH_VERSION:-}"
 if [ -z "$DSH_VERSION" ]; then
-  DSH_VERSION="$(npm view @deepseek-ai/dsh version 2>/dev/null || true)"
+  _dsh_latest="$(npm view @deepseek-ai/dsh version 2>/dev/null || true)"
+  _dsh_next="$(npm view @deepseek-ai/dsh@next version 2>/dev/null || true)"
+  DSH_VERSION="$(python3 - "$_dsh_latest" "$_dsh_next" <<'PY'
+import sys, re
+def key(v):
+    m = re.match(r'^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$', v or '')
+    if not m:
+        return (0, 0, 0, 0, ())
+    maj, mnr, pat = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    pre = m.group(4)
+    if pre is None:
+        return (maj, mnr, pat, 1, ())
+    parts = []
+    for t in re.split(r'[._-]', pre):
+        parts.append((0, int(t), '') if t.isdigit() else (1, 0, t))
+    return (maj, mnr, pat, 0, tuple(parts))
+cands = [a for a in sys.argv[1:] if a]
+print(max(cands, key=key) if cands else '')
+PY
+  )"
   [ -n "$DSH_VERSION" ] || DSH_VERSION="0.1.0-rc.6"
 fi
 KOFFI_VERSION="${KOFFI_VERSION:-3.1.4}"         # version dsh's range resolves to
@@ -333,7 +354,7 @@ ensure_install() {
   if [ "$installer" = pnpm ]; then
     # pnpm's build-script env lacks npm's bundled node-gyp shim on PATH.
     export PATH="$PREFIX/lib/node_modules/npm/bin/node-gyp-bin:$PATH"
-    ( cd "$DSH_HOME_DIR" && pnpm i ) \
+    ( cd "$DSH_HOME_DIR" && pnpm i --no-frozen-lockfile ) \
       || die "pnpm install failed (see pnpm error above)"
   else
     ( cd "$DSH_HOME_DIR" && npm i --no-audit --no-fund ) \
@@ -415,6 +436,66 @@ PY
   grep -q "await rename(tmp, finalPath)" "$f" || die "session atomic-rename patch did not apply"
   log "patched session persistence: link() -> rename() fallback on EACCES"
 }
+# ── 6b. Refresh profile plugin trees after a host version change ─────────
+# The cordis loader resolves bare module names PROFILE-FIRST (loader baseUrl
+# = the profile dir), so anything hoisted into
+# ~/.dsh/profiles/<name>/node_modules/@deepseek-ai/ SHADOWS the upgraded host
+# copy under $DSH_HOME_DIR. After a host upgrade a frozen pre-upgrade profile
+# tree therefore serves stale host packages: observed 2026-08-21 — dsh web
+# answered a bare HTTP 400 on / because a profile-local
+# dsh-host-webserver@0.1.0-rc.7 (hoisted by a plugin's dead regular dep)
+# lacked the new renderIndex() that rc.1's frontend-static calls on every
+# index request. Fix: when the host version differs from the version a
+# profile's tree was last built against (stamp file), wipe the profile's
+# REGENERABLE install state (node_modules + lockfiles — never cordis.patch.yml,
+# cordis.yml, package.json, sessions, settings) and reinstall from the
+# current manifests. Idempotent: matching stamp + resolvable host = no-op.
+refresh_profiles() {
+  local profiles_dir="$DSH_HOME_PROFILES"
+  [ -d "$profiles_dir" ] || { log "no profiles dir ($profiles_dir) — skipping profile refresh"; return 0; }
+  local profile stamp prev installer
+  for profile in "$profiles_dir"/*/; do
+    [ -d "$profile" ] || continue
+    [ -f "$profile/package.json" ] || continue
+    stamp="$profile/.dsh-setup-host-version"
+    prev=""; [ -f "$stamp" ] && prev="$(cat "$stamp" 2>/dev/null || true)"
+    if [ "$prev" = "$DSH_VERSION" ]; then
+      log "profile $(basename "$profile"): tree matches host $DSH_VERSION — skipping."
+      continue
+    fi
+    if [ -n "$prev" ]; then
+      warn "profile $(basename "$profile"): built against host '$prev', now '$DSH_VERSION' — rebuilding (stale copies shadow the upgraded host)."
+    else
+      log "profile $(basename "$profile"): no build stamp — rebuilding to guarantee a clean tree."
+    fi
+    # Regenerable state only. cordis.patch.yml / cordis.yml / package.json /
+    # sessions / storages stay untouched.
+    rm -rf "${profile:?}/node_modules"
+    rm -f "$profile/pnpm-lock.yaml" "$profile/package-lock.json"
+    if command -v pnpm >/dev/null 2>&1; then
+      ( cd "$profile" && pnpm i --no-frozen-lockfile ) \
+        || die "profile $(basename "$profile"): pnpm install failed — fix or remove $profile/node_modules manually"
+    else
+      ( cd "$profile" && npm i --no-audit --no-fund ) \
+        || die "profile $(basename "$profile"): npm install failed — fix or remove $profile/node_modules manually"
+    fi
+    # Invariant that caught the original bug: bare-name resolution from the
+    # profile must land on the HOST tree, never a profile-local copy.
+    node -e "
+      const { createRequire } = require('module');
+      const r = createRequire(process.argv[1] + '/probe.js');
+      const p = r.resolve('@deepseek-ai/dsh-base/package.json');
+      if (!p.startsWith(process.argv[2] + '/')) {
+        console.error('profile resolves @deepseek-ai/dsh-base to ' + p + ', expected under ' + process.argv[2]);
+        process.exit(1);
+      }
+    " "$profile" "$DSH_HOME_DIR/node_modules" \
+      || die "profile $(basename "$profile"): a stale @deepseek-ai/* copy still shadows the host — inspect ${profile}node_modules"
+    printf '%s\n' "$DSH_VERSION" > "$stamp"
+    log "profile $(basename "$profile"): rebuilt against host $DSH_VERSION."
+  done
+}
+
 # ── 7a. Kill any stale dsh web so the next boot can bind the port ───────
 # Background (verified on Termux): when a user Ctrl+C's the launcher that
 # spawned `nohup dsh web`, the SIGINT does not always reach the node child
@@ -590,6 +671,14 @@ ensure_webserver_bind() {
     fi
     log "webserver bind: ensured host=0.0.0.0 in $patch (existing row updated)"
   else
+    # dsh's default patch file is the flow-style empty array `[]`. Appending a
+    # block-style entry after `[]` is invalid YAML (needs a document separator),
+    # so drop a lone `[]` placeholder before we append our entry. A file that
+    # already holds a block-style array is left untouched and appended to.
+    if grep -q '^[[:space:]]*\[\][[:space:]]*$' "$patch" 2>/dev/null; then
+      sed -i '/^[[:space:]]*\[\][[:space:]]*$/d' "$patch"
+    fi
+    cat >> "$patch" <<'YAML'
 # host browser (Edge) can reach dsh web on Android 11+ (per-uid SELinux
 # isolates loopback-bound sockets; 0.0.0.0-bound ports share bind namespace).
 # Generated by setup-dsh-termux.sh. Remove this entry to revert.
@@ -662,7 +751,16 @@ setTimeout(()=>process.exit(2),5000);" 2>/dev/null \
   web_out="$(timeout 20 dsh web 2>&1 || true)"
   printf '%s' "$web_out" | grep -q '127.0.0.1' \
     || die "dsh web failed to start a server: $(printf '%s' "$web_out" | tail -3)"
-  log "web profile boot OK (server up)"
+  # The webserver answers requests before the URL line prints; a bare-400
+  # server (stale profile shadow of a host package) used to pass this check.
+  # Parse the printed canonical URL and require HTTP 200 on /.
+  local web_url web_code
+  web_url="$(printf '%s' "$web_out" | grep -o 'http://127\.0\.0\.1:[0-9]*' | head -1)"
+  [ -n "$web_url" ] || die "dsh web printed no local URL: $(printf '%s' "$web_out" | tail -3)"
+  web_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "$web_url/" 2>/dev/null || echo 000)"
+  [ "$web_code" = "200" ] \
+    || die "dsh web answered HTTP $web_code on $web_url/ (want 200) — likely a stale profile tree; re-run this script"
+  log "web profile serves / with HTTP 200 ($web_url)"
 
   printf '\033[1;32m[setup-dsh]\033[0m All checks passed. dsh is ready.\n'
 }
@@ -691,6 +789,7 @@ main() {
   ensure_install "$force"
   ensure_sharp_wasm
   ensure_session_atomic_rename
+  refresh_profiles
   ensure_dsh_zombie_killed
   ensure_webserver_bind
   verify
