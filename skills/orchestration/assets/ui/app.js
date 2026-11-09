@@ -103,15 +103,22 @@ async function load({ quiet = false } = {}) {
   try {
     const next = await api("/api/state");
     state = next;
-    /* a command the engine refused must not look queued forever */
+    /* a command the engine refused must not look queued forever; history is
+       read silently on the first load so an old refusal is not replayed */
+    const errors = [];
     for (const project of next.projects) {
       for (const campaign of project.campaigns || []) {
-        for (const event of campaign.events || []) {
-          if (event.type !== "error") continue;
-          if (lastErrorTs && event.ts <= lastErrorTs) continue;
-          lastErrorTs = event.ts;
-          toast(`refused: ${event.data?.message || "the engine said no"}`);
-        }
+        for (const event of campaign.events || []) if (event.type === "error") errors.push(event);
+      }
+    }
+    errors.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+    if (lastErrorTs === null) {
+      lastErrorTs = errors.length ? errors[errors.length - 1].ts : "";
+    } else {
+      for (const event of errors) {
+        if (event.ts <= lastErrorTs) continue;
+        lastErrorTs = event.ts;
+        toast(`refused: ${event.data?.message || "the engine said no"}`);
       }
     }
     if (clearAfterLoad.size) {
@@ -469,6 +476,43 @@ function strip(t, family = "idle") {
     </li>`;
 }
 
+/* One state, one set of actions: a button that cannot apply is not shown. */
+function campaignActions(c) {
+  const root = esc(c.root);
+  const slug = esc(c.slug);
+  const attrs = `data-root="${root}" data-campaign="${slug}"`;
+  const live = c.tickets.filter((t) => t.stage === "working").length;
+  const buttons = [`<button class="btn" data-act="save-campaign" ${attrs}>Save campaign</button>`];
+  let note = "";
+
+  if (c.stage === "draft") {
+    note = "Draft. Fill the goal, add tickets and bind a chain, then approve — nothing dispatches before that.";
+  } else if (c.stage === "awaiting_approval") {
+    buttons.push(`<button class="btn primary" data-act="approve-campaign" ${attrs}>Approve and dispatch</button>`);
+    note = "Plan ready. Approving dispatches the first frontier; nothing has run yet.";
+  } else if (c.stage === "running") {
+    buttons.push(`<button class="btn primary" data-act="pause" ${attrs}>Pause</button>`);
+    buttons.push(`<button class="btn signal" data-act="cancel-campaign" ${attrs}>Cancel all</button>`);
+    note = `Running${live ? ` · ${live} live run${live === 1 ? "" : "s"}` : " · no run in flight"}. The supervisor dispatches on its next tick.`;
+  } else if (c.stage === "paused") {
+    buttons.push(`<button class="btn primary" data-act="resume" ${attrs}>Resume</button>`);
+    if (c.delivery?.mode === "manual") buttons.push(`<button class="btn signal" data-act="deliver" ${attrs}>Deliver now</button>`);
+    buttons.push(`<button class="btn" data-act="archive-campaign" ${attrs}>Archive</button>`);
+    note = `Paused${c.reason ? ` — ${c.reason}` : ""}. Nothing dispatches until you resume.`;
+  } else if (c.stage === "delivered") {
+    buttons.push(`<button class="btn" data-act="resume" ${attrs}>Reopen to add tickets</button>`);
+    buttons.push(`<button class="btn" data-act="archive-campaign" ${attrs}>Archive</button>`);
+    note = c.delivery?.mode === "manual"
+      ? `Delivered, waiting for you: ${c.delivery.detail || "the branch is ready"}`
+      : "Delivered. Archive it when you have finished reading.";
+  } else {
+    note = "Archived. Reopen a new campaign rather than adding to a closed record.";
+  }
+
+  return `<div class="actions">${buttons.join("")}</div>
+    <p class="stage-note">${esc(note)}</p>`;
+}
+
 function viewCampaign() {
   const c = current();
   if (!c) return noCampaigns();
@@ -538,13 +582,7 @@ function viewCampaign() {
           <p class="sub" style="margin:6px 0 0">One per line, <span class="mono">name | command</span>. The supervisor runs them in the ticket's worktree.</p>
         </div>
 
-        <div class="actions">
-          <button class="btn primary" data-act="save-campaign" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Save campaign</button>
-          <button class="btn" data-act="approve-campaign" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Approve and dispatch</button>
-          <button class="btn" data-act="pause" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Pause</button>
-          <button class="btn" data-act="resume" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Resume</button>
-          ${c.delivery?.mode === "manual" ? `<button class="btn signal" data-act="deliver" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Deliver now</button>` : ""}
-        </div>
+        ${campaignActions(c)}
       </div>
     </div>
 
@@ -981,6 +1019,14 @@ function closeDrawer() {
 
 function routeFromHash() {
   const hash = location.hash.slice(1);
+  if (hash.startsWith("campaign/")) {
+    const slug = decodeURIComponent(hash.slice("campaign/".length));
+    const found = campaigns().find((c) => c.slug === slug);
+    if (found) selected = { root: found.root, campaign: found.slug };
+    view = "campaign";
+    render();
+    return;
+  }
   if (hash.startsWith("ticket/")) {
     const id = decodeURIComponent(hash.slice("ticket/".length));
     if (current() && id) openTicket(current().root, current().slug, id);
@@ -1008,6 +1054,7 @@ document.addEventListener("click", (event) => {
     case "select-campaign":
       clearDrafts("campaign");
       selected = { root, campaign };
+      if (view === "campaign") history.replaceState(null, "", `#campaign/${encodeURIComponent(campaign)}`);
       return render();
     case "open-ticket":
       event.preventDefault();

@@ -37,7 +37,9 @@ A **strip** is one ticket: a perforated number stub, the title, the kind, and te
 | **Settings** | Console limits and the ticket kinds, each with its chain as removable chips and a picker built from the live catalog | Edit and save, refresh the model catalog |
 | **Drawer** | One ticket in a pinned head and foot: what to build, criteria, findings, the last answer, its runs with model and cost, and the run log streaming | Only what applies: stop while it runs, retry when it failed or was sent back, answer when it waits, a note when it has landed; plus **edit** (title, kind, paths, blockers, body, criteria) and **remove** |
 
-Views have addresses: `#inbox`, `#board`, `#campaign`, `#settings`, and `#ticket/03` for the drawer, so a link or a screenshot points at the same thing next time.
+Views have addresses: `#inbox`, `#board`, `#campaign`, `#campaign/<slug>`, `#settings`, and `#ticket/03` for the drawer, so a link or a screenshot points at the same thing next time.
+
+The campaign screen shows **one state and one set of actions**. Nothing offers "approve" once a campaign has been approved: `draft` and `awaiting_approval` offer approve, `running` offers pause and cancel, `paused` offers resume (and deliver when a delivery is waiting), `delivered` offers reopen and archive, `archived` offers nothing. A line under the buttons says what the state means right now, because the eyebrow at the top of the page scrolls away.
 
 Dark is the default. `?theme=light` / `?theme=dark`, or the toggle at the foot of the rail, switches and remembers. A light OS setting no longer overrides the house default, because the board is meant for a dark room. The `S / M / L` control in the rail sets the text size and is remembered too: the whole scale is in `rem`, and the root grows with the window (16 px, 17 px above 1500 px wide, 18.5 px above 1900, 20 px above 2400), so a 4K screen at native resolution is readable without zooming the browser.
 
