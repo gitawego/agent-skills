@@ -1,0 +1,78 @@
+{
+  "skill_name": "orchestration",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "This repo needs a CSV export on the reports page. Orchestrate it: break it down, then run the campaign.",
+      "expected_output": "A campaign under orchestration/<slug>/ with a filled campaign form and 2+ tickets that declare blockers and touched paths, a plan table, and a refused dispatch because no ticket kind is bound yet, naming `orchestrate bind`.",
+      "files": [],
+      "expectations": [
+        "Creates orchestration/<slug>/campaign.md with a one-sentence goal, brief, acceptance criteria, constraints and a reading list",
+        "Creates one file per ticket under orchestration/<slug>/tickets/, each with id, kind, touches and at least one acceptance criterion",
+        "Runs `node scripts/orchestrate.mjs plan` and reports the ticket table, not a prose summary",
+        "Refuses to approve while a ticket kind has no model chain, and names the exact bind command",
+        "Never names a model until `catalog` has been read in this session"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "bind opus to the code tickets",
+      "expected_output": "A refusal: opus is not in this machine's catalog, followed by the catalog command and a shortlist of real model ids with their context sizes.",
+      "files": [],
+      "expectations": [
+        "Runs `orchestrate catalog` (or `pi --list-models`) instead of guessing",
+        "Says the model is not in the catalog and quotes the actual error",
+        "Offers 2-4 real provider/model ids from the catalog with reasoning about which fits coding",
+        "Does not write a chain containing a model that is absent from the catalog"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "The code tickets should use a cheaper model from now on, the campaign is in the middle of a run. Change it.",
+      "expected_output": "The change is refused while the campaign runs, with the pause route explained, unless the human explicitly forces it.",
+      "files": [],
+      "expectations": [
+        "Detects that the campaign stage is running, or that a run is live",
+        "Refuses the bind and explains that a binding may change only while nothing is running",
+        "Offers `orchestrate pause <campaign>` and waiting for live runs, or an explicit --force",
+        "Does not edit campaign.md directly to get around the refusal"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "how do I watch it?",
+      "expected_output": "The panel URL, printed by `orchestrate run` or `orchestrate panel`, with the token in the query string and a one-line description of the Inbox and Board screens.",
+      "files": [],
+      "expectations": [
+        "Gives a loopback URL of the form http://127.0.0.1:<port>/?token=<token>",
+        "Says the panel is started by `orchestrate run` and re-printed by `orchestrate panel`",
+        "Mentions that the Inbox is the default screen and shows only what needs a person",
+        "Does not claim remote or multi-machine access"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "A worker asked which migration order to use. Handle it.",
+      "expected_output": "Either an answer citing a written source (campaign brief, ticket criteria, or a standing decision) with the citation recorded on the ticket, or one inbox item containing the question, the options, and what the worker already tried.",
+      "files": [],
+      "expectations": [
+        "Searches the campaign form and the ticket before asking the human",
+        "If it answers, it quotes the line it relied on and records the citation",
+        "If it escalates, it produces exactly one inbox item and does not guess a default",
+        "Never infers 'it needs a human' from prose: the question comes from a needs_answer report"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "Make sure the campaign cannot merge to main by itself.",
+      "expected_output": "Autonomy set to supervised (or max_autoship_lines 0), so delivery files a review item and the branch stays unmerged until a person approves.",
+      "files": [],
+      "expectations": [
+        "Sets autonomy: supervised in the campaign form, or max_autoship_lines: 0",
+        "Explains that supervised leaves the delivery as a review item in the Inbox",
+        "Shows the review item after delivery, with the added and removed line counts",
+        "Claims no merge into main until `orchestrate review <item> approve` or the panel equivalent"
+      ]
+    }
+  ]
+}

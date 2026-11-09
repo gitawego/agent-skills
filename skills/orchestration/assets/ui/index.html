@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Orchestration</title>
+    <link rel="stylesheet" href="/fonts/fonts.css" />
+    <link rel="stylesheet" href="/styles.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%2314181b'/><path d='M3 5h10M3 8h10M3 11h6' stroke='%23e9ebe7' stroke-width='1'/></svg>"
+    />
+  </head>
+  <body>
+    <div class="shell">
+      <div class="rail-signal" id="signal" aria-hidden="true"><span id="signalCount"></span></div>
+
+      <aside class="rail">
+        <div class="wordmark">orchestration</div>
+        <div class="rail-label">Campaigns</div>
+        <nav class="campaign-list" id="campaigns" aria-label="Campaigns"></nav>
+        <button class="rail-new" data-act="new-campaign">New campaign</button>
+        <div class="rail-foot">
+          <span id="foot-state">local</span>
+          <span class="themetoggle" title="Theme">
+            <button data-act="theme" data-theme="dark">dark</button>
+            <button data-act="theme" data-theme="light">light</button>
+          </span>
+          <span class="textsize" title="Text size">
+            <button data-act="text-size" data-size="15">S</button>
+            <button data-act="text-size" data-size="16">M</button>
+            <button data-act="text-size" data-size="18">L</button>
+          </span>
+        </div>
+      </aside>
+
+      <div class="main">
+        <header class="topbar">
+          <div class="crumbs" id="crumbs"></div>
+          <nav class="tabs" id="nav" aria-label="Views">
+            <button data-view="inbox">Inbox <b id="tab-count"></b></button>
+            <button data-view="board">Board</button>
+            <button data-view="campaign">Campaign</button>
+            <button data-view="settings">Settings</button>
+          </nav>
+          <div class="link"><span class="dot" id="conn"></span><span id="connText">connecting</span></div>
+        </header>
+
+        <main class="view" id="app"></main>
+      </div>
+
+      <aside class="drawer" id="drawer" hidden></aside>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>

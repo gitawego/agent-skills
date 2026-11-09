@@ -1,0 +1,7 @@
+The fonts in this folder are redistributed under the SIL Open Font License 1.1:
+
+  Archivo        Copyright 2020 The Archivo Project Authors (Omnibus-Type)
+  IBM Plex Mono  Copyright 2017 IBM Corp.
+  Newsreader     Copyright 2020 The Newsreader Project Authors
+
+The full license text is at https://scripts.sil.org/OFL
