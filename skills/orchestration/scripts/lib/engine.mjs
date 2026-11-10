@@ -940,7 +940,7 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
     ticketTitle: ticketTitle(ticket),
     runId,
     workdir: run.workdir,
-    base: campaign.data.base || "main",
+    base: (campaign.data.landing || "branch") === "branch" ? integrationBranch(slug) : (campaign.data.base || "main"),
     kind: ticket.data.kind,
     data: ticket,
     landing: campaign.data.landing || "branch",
@@ -993,6 +993,8 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
   });
   state.runs[runId] = record;
   entry.gateRun = runId;
+  entry.run = runId;
+  state.slots[id] = runId;
   setStage(root, slug, state, id, "working", { run: runId, reason: "reviewing" });
   appendEvent(root, {
     campaign: slug,
@@ -1090,6 +1092,9 @@ function startJudge({ root, slug, state, plan, ticket, run, report, kinds, conso
     workdir: root,
   });
   state.runs[runId] = record;
+  entry.gateRun = runId;
+  entry.run = runId;
+  state.slots[id] = runId;
   setStage(root, slug, state, id, "working", { run: runId, reason: "judging the question" });
   appendEvent(root, { campaign: slug, ticket: id, run: runId, type: "run.dispatched", data: { role: "judge" } });
   return record;
@@ -1171,6 +1176,10 @@ function startMerge({ root, slug, state, ticketId, run, conflict, kinds, console
     workdir: dir,
   });
   state.runs[runId] = record;
+  const entry = ticketState(state, ticketId);
+  entry.gateRun = runId;
+  entry.run = runId;
+  state.slots[ticketId] = runId;
   setStage(root, slug, state, ticketId, "working", { run: runId, reason: "resolving a merge" });
   appendEvent(root, {
     campaign: slug,
@@ -1283,7 +1292,7 @@ function dispatchFrontier(root, slug, state, plan, kinds, consoleConfig, data) {
     if (entry.stage !== "queued" && entry.stage !== "needs_changes") continue;
     const humanResume = entry.pendingResume?.from === "human";
     const cap = consoleConfig.limits.max_concurrent + (humanResume ? consoleConfig.limits.human_slot_extra : 0);
-    if (total >= cap) break;
+    if (total >= cap) continue;
     const kind = kinds[ticket.data.kind];
     if (!kind) continue;
     if ((perKind[ticket.data.kind] || 0) >= kind.max_concurrent) continue;
@@ -1294,16 +1303,14 @@ function dispatchFrontier(root, slug, state, plan, kinds, consoleConfig, data) {
         ? { findings: entry.findings }
         : null;
 
-    if (!resume) {
-      const overlaps = asArray(ticket.data.touches).filter((glob) =>
-        touched.some((other) => touchesOverlap([glob], [other])),
-      );
-      if (overlaps.length) {
-        entry.waitingOn = overlaps[0];
-        continue;
-      }
-      delete entry.waitingOn;
+    const overlaps = asArray(ticket.data.touches).filter((glob) =>
+      touched.some((other) => touchesOverlap([glob], [other])),
+    );
+    if (overlaps.length) {
+      entry.waitingOn = overlaps[0];
+      continue;
     }
+    delete entry.waitingOn;
 
     const dispatched = dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig, data, resume });
     if (dispatched) {

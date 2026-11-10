@@ -1,5 +1,6 @@
 // pi adapter: the original CLI worker, now behind the adapter interface.
 import { spawnSync } from "node:child_process";
+import { ensureDir } from "../lib/util.mjs";
 import { listPiModels, resetPiCatalog } from "../lib/pi-catalog.mjs";
 import { buildWorkerArgv } from "../lib/runs.mjs";
 import { wrapCommand } from "../lib/sandbox.mjs";
@@ -37,6 +38,7 @@ export function listModels({ refresh = false } = {}) {
 }
 
 export function buildLaunch({ run, modelEntry, thinking, tools, prompt, sessionsDir, systemPrompts, attachments = [], runDir, workdir, sandbox, command }) {
+  if (sessionsDir) ensureDir(sessionsDir);
   const base = buildWorkerArgv({ run, modelEntry, thinking, tools, prompt, sessionsDir, systemPrompts, attachments });
   const wrapped = wrapCommand({
     command: command || process.env.PI_BIN || "pi",

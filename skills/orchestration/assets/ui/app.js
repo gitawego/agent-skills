@@ -43,15 +43,20 @@ const initialHash = (() => {
   const [name, query = ""] = raw.split("?");
   return { name, params: new URLSearchParams(query) };
 })();
-let view = VIEWS.includes(initialHash.name) ? initialHash.name : "fleet";
+let view = VIEWS.includes(initialHash.name)
+  ? initialHash.name
+  : initialHash.name.startsWith("campaign/")
+    ? "campaign"
+    : "fleet";
 let fleetStatus = FLEET_STATUS.includes(initialHash.params.get("status")) ? initialHash.params.get("status") : "all";
 let fleetProject = initialHash.params.get("project") || "";
 let fleetAdapter = initialHash.params.get("adapter") || "";
 let fleetQuery = initialHash.params.get("q") || "";
+let initialCampaign = initialHash.params.get("campaign") || (initialHash.name.startsWith("campaign/") ? decodeURIComponent(initialHash.name.slice("campaign/".length)) : null);
 let fleetLimit = 200;
 let dispatchModalMode = "paused";
 let quotaDraft = {};
-let selected = { root: null, campaign: null };
+let selected = { root: null, campaign: initialCampaign };
 let drawer = null;
 let logTimer = null;
 let logOffset = 0;
@@ -237,8 +242,16 @@ function current() {
   return campaignOf(selected.root, selected.campaign) || campaigns()[0] || null;
 }
 
+function targetCampaigns() {
+  if (selected.campaign) {
+    const list = campaigns().filter((c) => c.slug === selected.campaign && (!selected.root || c.root === selected.root));
+    if (list.length) return list;
+  }
+  return campaigns();
+}
+
 function allOpenItems() {
-  return campaigns().flatMap((c) => (c.inbox || []).filter((i) => i.status === "open").map((item) => ({ ...item, campaign: c })));
+  return targetCampaigns().flatMap((c) => (c.inbox || []).filter((i) => i.status === "open").map((item) => ({ ...item, campaign: c })));
 }
 
 function openItems() {
@@ -253,7 +266,7 @@ function acceptanceItems() {
 
 function fleetRows() {
   const rows = [];
-  for (const c of campaigns()) {
+  for (const c of targetCampaigns()) {
     for (const t of c.tickets || []) {
       rows.push({
         type: "ticket",
@@ -386,8 +399,18 @@ function ensureSelection() {
     selected = { root: null, campaign: null };
     return;
   }
-  const found = all.find((c) => c.root === selected.root && c.slug === selected.campaign);
-  if (!found) selected = { root: all[0].root, campaign: all[0].slug };
+  if (!selected.campaign) {
+    if (view === "board" || view === "campaign") {
+      selected = { root: all[0].root, campaign: all[0].slug };
+    }
+    return;
+  }
+  const found = all.find((c) => (!selected.root || c.root === selected.root) && c.slug === selected.campaign);
+  if (!found) {
+    selected = (view === "board" || view === "campaign")
+      ? { root: all[0].root, campaign: all[0].slug }
+      : { root: null, campaign: null };
+  }
 }
 
 function priceScore(row) {
@@ -636,10 +659,15 @@ function fleetTabs(counts) {
 }
 
 function fleetFilters() {
-  const projects = [...new Map(campaigns().map((c) => [c.project, c.root])).entries()];
+  const allList = campaigns();
+  const projects = [...new Map(allList.map((c) => [c.project, c.root])).entries()];
   const adapters = [...new Set(fleetRows().map((row) => row.adapter).filter(Boolean))].sort();
   return `<div class="fleet-filters">
     <input type="search" data-role="fleet-search" value="${esc(fleetQuery)}" placeholder="Search task, project, model, queue reason…" aria-label="Search the fleet" autocomplete="off" spellcheck="false" />
+    <select data-role="fleet-campaign" aria-label="Filter by campaign">
+      <option value="">all campaigns</option>
+      ${allList.map((c) => `<option value="${esc(c.slug)}" data-root="${esc(c.root)}" ${selected.campaign === c.slug && (!selected.root || selected.root === c.root) ? "selected" : ""}>${esc(c.slug)}</option>`).join("")}
+    </select>
     <select data-role="fleet-project" aria-label="Filter by project">
       <option value="">all projects</option>
       ${projects.map(([name, root]) => `<option value="${esc(name)}" ${fleetProject === name || fleetProject === root ? "selected" : ""}>${esc(name)}</option>`).join("")}
@@ -656,8 +684,12 @@ function viewFleet() {
   if (!campaigns().length) return noCampaigns();
   const rows = fleetRows();
   const counts = fleetCounts(rows);
-  return `<h1 class="page">Fleet</h1>
-    <p class="lede">Every ticket across every project, with why it is or is not moving. Click a row to open the ticket; acceptance rows open the delivery.</p>
+  const scopeTitle = selected.campaign ? ` <span class="hint">· ${esc(selected.campaign)}</span>` : "";
+  const lede = selected.campaign
+    ? `Tickets in <b>${esc(selected.campaign)}</b>, with why they are or are not moving. Click a row to open the ticket; acceptance rows open the delivery.`
+    : "Every ticket across every project, with why it is or is not moving. Click a row to open the ticket; acceptance rows open the delivery.";
+  return `<h1 class="page">Fleet${scopeTitle}</h1>
+    <p class="lede">${lede}</p>
     ${dispatchBanner()}
     ${quotaStrip(state?.console?.quotas || [])}
     ${fleetTabs(counts)}
@@ -714,8 +746,9 @@ function syncFleetUrl() {
   if (fleetProject) params.set("project", fleetProject);
   if (fleetAdapter) params.set("adapter", fleetAdapter);
   if (fleetQuery.trim()) params.set("q", fleetQuery.trim());
+  if (selected.campaign) params.set("campaign", selected.campaign);
   const query = params.toString();
-  const hash = view === "fleet" ? `#fleet${query ? `?${query}` : ""}` : `#${view}`;
+  const hash = view === "fleet" ? `#fleet${query ? `?${query}` : ""}` : `#${view}${selected.campaign ? `?campaign=${encodeURIComponent(selected.campaign)}` : ""}`;
   history.replaceState(null, "", hash);
 }
 
@@ -798,7 +831,9 @@ function viewAcceptance(items) {
         })
         .join("")
     : `<div class="empty"><h2>Nothing is waiting for acceptance.</h2><p>Deliveries appear here when a campaign passes its gates and its landing policy needs a person.</p><button class="btn" data-act="go" data-view="fleet">Back to the fleet</button></div>`;
-  return `<h1 class="page">Acceptance${items.length ? ` · ${items.length} waiting` : ""}</h1>
+  const countLabel = items.length ? ` · ${items.length} waiting` : "";
+  const scopeLabel = selected.campaign ? ` <span class="hint">· ${esc(selected.campaign)}</span>` : "";
+  return `<h1 class="page">Acceptance${scopeLabel}${countLabel}</h1>
     <p class="lede">Deliveries only. Questions and failures stay in the Inbox. Bulk approval is limited to one campaign and to a diff under its autoship line.</p>
     ${items.length ? `<div class="bulk-bar"><button class="btn primary" data-act="approve-selected" disabled>Approve selected</button><span class="hint" id="accept-hint">Select one campaign's deliveries.</span></div>` : ""}
     ${body}`;
@@ -865,22 +900,36 @@ function renderDispatch() {
 }
 
 function renderRail() {
-  if (!campaigns().length) {
+  const allList = campaigns();
+  if (!allList.length) {
     campaignsEl.innerHTML = `<div class="hint" style="padding:6px">No campaigns yet.</div>`;
     return;
   }
-  campaignsEl.innerHTML = campaigns()
-    .map((c) => {
-      const open = c.tickets.filter((t) => t.stage === "working").length;
-      const waiting = (c.inbox || []).filter((i) => i.status === "open").length;
-      const label = `${c.tickets.length} tickets${open ? ` · ${open} running` : ""}${waiting ? ` · ${waiting} waiting` : ""}`;
-      return `<button class="campaign-row" data-stage="${esc(c.stage)}" data-act="select-campaign" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" aria-current="${c.root === selected.root && c.slug === selected.campaign}">
-        <span class="name">${esc(c.slug)}</span>
-        <span class="state">${esc(c.stage)}</span>
-        <span class="sub">${esc(label)}</span>
-      </button>`;
-    })
-    .join("");
+  const totalTickets = allList.reduce((acc, c) => acc + (c.tickets?.length || 0), 0);
+  const totalOpen = allList.reduce((acc, c) => acc + (c.tickets || []).filter((t) => t.stage === "working").length, 0);
+  const totalWaiting = allList.reduce((acc, c) => acc + (c.inbox || []).filter((i) => i.status === "open").length, 0);
+  const allLabel = `${totalTickets} tickets${totalOpen ? ` · ${totalOpen} running` : ""}${totalWaiting ? ` · ${totalWaiting} waiting` : ""}`;
+  const isAll = !selected.campaign;
+
+  const allButton = `<button class="campaign-row" data-stage="" data-act="select-campaign" data-root="" data-campaign="" aria-current="${isAll}">
+    <span class="name">All campaigns</span>
+    <span class="state">${allList.length}</span>
+    <span class="sub">${esc(allLabel)}</span>
+  </button>`;
+
+  const rows = allList.map((c) => {
+    const open = (c.tickets || []).filter((t) => t.stage === "working").length;
+    const waiting = (c.inbox || []).filter((i) => i.status === "open").length;
+    const label = `${c.tickets.length} tickets${open ? ` · ${open} running` : ""}${waiting ? ` · ${waiting} waiting` : ""}`;
+    const isCur = Boolean(selected.campaign && (!selected.root || c.root === selected.root) && c.slug === selected.campaign);
+    return `<button class="campaign-row" data-stage="${esc(c.stage)}" data-act="select-campaign" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" aria-current="${isCur}">
+      <span class="name">${esc(c.slug)}</span>
+      <span class="state">${esc(c.stage)}</span>
+      <span class="sub">${esc(label)}</span>
+    </button>`;
+  });
+
+  campaignsEl.innerHTML = [allButton, ...rows].join("");
 }
 
 function renderCrumbs() {
@@ -889,11 +938,21 @@ function renderCrumbs() {
     return;
   }
   if (view === "fleet") {
-    crumbsEl.innerHTML = `<b>Fleet</b><span>·</span>${campaigns().length} campaign${campaigns().length === 1 ? "" : "s"}<span>·</span>${fleetRows().length} rows`;
+    if (selected.campaign) {
+      crumbsEl.innerHTML = `<b>Fleet</b><span>·</span><b>${esc(selected.campaign)}</b><span>·</span>${fleetRows().length} row${fleetRows().length === 1 ? "" : "s"}`;
+    } else {
+      crumbsEl.innerHTML = `<b>Fleet</b><span>·</span>${campaigns().length} campaign${campaigns().length === 1 ? "" : "s"}<span>·</span>${fleetRows().length} rows`;
+    }
+    return;
+  }
+  if (view === "inbox") {
+    const scope = selected.campaign ? `<b>${esc(selected.campaign)}</b><span>·</span>` : "";
+    crumbsEl.innerHTML = `<b>Inbox</b><span>·</span>${scope}${openItems().length} open`;
     return;
   }
   if (view === "acceptance") {
-    crumbsEl.innerHTML = `<b>Acceptance</b><span>·</span>${acceptanceItems().length} waiting`;
+    const scope = selected.campaign ? `<b>${esc(selected.campaign)}</b><span>·</span>` : "";
+    crumbsEl.innerHTML = `<b>Acceptance</b><span>·</span>${scope}${acceptanceItems().length} waiting`;
     return;
   }
   if (view === "settings") {
@@ -918,12 +977,12 @@ function renderTabs() {
 }
 
 function viewInbox(items) {
-  const failed = campaigns().flatMap((c) => (c.planErrors || []).map((e) => `${c.slug}: ${e}`));
+  const failed = targetCampaigns().flatMap((c) => (c.planErrors || []).map((e) => `${c.slug}: ${e}`));
   const body = items.length
     ? items.map(itemRow).join("")
     : `<div class="empty">
         <h2>Nothing needs you.</h2>
-        <p>Every campaign is running on its own. The board shows what is moving.</p>
+        <p>${selected.campaign ? `<b>${esc(selected.campaign)}</b> is running on its own.` : "Every campaign is running on its own."} The board shows what is moving.</p>
         <dl class="legend">
           <dt>Question</dt><dd>A worker needs a decision no written source answers.</dd>
           <dt>Failure</dt><dd>Attempts ran out, or a merge would not resolve.</dd>
@@ -931,8 +990,10 @@ function viewInbox(items) {
         </dl>
         <button class="btn" data-act="go" data-view="board">Open the board</button>
       </div>`;
+  const countLabel = items.length ? ` · ${items.length} open` : "";
+  const scopeLabel = selected.campaign ? ` <span class="hint">· ${esc(selected.campaign)}</span>` : "";
   return `${failed.length ? `<div class="errors"><strong>Plan problems</strong><ul>${failed.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>` : ""}
-    <h1 class="page">Inbox${items.length ? ` · ${items.length} open` : ""}</h1>
+    <h1 class="page">Inbox${scopeLabel}${countLabel}</h1>
     ${body}`;
 }
 
@@ -1599,6 +1660,7 @@ function openTicket(root, slug, ticketId) {
   const c = campaignOf(root, slug);
   const t = c?.tickets.find((x) => x.id === ticketId);
   if (!c || !t) return;
+  selected = { root: c.root, campaign: c.slug };
   drawer = { root, slug, ticket: t.id };
   drawerEl.hidden = false;
   drawerEl.innerHTML = drawerHtml(c, t);
@@ -1765,17 +1827,35 @@ function routeFromHash() {
       dirtyViews.clear();
     }
     const nextStatus = FLEET_STATUS.includes(params.get("status")) ? params.get("status") : "all";
+    const campaignParam = params.get("campaign");
+    let nextCampaign = selected.campaign;
+    let nextRoot = selected.root;
+    if (campaignParam !== null) {
+      if (!campaignParam) {
+        nextCampaign = null;
+        nextRoot = null;
+      } else {
+        const found = campaigns().find((c) => c.slug === campaignParam);
+        if (found) {
+          nextCampaign = found.slug;
+          nextRoot = found.root;
+        }
+      }
+    }
     const changed =
       name !== view ||
       nextStatus !== fleetStatus ||
       (params.get("project") || "") !== fleetProject ||
       (params.get("adapter") || "") !== fleetAdapter ||
-      (params.get("q") || "") !== fleetQuery;
+      (params.get("q") || "") !== fleetQuery ||
+      nextCampaign !== selected.campaign ||
+      nextRoot !== selected.root;
     view = name;
     fleetStatus = nextStatus;
     fleetProject = params.get("project") || "";
     fleetAdapter = params.get("adapter") || "";
     fleetQuery = params.get("q") || "";
+    selected = { root: nextRoot, campaign: nextCampaign };
     fleetLimit = 200;
     if (changed) {
       closeDrawer();
@@ -1999,9 +2079,33 @@ document.addEventListener("keydown", (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  const fleetCampaignSelect = event.target.closest("[data-role='fleet-campaign']");
+  if (fleetCampaignSelect) {
+    const val = fleetCampaignSelect.value;
+    if (!val) {
+      selected = { root: null, campaign: null };
+    } else {
+      const opt = fleetCampaignSelect.selectedOptions?.[0];
+      const root = opt?.dataset.root || campaigns().find((c) => c.slug === val)?.root || null;
+      selected = { root, campaign: val };
+      const cur = campaignOf(selected.root, selected.campaign);
+      if (cur && fleetProject && cur.project !== fleetProject && cur.root !== fleetProject) {
+        fleetProject = "";
+      }
+    }
+    fleetLimit = 200;
+    render();
+    return syncFleetUrl();
+  }
   const fleetProjectSelect = event.target.closest("[data-role='fleet-project']");
   if (fleetProjectSelect) {
     fleetProject = fleetProjectSelect.value;
+    if (fleetProject && selected.campaign) {
+      const cur = campaignOf(selected.root, selected.campaign);
+      if (cur && cur.project !== fleetProject && cur.root !== fleetProject) {
+        selected = { root: null, campaign: null };
+      }
+    }
     fleetLimit = 200;
     render();
     return syncFleetUrl();
@@ -2057,13 +2161,16 @@ document.addEventListener("click", (event) => {
     case "fleet-more":
       fleetLimit += 200;
       return paintFleet();
-    case "open-acceptance":
+    case "open-acceptance": {
       compose = null;
       dirtyViews.clear();
       view = "acceptance";
       closeDrawer();
-      history.replaceState(null, "", "#acceptance");
+      const found = campaignOf(root, campaign);
+      if (found) selected = { root: found.root, campaign: found.slug };
+      history.replaceState(null, "", selected.campaign ? `#acceptance?campaign=${encodeURIComponent(selected.campaign)}` : "#acceptance");
       return render();
+    }
     case "open-campaign": {
       compose = null;
       dirtyViews.clear();
@@ -2129,8 +2236,15 @@ document.addEventListener("click", (event) => {
       spendChoice.campaign = null;
       compose = null;
       dirtyViews.clear();
-      selected = { root, campaign };
-      if (view === "campaign") history.replaceState(null, "", `#campaign/${encodeURIComponent(campaign)}`);
+      selected = { root: root || null, campaign: campaign || null };
+      if (!campaign && (view === "campaign" || view === "board")) {
+        view = "fleet";
+        history.replaceState(null, "", "#fleet");
+      } else if (view === "campaign" && campaign) {
+        history.replaceState(null, "", `#campaign/${encodeURIComponent(campaign)}`);
+      } else {
+        syncFleetUrl();
+      }
       return render();
     case "open-ticket":
       event.preventDefault();

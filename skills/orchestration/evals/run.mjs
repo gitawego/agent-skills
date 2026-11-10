@@ -117,7 +117,7 @@ check("eval 6 — a supervised campaign waits for a person and does not merge", 
   for (let i = 0; i < 40; i++) cli(dir, ["tick"]);
   const status = cli(dir, ["status", "demo"]).out;
   assert(/delivered/.test(status), `campaign did not deliver: ${status.slice(0, 200)}`);
-  const inbox = cli(dir, ["inbox"]).out;
+  const inbox = cli(dir, ["acceptance"]).out;
   assert(/Campaign ready/.test(inbox), "a review item was filed");
   assert(!fs.existsSync(path.join(dir, "work-01.txt")), "main is untouched until approval");
 });

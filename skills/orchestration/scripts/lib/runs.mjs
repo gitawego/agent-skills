@@ -224,6 +224,12 @@ export function startRun({ root, slug, run, argv, command = "pi", workdir, env =
     detached: true,
     stdio: ["ignore", out, err],
   });
+  try {
+    fs.closeSync(out);
+    fs.closeSync(err);
+  } catch {
+    // already closed or invalid
+  }
   child.unref();
   const record = {
     ...run,

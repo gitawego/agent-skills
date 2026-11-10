@@ -38,6 +38,18 @@ export function wrapCommand({ command, args, cwd, rwPaths = [], mode = "auto" })
     process.env.XDG_RUNTIME_DIR,
     ...rwPaths,
   ].filter(Boolean);
+  if (cwd) {
+    try {
+      const res = spawnSync("git", ["-C", cwd, "rev-parse", "--git-common-dir", "--git-dir"], { encoding: "utf8", timeout: 2000 });
+      if (res.status === 0) {
+        for (const line of res.stdout.trim().split("\n")) {
+          if (line.trim()) roots.push(path.resolve(cwd, line.trim()));
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
   const bargs = ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--chdir", cwd];
   const seen = new Set();
   for (const root of roots) {

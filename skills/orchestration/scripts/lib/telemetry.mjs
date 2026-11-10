@@ -18,7 +18,7 @@ export function usageNumbers(run) {
   const inputTokens = Number(usage.inputTokens || 0);
   const outputTokens = Number(usage.outputTokens || 0);
   const cachedReadTokens = Number(usage.cachedReadTokens || 0);
-  const cacheWriteTokens = Number(usage.cacheWriteTokens || 0);
+  const cacheWriteTokens = Number(usage.cacheWriteTokens ?? usage.cachedWriteTokens ?? 0);
   const thoughtTokens = Number(usage.thoughtTokens || 0);
   const tokens = Number(usage.tokens || 0) || inputTokens + outputTokens + cachedReadTokens + thoughtTokens;
   const promptTokens = inputTokens + cachedReadTokens;

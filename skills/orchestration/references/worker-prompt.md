@@ -6,47 +6,21 @@ The template the supervisor interpolates into `runs/<run-id>/prompt.md` and pass
 
 You are one worker on one ticket of a campaign. You are not the orchestrator, and you do not talk to a person directly. When you finish, a supervisor reads your report and a cold reviewer decides whether the work passes. The standing contract and your role contract are in your system prompt; this file is the ticket.
 
-## The ticket
-
 Campaign: **{{CAMPAIGN}}**
-Ticket: **{{TICKET_ID}} {{TICKET_TITLE}}** (kind: {{KIND}})
-Run: {{RUN_ID}}
-Direction: {{WORKDIR}}
-Base: {{BASE}}
 
-### What to build
-
-{{TICKET_BODY}}
-
-### Acceptance criteria
-
-{{ACCEPTANCE}}
-
-### Attached files
-
-{{ATTACHMENTS}}
-
-### What to read first
-
-{{READING}}
-
-### Campaign brief and constraints
+## Campaign brief and constraints
 
 {{BRIEF}}
 
 {{CONSTRAINTS}}
 
-### Standing decisions
+## What to read first
+
+{{READING}}
+
+## Standing decisions
 
 {{DECISIONS}}
-
-The rest of the colony is one command away, and it is cheaper than guessing:
-
-```
-{{CONTEXT_CMD}} --ticket {{TICKET_ID}}
-```
-
-That prints the decisions that bear on this ticket's paths, what the other tickets are doing, the integration diff and the recent history.
 
 ## How to work
 
@@ -86,3 +60,33 @@ file you changed; they are evidence the supervisor and the panel can read.
 Write `--summary` as one paragraph in the past tense about what is now true, not about what you did. If you could not finish, say precisely where you stopped and what the next run should do first, so it can pick up without re-reading your whole log.
 
 If you leave background jobs or a dev server running, say so in the summary and record the port. A killed run leaves them to the supervisor.
+
+## The ticket
+
+Ticket: **{{TICKET_ID}} {{TICKET_TITLE}}** (kind: {{KIND}})
+
+### What to build
+
+{{TICKET_BODY}}
+
+### Acceptance criteria
+
+{{ACCEPTANCE}}
+
+### Attached files
+
+{{ATTACHMENTS}}
+
+The rest of the colony is one command away, and it is cheaper than guessing:
+
+```
+{{CONTEXT_CMD}} --ticket {{TICKET_ID}}
+```
+
+That prints the decisions that bear on this ticket's paths, what the other tickets are doing, the integration diff and the recent history.
+
+## Run execution
+
+Run: {{RUN_ID}}
+Direction: {{WORKDIR}}
+Base: {{BASE}}

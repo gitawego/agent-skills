@@ -292,3 +292,231 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     fs.rmSync(profile, { recursive: true, force: true });
   }
 });
+
+test("the panel filters all views by selected campaign", { skip: !chromePath() }, async () => {
+  const box = sandbox();
+  const dir = project(path.join(box, "repo"));
+  writeConsole();
+
+  writeCampaign(
+    dir,
+    "alpha",
+    {
+      campaign: "alpha",
+      stage: "awaiting_approval",
+      autonomy: "supervised",
+      plan_gate: "human",
+      landing: "branch",
+      base: "main",
+      checks: [],
+      budget: { tokens: null, dollars: null },
+      max_autoship_lines: 200,
+      kinds: { code: { models: [{ model: MODELS.strong, thinking: "high" }] } },
+    },
+    BODY,
+  );
+  writeTicket(dir, "alpha", "01-first.md", { id: "01", kind: "code", touches: ["src/a/**"] }, "## What to build\n\nA.\n\n## Acceptance criteria\n\n- [ ] Works.");
+  writeTicket(dir, "alpha", "02-second.md", { id: "02", kind: "code", touches: ["src/b/**"] }, "## What to build\n\nB.\n\n## Acceptance criteria\n\n- [ ] Works.");
+  createItem(dir, "alpha", {
+    kind: "review",
+    title: "Campaign ready: alpha",
+    brief: "Alpha delivery waiting for review.",
+  });
+
+  writeCampaign(
+    dir,
+    "beta",
+    {
+      campaign: "beta",
+      stage: "running",
+      autonomy: "trusted",
+      plan_gate: "auto",
+      landing: "branch",
+      base: "main",
+      checks: [],
+      budget: { tokens: null, dollars: null },
+      max_autoship_lines: 200,
+      kinds: { code: { models: [{ model: MODELS.strong, thinking: "high" }] } },
+    },
+    BODY,
+  );
+  writeTicket(dir, "beta", "01-work.md", { id: "01", kind: "code", touches: ["src/c/**"] }, "## What to build\n\nC.\n\n## Acceptance criteria\n\n- [ ] Works.");
+
+  const panel = await startServer({ roots: [dir], port: 0 });
+  const port = 9400 + Math.floor(Math.random() * 400);
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), "orch-chrome-filter-"));
+  const browser = spawn(
+    chromePath(),
+    ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-background-networking", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, "about:blank"],
+    { stdio: "ignore" },
+  );
+
+  try {
+    let pages = null;
+    for (let i = 0; i < 40; i++) {
+      try {
+        pages = await json(`http://127.0.0.1:${port}/json`);
+        if (pages?.length) break;
+      } catch {
+        /* not up yet */
+      }
+      await sleep(250);
+    }
+    assert.ok(pages?.length, "the browser exposed a devtools page");
+
+    const ws = new WebSocket(pages.find((page) => page.type === "page").webSocketDebuggerUrl);
+    let id = 0;
+    const pending = new Map();
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.id && pending.has(msg.id)) {
+        pending.get(msg.id)(msg);
+        pending.delete(msg.id);
+      }
+    };
+    const send = (method, params = {}) =>
+      new Promise((resolve) => {
+        const msgId = ++id;
+        pending.set(msgId, resolve);
+        ws.send(JSON.stringify({ id: msgId, method, params }));
+      });
+    await new Promise((resolve) => (ws.onopen = resolve));
+    await send("Runtime.enable");
+    await send("Page.enable");
+
+    // 1. Initial Fleet load (All campaigns)
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#fleet` });
+    await sleep(2000);
+
+    const initial = await send("Runtime.evaluate", {
+      expression: `JSON.stringify({
+        rows: document.querySelectorAll(".fleet-row").length,
+        summary: document.getElementById("fleet-summary")?.textContent || "",
+        crumbs: document.getElementById("crumbs")?.textContent || "",
+        selectVal: document.querySelector('[data-role="fleet-campaign"]')?.value || "",
+        allRailCurrent: document.querySelector('.campaign-row[data-campaign=""]')?.getAttribute("aria-current"),
+      })`,
+      returnByValue: true,
+    });
+    const initPage = JSON.parse(initial.result.result.value);
+    assert.equal(initPage.rows, 4, "all 4 rows shown across both campaigns");
+    assert.match(initPage.crumbs, /2 campaigns.*4 rows/);
+    assert.equal(initPage.selectVal, "");
+    assert.equal(initPage.allRailCurrent, "true");
+
+    // 2. Select beta from the rail
+    await send("Runtime.evaluate", {
+      expression: `(() => {
+        document.querySelector('[data-act="select-campaign"][data-campaign="beta"]').click();
+      })()`,
+    });
+    await sleep(500);
+
+    const betaFleet = await send("Runtime.evaluate", {
+      expression: `JSON.stringify({
+        rows: document.querySelectorAll(".fleet-row").length,
+        summary: document.getElementById("fleet-summary")?.textContent || "",
+        crumbs: document.getElementById("crumbs")?.textContent || "",
+        selectVal: document.querySelector('[data-role="fleet-campaign"]')?.value || "",
+        betaRailCurrent: document.querySelector('.campaign-row[data-campaign="beta"]')?.getAttribute("aria-current"),
+        allRailCurrent: document.querySelector('.campaign-row[data-campaign=""]')?.getAttribute("aria-current"),
+      })`,
+      returnByValue: true,
+    });
+    const betaPage = JSON.parse(betaFleet.result.result.value);
+    assert.equal(betaPage.rows, 1, "only beta's 1 row is displayed");
+    assert.match(betaPage.crumbs, /beta.*1 row/);
+    assert.equal(betaPage.selectVal, "beta");
+    assert.equal(betaPage.betaRailCurrent, "true");
+    assert.equal(betaPage.allRailCurrent, "false");
+
+    // 3. Switch dropdown filter to alpha
+    await send("Runtime.evaluate", {
+      expression: `(() => {
+        const sel = document.querySelector('[data-role="fleet-campaign"]');
+        sel.value = "alpha";
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      })()`,
+    });
+    await sleep(500);
+
+    const alphaFleet = await send("Runtime.evaluate", {
+      expression: `JSON.stringify({
+        rows: document.querySelectorAll(".fleet-row").length,
+        crumbs: document.getElementById("crumbs")?.textContent || "",
+        alphaRailCurrent: document.querySelector('.campaign-row[data-campaign="alpha"]')?.getAttribute("aria-current"),
+        acceptCount: document.getElementById("accept-count")?.textContent || "",
+      })`,
+      returnByValue: true,
+    });
+    const alphaPage = JSON.parse(alphaFleet.result.result.value);
+    assert.equal(alphaPage.rows, 3, "alpha's 3 rows (2 tickets + 1 acceptance) displayed");
+    assert.match(alphaPage.crumbs, /alpha.*3 rows/);
+    assert.equal(alphaPage.alphaRailCurrent, "true");
+    assert.equal(alphaPage.acceptCount, "1", "nav badge reflects alpha's 1 acceptance item");
+
+    // 4. Navigate to Acceptance tab while alpha is selected
+    await send("Runtime.evaluate", {
+      expression: `document.querySelector('button[data-view="acceptance"]').click()`,
+    });
+    await sleep(500);
+
+    const acceptAlpha = await send("Runtime.evaluate", {
+      expression: `JSON.stringify({
+        cards: document.querySelectorAll(".acceptance-card").length,
+        crumbs: document.getElementById("crumbs")?.textContent || "",
+      })`,
+      returnByValue: true,
+    });
+    const acceptAlphaPage = JSON.parse(acceptAlpha.result.result.value);
+    assert.equal(acceptAlphaPage.cards, 1, "alpha delivery card visible");
+    assert.match(acceptAlphaPage.crumbs, /Acceptance.*alpha.*1 waiting/);
+
+    // 5. Select beta while in Acceptance view
+    await send("Runtime.evaluate", {
+      expression: `document.querySelector('[data-act="select-campaign"][data-campaign="beta"]').click()`,
+    });
+    await sleep(500);
+
+    const acceptBeta = await send("Runtime.evaluate", {
+      expression: `JSON.stringify({
+        cards: document.querySelectorAll(".acceptance-card").length,
+        empty: Boolean(document.querySelector(".empty")),
+        crumbs: document.getElementById("crumbs")?.textContent || "",
+      })`,
+      returnByValue: true,
+    });
+    const acceptBetaPage = JSON.parse(acceptBeta.result.result.value);
+    assert.equal(acceptBetaPage.cards, 0, "beta has no delivery cards");
+    assert.equal(acceptBetaPage.empty, true, "shows empty acceptance view");
+    assert.match(acceptBetaPage.crumbs, /Acceptance.*beta.*0 waiting/);
+
+    // 6. Click All campaigns from the rail while on Fleet
+    await send("Runtime.evaluate", {
+      expression: `(() => {
+        document.querySelector('button[data-view="fleet"]').click();
+        document.querySelector('.campaign-row[data-campaign=""]').click();
+      })()`,
+    });
+    await sleep(500);
+
+    const resetAll = await send("Runtime.evaluate", {
+      expression: `JSON.stringify({
+        rows: document.querySelectorAll(".fleet-row").length,
+        crumbs: document.getElementById("crumbs")?.textContent || "",
+        allRailCurrent: document.querySelector('.campaign-row[data-campaign=""]')?.getAttribute("aria-current"),
+      })`,
+      returnByValue: true,
+    });
+    const resetPage = JSON.parse(resetAll.result.result.value);
+    assert.equal(resetPage.rows, 4, "all 4 rows restored");
+    assert.match(resetPage.crumbs, /2 campaigns.*4 rows/);
+    assert.equal(resetPage.allRailCurrent, "true");
+
+    ws.close();
+  } finally {
+    browser.kill("SIGKILL");
+    panel.close();
+    fs.rmSync(profile, { recursive: true, force: true });
+  }
+});

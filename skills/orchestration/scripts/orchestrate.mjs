@@ -65,7 +65,7 @@ function parseArgs(argv) {
 }
 
 function rootDir(flags) {
-  return path.resolve(flags.root || process.cwd());
+  return path.resolve(flags.root || process.env.ORCH_PROJECT || process.cwd());
 }
 
 function registryAdd(root) {
@@ -790,6 +790,11 @@ const commands = {
       stdio: ["ignore", out, out],
       env: process.env,
     });
+    try {
+      fs.closeSync(out);
+    } catch {
+      // already closed
+    }
     child.unref();
     for (let i = 0; i < 40; i++) {
       await new Promise((r) => setTimeout(r, 250));

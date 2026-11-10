@@ -177,6 +177,11 @@ export function changedSince(root, before) {
   for (const [file, stamp] of Object.entries(after)) {
     if (!before || before[file] !== stamp) changed.push(file);
   }
+  if (before) {
+    for (const file of Object.keys(before)) {
+      if (!(file in after)) changed.push(file);
+    }
+  }
   return changed;
 }
 
