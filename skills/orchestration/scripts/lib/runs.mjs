@@ -1,5 +1,6 @@
 // Spawning, tracking, and reading worker runs.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import {
@@ -50,34 +51,129 @@ export function usageFromLog(root, slug, runId) {
   const session = readJson(path.join(runDir(root, slug, runId), "session.json"), null);
   if (session?.usage) {
     const usage = session.usage;
+    const inputTokens = usage.inputTokens || 0;
+    const outputTokens = usage.outputTokens || 0;
+    const cachedReadTokens = usage.cachedReadTokens || 0;
+    const cachedWriteTokens = usage.cachedWriteTokens || 0;
+    const thoughtTokens = usage.thoughtTokens || 0;
     return {
-      tokens: usage.totalTokens || (usage.inputTokens || 0) + (usage.outputTokens || 0),
+      tokens: usage.totalTokens || inputTokens + outputTokens + cachedReadTokens + thoughtTokens,
       dollars: 0,
       unmetered: true,
-      inputTokens: usage.inputTokens || 0,
-      outputTokens: usage.outputTokens || 0,
+      inputTokens,
+      outputTokens,
+      cachedReadTokens,
+      cachedWriteTokens,
+      thoughtTokens,
+      costFromProvider: null,
+      source: "session",
     };
   }
   const file = path.join(runDir(root, slug, runId), "log.jsonl");
   const text = readText(file, "");
-  if (!text) return { tokens: 0, dollars: 0, unmetered: true };
+  if (!text) return { tokens: 0, dollars: 0, unmetered: true, source: "none" };
   let usage = null;
   for (const line of text.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed.startsWith("{")) continue;
     try {
       const event = JSON.parse(trimmed);
-      if (event.usage && (event.usage.totalTokens || event.usage.cost)) usage = event.usage;
+      const candidate = event.usage || event.update?.usage || null;
+      if (candidate && (candidate.totalTokens || candidate.cost || candidate.input || candidate.inputTokens))
+        usage = candidate;
     } catch {
       // a partially written line is not a failure
     }
   }
-  if (!usage) return { tokens: 0, dollars: 0, unmetered: true };
+  if (!usage) return { tokens: 0, dollars: 0, unmetered: true, source: "none" };
+  const inputTokens = usage.input ?? usage.inputTokens ?? 0;
+  const outputTokens = usage.output ?? usage.outputTokens ?? 0;
+  const cachedReadTokens = usage.cacheRead ?? usage.cachedReadTokens ?? 0;
+  const cachedWriteTokens = usage.cacheWrite ?? usage.cachedWriteTokens ?? 0;
+  const thoughtTokens = usage.thought ?? usage.thoughtTokens ?? 0;
+  const totalTokens = usage.totalTokens || inputTokens + outputTokens + cachedReadTokens + thoughtTokens;
+  const dollars = usage.cost?.total || 0;
   return {
-    tokens: usage.totalTokens || 0,
-    dollars: usage.cost?.total || 0,
-    unmetered: !usage.totalTokens && !usage.cost?.total,
+    tokens: totalTokens,
+    dollars,
+    unmetered: !totalTokens && !dollars,
+    inputTokens,
+    outputTokens,
+    cachedReadTokens,
+    cachedWriteTokens,
+    thoughtTokens,
+    costFromProvider:
+      usage.cost && typeof usage.cost.totalFromProvider === "boolean" ? usage.cost.totalFromProvider : null,
+    source: "log",
   };
+}
+
+/* Harnesses that expose subagents write them as normal log events or as a
+   `children` list in session.json. Observation only: these are not tickets and
+   the scheduler never sees them. */
+export function childrenFromLog(root, slug, runId) {
+  const dir = runDir(root, slug, runId);
+  const session = readJson(path.join(dir, "session.json"), null);
+  const found = new Map();
+  const add = (raw, fallbackId = null) => {
+    if (!raw || typeof raw !== "object") return;
+    const id = String(raw.id || raw.sessionId || raw.runId || raw.childId || fallbackId || "").trim();
+    if (!id) return;
+    const usage = raw.usage && typeof raw.usage === "object" ? raw.usage : raw;
+    const inputTokens = Number(usage.inputTokens ?? usage.input ?? raw.inputTokens ?? 0) || 0;
+    const outputTokens = Number(usage.outputTokens ?? usage.output ?? raw.outputTokens ?? 0) || 0;
+    const cachedReadTokens = Number(usage.cachedReadTokens ?? usage.cacheRead ?? raw.cachedReadTokens ?? 0) || 0;
+    const thoughtTokens = Number(usage.thoughtTokens ?? usage.thought ?? 0) || 0;
+    const tokens =
+      Number(usage.totalTokens ?? raw.tokens ?? 0) || inputTokens + outputTokens + cachedReadTokens + thoughtTokens;
+    const dollars = Number(usage.dollars ?? usage.cost?.total ?? raw.dollars ?? 0) || 0;
+    const previous = found.get(id) || {};
+    found.set(id, {
+      id,
+      name: raw.name || raw.title || raw.label || previous.name || id,
+      model: raw.model || raw.modelId || previous.model || null,
+      status: raw.status || raw.state || previous.status || "reported",
+      startedAt: raw.startedAt || previous.startedAt || null,
+      endedAt: raw.endedAt || raw.completedAt || previous.endedAt || null,
+      tokens: tokens || previous.tokens || 0,
+      dollars: dollars || previous.dollars || 0,
+      inputTokens: inputTokens || previous.inputTokens || 0,
+      outputTokens: outputTokens || previous.outputTokens || 0,
+      cachedReadTokens: cachedReadTokens || previous.cachedReadTokens || 0,
+    });
+  };
+  for (const child of session?.children || session?.subagents || []) add(child);
+
+  const text = readText(path.join(dir, "log.jsonl"), "");
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    try {
+      const event = JSON.parse(trimmed);
+      const child =
+        event.subagent ||
+        event.child ||
+        (typeof event.type === "string" && /(subagent|child[_-]?run|child)/i.test(event.type) ? event : null) ||
+        (event.update && typeof event.update === "object" && /(subagent|child)/i.test(event.update.sessionUpdate || event.update.type || "")
+          ? event.update
+          : null);
+      if (child) add(child, event.id || event.runId || null);
+    } catch {
+      // ignore a half-written line
+    }
+  }
+  return [...found.values()];
+}
+
+export function rollupChildren(children) {
+  return (children || []).reduce(
+    (sum, child) => ({
+      tokens: sum.tokens + Number(child.tokens || 0),
+      dollars: sum.dollars + Number(child.dollars || 0),
+      count: sum.count + 1,
+    }),
+    { tokens: 0, dollars: 0, count: 0 },
+  );
 }
 
 export function buildWorkerArgv({ run, modelEntry, thinking, tools, prompt, sessionsDir, systemPrompts = [], attachments = [] }) {
@@ -134,6 +230,7 @@ export function startRun({ root, slug, run, argv, command = "pi", workdir, env =
     status: "live",
     pid: child.pid,
     startedAt: nowIso(),
+    host: os.hostname(),
     workdir,
     log: logFile,
     err: errFile,

@@ -23,7 +23,7 @@ A ticket that fails and then receives a human answer returns to `queued`, not to
 
 ## Campaign stages
 
-`draft` → `awaiting_approval` → `running` ⇄ `paused` → `delivered` → `archived`. `cancel` stops every live run and lands in `paused`; `archive` is only reachable from `delivered` or `paused`, and only when nothing is alive. `paused` stops dispatch; runs already alive finish, and their gates are evaluated, but nothing new starts. A budget exhaustion, a human pause, and a config error all use `paused`, with the reason on the campaign.
+`draft` → `awaiting_approval` → `running` ⇄ `paused` → `delivered` → `archived`. `cancel` stops every live run and lands in `paused`; `archive` is only reachable from `delivered` or `paused`, and only when nothing is alive. `paused` stops dispatch; runs already alive finish, and their gates are evaluated, but nothing new starts. A budget exhaustion, a human pause, and a config error all use `paused`, with the reason on the campaign. A console-wide dispatch pause stops new claims in every campaign without changing any campaign's stage.
 
 ## A run
 
@@ -38,6 +38,10 @@ A **run** is one worker process executing one ticket. Nothing else is a run: not
 
 A run that is killed, by timeout or by `stop`, still goes through collect and release. The slot is never leaked.
 
+`run.json` records the model, adapter, adapter version, host, price table snapshot, subscription inclusion, context window, sandbox, prompt hashes and the usage block. Usage keeps input, output, cached-read and cache-write tokens separately, plus whether the dollars came from the provider. Older records without those fields render as `cost unknown` rather than a fabricated zero.
+
+A harness may report subagents or child runs in `session.json` (`children` / `subagents`) or as log events whose type contains `subagent` or `child`. The supervisor collects them after the run, stores them on the run record, and adds their tokens and dollars to the campaign's spend rollup. They are observation only: no ticket, no slot, no scheduler edge. A harness that reports nothing shows nothing.
+
 ### Resuming a parked run
 
 A parked ticket remembers its session id. An answer, or a rejection with findings, is delivered as a new turn in the **same** session (`--session-id` plus the campaign's session directory), so the worker keeps everything it learned and does not re-explore. The only case that starts a fresh session is a new attempt after a `failed` run, because a dead session is untrustworthy.
@@ -48,7 +52,7 @@ The answer is delivered as a single turn: the decision, then one line naming wha
 
 `report.json`, written by the worker through `scripts/report.mjs`, validated against this schema.
 
-ACP harnesses report token usage on the prompt response and no dollar cost. The adapter stores it in `session.json`; the supervisor counts tokens and marks the run unmetered rather than pretending it cost zero. A dollar budget therefore cannot cap a subscription adapter, and the panel says so.
+ACP harnesses report token usage on the prompt response and no dollar cost. The adapter stores it in `session.json`; the supervisor counts tokens and marks the run unmetered rather than pretending it cost zero. A dollar budget therefore cannot cap a subscription adapter, and the panel says so. A pi log also carries provider-reported cost when the provider returned it (`totalFromProvider: true`); otherwise the cost is a price-table estimate. The panel labels every cost **actual**, **estimated** or **included**, with an **API-equivalent** figure for subscription runs that were never billed. Context use is `input + cached read` against the model's window when the catalog knows it; speed is output tokens over the run's duration; cache share is cached reads over prompt tokens.
 
 ```json
 {
@@ -86,6 +90,12 @@ A ticket holds a slot from claim to release. `max_concurrent` caps slots per cam
 The **frontier** is every ticket whose blockers are satisfied, whose stage is `queued`, and whose `touches` do not overlap any live run's touched or declared paths. Dispatch order is ticket number, so a plan that reads top to bottom also executes roughly top to bottom.
 
 A ticket blocked only by `touches` overlap is not `blocked`; it stays `queued` and is simply not dispatchable this tick. The panel shows it as "waiting for a free lane on `src/api/**`".
+
+### Dispatch switch and quota windows
+
+Two constraints sit above slots. The console-wide dispatch switch (`auto` or `paused`, with a required reason) stops every new claim without touching live runs. Provider windows are per-model-plan: before claiming, the scheduler resolves the candidate chain, skips an entry whose provider/adapter window is fresh and exhausted, and uses the first viable fallback. If every bound model is blocked, the ticket stays `queued` with the window name and reset time as its reason; when the reset passes, the next tick retries it. A stale observation is shown but not enforced.
+
+Every queued row carries a machine-readable reason (`slots`, `kind-slots`, `lane`, `blocked`, `quota`, `dispatch`, `campaign`, `config`, `ready`) and a sentence for a person. The reason is recomputed each tick, so it cannot outlive the condition it describes.
 
 ## Failure and recovery
 
@@ -152,7 +162,7 @@ What ships follows the autonomy level, and the campaign's `max_autoship_lines` o
 {"ts":"2026-11-09T18:03:11Z","campaign":"pocket-museum-v4","ticket":"03","run":"r-...-a1","type":"run.reported","data":{"status":"ready","cost":0.42,"tokens":18422}}
 ```
 
-Types: `campaign.created`, `plan.drafted`, `campaign.approved`, `campaign.paused`, `campaign.resumed`, `campaign.delivered`, `ticket.added`, `ticket.stage`, `run.dispatched`, `run.reported`, `run.exited`, `run.retried`, `run.stopped`, `gate.check`, `gate.review`, `question.answered`, `inbox.opened`, `inbox.answered`, `merge.done`, `merge.conflict`, `delivery.blocked`, `delivery.rejected`, `spend.recorded`, `error`.
+Types: `campaign.created`, `plan.drafted`, `campaign.approved`, `campaign.paused`, `campaign.resumed`, `campaign.delivered`, `ticket.added`, `ticket.stage`, `run.dispatched`, `run.reported`, `run.exited`, `run.retried`, `run.stopped`, `gate.check`, `gate.review`, `question.answered`, `inbox.opened`, `inbox.answered`, `merge.done`, `merge.conflict`, `delivery.blocked`, `delivery.rejected`, `dispatch.paused`, `dispatch.resumed`, `spend.recorded`, `error`.
 
 Every event carries the campaign and, where it applies, the ticket and run. A system-wide error carries neither. The ledger is never rewritten; a correction is a new event that names what it supersedes.
 

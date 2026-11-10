@@ -45,5 +45,22 @@ if (report.status === "ready" && role === "work") {
 const reportPath = process.env.ORCH_REPORT || path.join(process.env.ORCH_RUN_DIR, "report.json");
 fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
 process.stdout.write(
-  JSON.stringify({ type: "message_update", usage: { totalTokens: 100, cost: { total: 0.01 } } }) + "\n",
+  JSON.stringify({
+    type: "message_update",
+    usage: {
+      input: 60,
+      output: 40,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 100,
+      cost: {
+        input: 0.006,
+        output: 0.004,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0.01,
+        totalFromProvider: true,
+      },
+    },
+  }) + "\n",
 );

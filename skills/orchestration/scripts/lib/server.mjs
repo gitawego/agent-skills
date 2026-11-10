@@ -8,6 +8,7 @@ import { SKILL_DIR, consoleStateDir, ensureDir, globalPanelFile, nowIso, project
 import { projectView, consoleView } from "./view.mjs";
 import { adaptersView, allModels, catalogsForRoot } from "./catalogs.mjs";
 import { enqueue } from "./commands.mjs";
+import { loadDispatch } from "./dispatch.mjs";
 
 const UI = path.join(SKILL_DIR, "assets", "ui");
 const MIME = {
@@ -182,6 +183,7 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
         now: new Date().toISOString(),
         projects,
         console: consoleView().config,
+        dispatch: loadDispatch(),
         adapters: adaptersView(),
         catalogs: Object.fromEntries(projects.map((project) => [project.root, catalogsForRoot(project.root)])),
         catalog: models,

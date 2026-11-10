@@ -18,6 +18,11 @@ Two files hold configuration. The **console** holds defaults for every project o
     "human_slot_extra": 1
   },
   "runner": { "command": "pi" },
+  "quotas": [
+    { "provider": "opencode-go", "adapter": "opencode-acp", "window": "5h",
+      "used": 72, "limit": 100, "resetAt": "2026-11-10T15:00:00Z",
+      "source": "manual", "updatedAt": "2026-11-10T12:00:00Z" }
+  ],
   "kinds": {
     "plan":     { "label": "Plan",     "description": "Planning, decomposition, judging escalations",
                   "models": [],
@@ -58,6 +63,40 @@ runner:
 `spend` is `subscription-only` or `metered-ok`. Subscription-only hides models the plan does not include and refuses a binding to them; metered-ok shows every discovered model with its price. Antigravity and OpenCode Go default to subscription-only; pi defaults to metered-ok. The campaign's adapter is fixed while it runs, for the same reason a chain is.
 
 `sandbox` is `auto`, `bwrap` or `none`. On Linux, auto wraps the worker in `bwrap` when available: `/` is read-only, and only the worktree, run directory, temp directory and harness state directories are writable. Network stays shared because the worker must reach its model API. Other platforms fall back to the path-based permission guard.
+
+### Provider quotas
+
+A quota window is a scheduling constraint, not a bill. Each entry names a provider, optionally an adapter, a window label, the amount used against a limit, an optional reset time, and where the observation came from:
+
+```json
+{
+  "provider": "opencode-go",
+  "adapter": "opencode-acp",
+  "window": "5h",
+  "used": 72,
+  "limit": 100,
+  "resetAt": "2026-11-10T15:00:00Z",
+  "source": "manual",
+  "updatedAt": "2026-11-10T12:00:00Z",
+  "staleAfterMin": 1440
+}
+```
+
+- `provider` matches the model's provider (`opencode-go`, `antigravity`, `anthropic`, …). `adapter` is optional and matches the adapter id. When both are set, both must match; when only one is set, that one decides. This lets one entry cover a whole subscription or one provider inside an adapter.
+- `used` and `limit` are the same unit, usually a percentage. An entry blocks dispatch when `used >= limit` and its reset is still ahead.
+- `resetAt` in the past clears the window. A missing reset keeps the block until edited.
+- `source` is `manual`, `api` or `stale`. `stale` is always drawn as stale. Any entry older than `staleAfterMin` (default 1440) is also stale.
+- Stale entries are never enforced: they are shown with a dashed border and a warning, but dispatch proceeds. Only fresh, exhausted windows block.
+
+A campaign's `quotas` list is merged over the console's: the same `provider` + `adapter` + `window` replaces, a new key adds. `orchestrate quota set` writes the console entry; the panel's Settings and Campaign screens edit the same shape.
+
+The console-wide dispatch switch lives outside any project at `~/.local/state/orchestration/dispatch.json`:
+
+```json
+{ "version": 1, "mode": "paused", "reason": "quota exhausted", "at": "2026-11-10T12:30:00Z", "by": "panel" }
+```
+
+`mode: paused` stops new claims in every campaign; live runs and their gates finish. A pause requires a reason. `orchestrate dispatch pause --reason "..."`, `dispatch resume`, or the top-bar switch writes it.
 
 ACP permission requests are mediated by the client: a tool call naming a path outside the worktree or the system temp directory is denied, and the decision is written to `permissions.jsonl`. Commands are checked for absolute-path escapes; the bwrap sandbox above is the enforcement layer, while this remains a second guard.
 
@@ -105,6 +144,8 @@ checks:
   - { name: tests, cmd: "npm run -s test -- --run" }
 budget: { tokens: 2000000, dollars: 40 }   # either may be null; null inherits the console
 max_autoship_lines: 200
+quotas:                       # optional additions or overrides of the console windows
+  - { provider: antigravity, adapter: agy-acp, window: weekly, used: 0, limit: 100, resetAt: "2026-11-17T00:00:00Z", source: manual }
 kinds:                        # sparse: only what this campaign changes
   code:
     models: [{ model: "<provider/model>", thinking: "high" }, { model: "<provider/model>", thinking: "medium" }]
@@ -153,6 +194,7 @@ The campaign form mirrors the intake a human already fills for a new orchestrati
 | `allow_paths` | Globs that never count as drift: lockfiles, snapshots, generated files a worker regenerates without declaring them |
 | `budget` | Campaign-wide ceiling in tokens and dollars; either may be null. The supervisor meters from the `usage` of each run's JSON log and pauses the campaign on exhaustion. `ack_unmetered: true` is required when a dollar ceiling is combined with a subscription adapter, because those runs report tokens but no dollar cost. |
 | `max_autoship_lines` | Additions plus deletions above which a delivery never ships without a human, whatever the autonomy level |
+| `quotas` | Optional provider windows layered over the console's. Same provider/adapter/window overrides; a fresh exhausted window holds the matching models |
 | `kinds` | Sparse overrides of the console's kinds: model chains may be replaced, caps and timeouts may only be tightened |
 
 ### Inheritance

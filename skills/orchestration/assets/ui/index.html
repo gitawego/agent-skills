@@ -39,11 +39,14 @@
         <header class="topbar">
           <div class="crumbs" id="crumbs"></div>
           <nav class="tabs" id="nav" aria-label="Views">
+            <button data-view="fleet">Fleet</button>
             <button data-view="inbox">Inbox <b id="tab-count"></b></button>
             <button data-view="board">Board</button>
             <button data-view="campaign">Campaign</button>
+            <button data-view="acceptance">Acceptance <b id="accept-count"></b></button>
             <button data-view="settings">Settings</button>
           </nav>
+          <button class="dispatch-pill" id="dispatch-pill" data-act="dispatch-open" title="Console-wide dispatch switch">Dispatch auto</button>
           <div class="link"><span class="dot" id="conn"></span><span id="connText">connecting</span></div>
         </header>
 
@@ -67,6 +70,35 @@
         <footer>
           <button class="btn" data-act="browse-parent">Up</button>
           <button class="btn primary" data-act="browse-open">Open this folder</button>
+        </footer>
+      </div>
+    </div>
+
+    <div class="modal" id="dispatch-modal" hidden>
+      <div class="modal-card dispatch-card" role="dialog" aria-modal="true" aria-labelledby="dispatch-title">
+        <header>
+          <div>
+            <div class="eyebrow">console dispatch</div>
+            <h2 id="dispatch-title">Dispatch</h2>
+          </div>
+          <button class="btn ghost" data-act="close-dispatch">Close</button>
+        </header>
+        <div class="dispatch-body">
+          <p id="dispatch-copy" class="lede">Pausing dispatch stops new runs. Live runs keep going.</p>
+          <label class="field" for="dispatch-reason"><span>Reason</span>
+            <textarea id="dispatch-reason" rows="2" placeholder="quota exhausted, machine busy, a person is reviewing…"></textarea>
+          </label>
+          <div class="dispatch-presets" aria-label="Common reasons">
+            <button class="btn ghost" data-act="dispatch-preset" data-reason="quota exhausted">quota</button>
+            <button class="btn ghost" data-act="dispatch-preset" data-reason="budget exhausted">budget</button>
+            <button class="btn ghost" data-act="dispatch-preset" data-reason="machine busy">machine busy</button>
+            <button class="btn ghost" data-act="dispatch-preset" data-reason="waiting for a person">person</button>
+            <button class="btn ghost" data-act="dispatch-preset" data-reason="configuration error">config</button>
+          </div>
+        </div>
+        <footer>
+          <span class="hint" id="dispatch-note"></span>
+          <button class="btn primary" id="dispatch-apply" data-act="dispatch-apply">Pause dispatch</button>
         </footer>
       </div>
     </div>

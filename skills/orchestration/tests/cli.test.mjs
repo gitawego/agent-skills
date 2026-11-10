@@ -186,3 +186,42 @@ test("ticket edit and remove work from the CLI, and a live campaign can be cance
   assert.match(status.stdout, /paused/);
   delete process.env.FAKE_DELAY_MS;
 });
+
+test("dispatch and quota commands share the console state with the panel", () => {
+  const box = sandbox();
+  const dir = project(path.join(box, "repo"));
+  writeConsole();
+
+  assert.equal(cli(dir, ["dispatch"]).stdout.split("\n")[0].trim(), "dispatch  auto");
+  const refused = cli(dir, ["dispatch", "pause"]);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /requires a reason/i);
+
+  const paused = cli(dir, ["dispatch", "pause", "--reason", "quota exhausted"]);
+  assert.equal(paused.status, 0, paused.stderr);
+  assert.match(paused.stdout, /paused · quota exhausted/);
+  assert.match(cli(dir, ["dispatch", "status"]).stdout, /quota exhausted/);
+  assert.equal(cli(dir, ["dispatch", "resume"]).status, 0);
+  assert.equal(cli(dir, ["dispatch"]).stdout.split("\n")[0].trim(), "dispatch  auto");
+
+  const set = cli(dir, [
+    "quota",
+    "set",
+    "opencode-go",
+    "--adapter",
+    "opencode-acp",
+    "--window",
+    "5h",
+    "--used",
+    "72",
+    "--limit",
+    "100",
+    "--reset",
+    "2026-11-10T15:00:00Z",
+  ]);
+  assert.equal(set.status, 0, set.stderr);
+  const list = cli(dir, ["quota", "list"]);
+  assert.match(list.stdout, /opencode-go\s+5h\s+72\/100\s+manual\s+2026-11-10T15:00:00(?:\.000)?Z/);
+  assert.equal(cli(dir, ["quota", "remove", "opencode-go"]).status, 0);
+  assert.match(cli(dir, ["quota", "list"]).stdout, /no quotas configured/);
+});

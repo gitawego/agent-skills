@@ -37,6 +37,8 @@ import { enqueue } from "./lib/commands.mjs";
 import { listItems } from "./lib/inbox.mjs";
 import { campaignView, projectView } from "./lib/view.mjs";
 import { startServer } from "./lib/server.mjs";
+import { loadDispatch, setDispatch } from "./lib/dispatch.mjs";
+import { validateQuotas } from "./lib/quotas.mjs";
 import { joinFrontmatter } from "./lib/yaml.mjs";
 import { addTicket, createCampaign, ensureGitignore } from "./lib/create.mjs";
 import { loadState } from "./lib/state.mjs";
@@ -550,7 +552,7 @@ const commands = {
     const root = rootDir(flags);
     const items = listCampaigns(root).flatMap((slug) =>
       listItems(root, slug)
-        .filter((item) => item.status === "open")
+        .filter((item) => item.status === "open" && item.kind !== "review")
         .map((item) => ({ ...item, campaign: slug })),
     );
     if (flags.json) {
@@ -565,6 +567,30 @@ const commands = {
       console.log(`${item.id}  [${item.kind}] ${item.campaign}${item.ticket ? ` / ${item.ticket}` : ""}`);
       console.log(`  ${item.title}`);
       if (item.question?.text) console.log(`  ? ${item.question.text}`);
+      if (item.brief) console.log(`  ${item.brief.split("\n")[0]}`);
+    }
+  },
+
+  acceptance({ flags }) {
+    const root = rootDir(flags);
+    const items = listCampaigns(root).flatMap((slug) =>
+      listItems(root, slug)
+        .filter((item) => item.status === "open" && item.kind === "review")
+        .map((item) => ({ ...item, campaign: slug })),
+    );
+    if (flags.json) {
+      console.log(JSON.stringify(items, null, 2));
+      return;
+    }
+    if (!items.length) {
+      console.log("nothing is waiting for acceptance");
+      return;
+    }
+    for (const item of items) {
+      const view = campaignView(root, item.campaign);
+      const stats = view.delivery?.stats;
+      console.log(`${item.id}  ${item.campaign}  ${item.title}`);
+      if (stats) console.log(`  ${stats.added} added, ${stats.removed} removed · limit ${view.maxAutoshipLines}`);
       if (item.brief) console.log(`  ${item.brief.split("\n")[0]}`);
     }
   },
@@ -640,6 +666,93 @@ const commands = {
     const slug = resolveCampaign(root, flags.campaign || positional[0]);
     enqueue(root, { type: "resume", campaign: slug });
     tickNow(root);
+  },
+
+  dispatch({ flags, positional }) {
+    const action = positional[0] || (flags.pause ? "pause" : flags.resume ? "resume" : "status");
+    if (action === "status") {
+      const dispatch = loadDispatch();
+      if (flags.json) {
+        console.log(JSON.stringify(dispatch, null, 2));
+        return;
+      }
+      console.log(`dispatch  ${dispatch.mode}${dispatch.reason ? ` · ${dispatch.reason}` : ""}`);
+      if (dispatch.at) console.log(`changed   ${dispatch.at}${dispatch.by ? ` by ${dispatch.by}` : ""}`);
+      return;
+    }
+    if (!["pause", "resume", "auto"].includes(action))
+      throw new UserError('Usage: orchestrate dispatch [status|pause|resume] [--reason "why"]');
+    const reason = flags.reason ? String(flags.reason) : action === "pause" ? "" : null;
+    try {
+      const dispatch = setDispatch(action === "pause" ? "paused" : "auto", { reason, by: "cli" });
+      console.log(`dispatch  ${dispatch.mode}${dispatch.reason ? ` · ${dispatch.reason}` : ""}`);
+    } catch (err) {
+      throw new UserError(err.message, ['Pass --reason "quota exhausted" or another short cause.']);
+    }
+  },
+
+  quota({ flags, positional }) {
+    const action = positional[0] || "list";
+    const config = loadConsole();
+    const quotas = validateQuotas(config.quotas || []).quotas;
+    if (action === "list") {
+      if (flags.json) {
+        console.log(JSON.stringify(quotas, null, 2));
+        return;
+      }
+      if (!quotas.length) {
+        console.log("no quotas configured");
+        return;
+      }
+      for (const quota of quotas) {
+        console.log(
+          `${(quota.provider || quota.adapter || "?").padEnd(20)} ${String(quota.window).padEnd(8)} ` +
+            `${quota.used}/${quota.limit}  ${quota.source.padEnd(7)} ${quota.resetAt || "no reset"}`,
+        );
+      }
+      return;
+    }
+    if (action === "remove") {
+      const provider = positional[1] || flags.provider;
+      if (!provider) throw new UserError("Usage: orchestrate quota remove <provider> [--window 5h]");
+      if (flags.window) {
+        config.quotas = quotas.filter(
+          (quota) => !(quota.provider === provider && quota.window === String(flags.window)),
+        );
+      } else {
+        config.quotas = quotas.filter((quota) => quota.provider !== provider);
+      }
+      saveConsole(config);
+      console.log(`removed ${provider}`);
+      return;
+    }
+    if (action !== "set") throw new UserError("Usage: orchestrate quota list|set|remove ...");
+    const provider = positional[1] || flags.provider;
+    if (!provider) throw new UserError("Usage: orchestrate quota set <provider> --window 5h --used 72 --limit 100");
+    const next = quotas.filter(
+      (quota) =>
+        !(
+          quota.provider === provider &&
+          quota.window === String(flags.window || "weekly") &&
+          (quota.adapter || null) === (flags.adapter || null)
+        ),
+    );
+    const candidate = {
+      provider,
+      adapter: flags.adapter || null,
+      window: flags.window || "weekly",
+      used: flags.used == null ? 0 : Number(flags.used),
+      limit: flags.limit == null ? 100 : Number(flags.limit),
+      resetAt: flags.reset || flags["reset-at"] || null,
+      source: flags.source || "manual",
+      updatedAt: nowIso(),
+    };
+    next.push(candidate);
+    const checked = validateQuotas(next);
+    if (checked.errors.length) throw new UserError(`Invalid quota: ${checked.errors.join("; ")}`);
+    config.quotas = checked.quotas;
+    saveConsole(config);
+    console.log(`set ${provider} ${candidate.window}: ${candidate.used}/${candidate.limit}${candidate.resetAt ? ` resets ${candidate.resetAt}` : ""}`);
   },
 
   tick({ flags }) {
@@ -838,12 +951,15 @@ const commands = {
   run                                   supervisor + panel for every registered project
   tick                                  one pass, no panel
   status [campaign] [--json]            stages, spend, plan errors
-  inbox [--json]                        open items across campaigns
+  inbox [--json]                        open questions and failures across campaigns
+  acceptance [--json]                   deliveries waiting for a person
   answer <item> "<text>"                deliver a decision and resume the run
   review <item> approve|reject [text]   accept a delivery or send it back
   deliver <campaign>                    take a manual delivery now
   retry <ticket> | stop <ticket>        control one ticket
   pause | resume <campaign>             stop or resume dispatch
+  dispatch [status|pause|resume]        the console-wide switch; --reason when pausing
+  quota list|set|remove ...             provider windows: --window 5h --used 72 --limit 100
   panel                                 print the panel URL
 `);
   },

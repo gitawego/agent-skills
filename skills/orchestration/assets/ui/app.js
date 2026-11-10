@@ -1,6 +1,7 @@
 /* Orchestration panel. No framework, no build step: state in, DOM out. */
 
-const VIEWS = ["inbox", "board", "campaign", "settings"];
+const VIEWS = ["fleet", "inbox", "board", "campaign", "acceptance", "settings"];
+const FLEET_STATUS = ["all", "running", "queued", "acceptance", "done"];
 const STAGES = [
   { id: "blocked", label: "Blocked", family: "idle" },
   { id: "queued", label: "Queued", family: "idle" },
@@ -37,7 +38,19 @@ if (forced === "light" || forced === "dark") {
 }
 
 let state = null;
-let view = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "inbox";
+const initialHash = (() => {
+  const raw = location.hash.replace(/^#/, "");
+  const [name, query = ""] = raw.split("?");
+  return { name, params: new URLSearchParams(query) };
+})();
+let view = VIEWS.includes(initialHash.name) ? initialHash.name : "fleet";
+let fleetStatus = FLEET_STATUS.includes(initialHash.params.get("status")) ? initialHash.params.get("status") : "all";
+let fleetProject = initialHash.params.get("project") || "";
+let fleetAdapter = initialHash.params.get("adapter") || "";
+let fleetQuery = initialHash.params.get("q") || "";
+let fleetLimit = 200;
+let dispatchModalMode = "paused";
+let quotaDraft = {};
 let selected = { root: null, campaign: null };
 let drawer = null;
 let logTimer = null;
@@ -53,6 +66,7 @@ let lastErrorTs = null;
 
 function clearDrafts(scope) {
   for (const key of Object.keys(drafts)) if (key.startsWith(`${scope}:`)) delete drafts[key];
+  if (scope === "console" || scope === "campaign") delete quotaDraft[scope];
 }
 
 const app = document.getElementById("app");
@@ -63,6 +77,8 @@ const campaignsEl = document.getElementById("campaigns");
 const crumbsEl = document.getElementById("crumbs");
 const tabsEl = document.getElementById("nav");
 const tabCount = document.getElementById("tab-count");
+const acceptCount = document.getElementById("accept-count");
+const dispatchPill = document.getElementById("dispatch-pill");
 const signalEl = document.getElementById("signal");
 const footState = document.getElementById("foot-state");
 
@@ -200,8 +216,147 @@ function current() {
   return campaignOf(selected.root, selected.campaign) || campaigns()[0] || null;
 }
 
-function openItems() {
+function allOpenItems() {
   return campaigns().flatMap((c) => (c.inbox || []).filter((i) => i.status === "open").map((item) => ({ ...item, campaign: c })));
+}
+
+function openItems() {
+  return allOpenItems().filter((item) => item.kind !== "review");
+}
+
+function acceptanceItems() {
+  return allOpenItems()
+    .filter((item) => item.kind === "review")
+    .sort((a, b) => String(a.created).localeCompare(String(b.created)));
+}
+
+function fleetRows() {
+  const rows = [];
+  for (const c of campaigns()) {
+    for (const t of c.tickets || []) {
+      rows.push({
+        type: "ticket",
+        key: `${c.root}:${c.slug}:${t.id}`,
+        root: c.root,
+        project: c.project,
+        campaign: c.slug,
+        ticket: t.id,
+        title: t.title,
+        kind: t.kind,
+        stage: t.stage,
+        family:
+          t.stage === "working"
+            ? "active"
+            : ["needs_answer", "needs_changes", "failed"].includes(t.stage)
+              ? "person"
+              : ["done", "dropped"].includes(t.stage)
+                ? "done"
+                : "idle",
+        adapter: t.adapter || c.runner?.adapter || "pi",
+        model: t.model || t.run?.model || "",
+        queue: t.queue || null,
+        updated: t.updated || t.run?.startedAt || null,
+        cost: t.cost || null,
+        attempts: t.attempts || 0,
+        live: t.run?.status === "live",
+      });
+    }
+    for (const item of (c.inbox || []).filter((i) => i.status === "open" && i.kind === "review")) {
+      rows.push({
+        type: "acceptance",
+        key: `${c.root}:${c.slug}:${item.id}`,
+        root: c.root,
+        project: c.project,
+        campaign: c.slug,
+        ticket: "",
+        item: item.id,
+        title: item.title || `${c.slug} is ready`,
+        kind: "delivery",
+        stage: "acceptance",
+        family: "person",
+        adapter: c.runner?.adapter || "pi",
+        model: "",
+        queue: { code: "acceptance", text: `waiting ${elapsed(item.created)}` },
+        updated: item.created,
+        cost: null,
+        live: false,
+      });
+    }
+  }
+  return rows;
+}
+
+function fleetCounts(rows) {
+  const counts = { all: rows.length, running: 0, queued: 0, acceptance: 0, done: 0 };
+  for (const row of rows) {
+    if (row.type === "acceptance") counts.acceptance++;
+    else if (row.stage === "working") counts.running++;
+    else if (["queued", "blocked", "needs_changes"].includes(row.stage)) counts.queued++;
+    else if (["done", "dropped"].includes(row.stage)) counts.done++;
+  }
+  return counts;
+}
+
+function statusMatches(row, status) {
+  if (status === "all") return true;
+  if (status === "acceptance") return row.type === "acceptance";
+  if (status === "running") return row.type === "ticket" && row.stage === "working";
+  if (status === "queued") return row.type === "ticket" && ["queued", "blocked", "needs_changes"].includes(row.stage);
+  if (status === "done") return row.type === "ticket" && ["done", "dropped"].includes(row.stage);
+  return true;
+}
+
+function filteredFleet(rows = fleetRows()) {
+  const q = fleetQuery.trim().toLowerCase();
+  return rows.filter((row) => {
+    if (!statusMatches(row, fleetStatus)) return false;
+    if (fleetProject && row.project !== fleetProject && row.root !== fleetProject) return false;
+    if (fleetAdapter && row.adapter !== fleetAdapter) return false;
+    if (!q) return true;
+    return `${row.ticket} ${row.title} ${row.project} ${row.campaign} ${row.adapter} ${row.model} ${row.stage} ${row.queue?.text || ""}`
+      .toLowerCase()
+      .includes(q);
+  });
+}
+
+function costText(cost) {
+  if (!cost) return "—";
+  return cost.text || (cost.label === "unknown" ? "—" : `${usd(cost.value)} ${cost.label}`);
+}
+
+function fleetCostText(cost) {
+  if (!cost || cost.label === "unknown") return "—";
+  if (cost.label === "included") return "included";
+  return `${usd(cost.value)} ${cost.label === "actual" ? "actual" : "est."}`;
+}
+
+function contextText(run) {
+  if (!run) return "";
+  const used = Number(run.promptTokens || run.tokens || 0);
+  const limit = Number(run.contextTokens || 0);
+  if (!used) return "—";
+  if (!limit) return `${num(used)} tok · window unknown`;
+  return `${((used / limit) * 100).toFixed(1)}% · ${num(used)} / ${shortTokens(limit)}`;
+}
+
+function shortTokens(value) {
+  const n = Number(value || 0);
+  if (n >= 1_000_000) return `${Math.round((n / 1_000_000) * 10) / 10}M`.replace(".0M", "M");
+  if (n >= 1_000) return `${Math.round((n / 1_000) * 10) / 10}K`.replace(".0K", "K");
+  return String(n);
+}
+
+function telemetryOf(run) {
+  if (!run) return [];
+  const rows = [];
+  rows.push(["Context", contextText(run)]);
+  rows.push([
+    "Cache",
+    run.cacheHit == null ? "—" : `${(run.cacheHit * 100).toFixed(1)}% cached read (${num(run.cachedReadTokens || 0)} tok)`,
+  ]);
+  rows.push(["Speed", run.tokensPerSecond == null ? "—" : `${run.tokensPerSecond.toFixed(1)} output tok/s`]);
+  rows.push(["Cost", costText(run.cost)]);
+  return rows;
 }
 
 function ensureSelection() {
@@ -381,13 +536,262 @@ function elapsed(since) {
   return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
 }
 
+function until(iso) {
+  if (!iso) return "no reset";
+  const ms = Date.parse(iso) - Date.now();
+  if (!Number.isFinite(ms)) return "no reset";
+  if (ms <= 0) return "reset passed";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}h ${String(m % 60).padStart(2, "0")}m`;
+  return `${Math.floor(h / 24)}d ${String(h % 24).padStart(2, "0")}h`;
+}
+
+function quotaView(quota) {
+  const used = Number(quota.used || 0);
+  const limit = Number(quota.limit || 100);
+  const percent = Math.max(0, Math.min(100, Math.round((used / limit) * 100)));
+  const resetAt = quota.resetAt ? Date.parse(quota.resetAt) : null;
+  const resetPassed = resetAt && resetAt <= Date.now();
+  const exhausted = !resetPassed && used >= limit;
+  const reference = quota.updatedAt || quota.observedAt;
+  const staleAfter = Number(quota.staleAfterMin || 1440) * 60_000;
+  const stale = quota.source === "stale" || (reference && Date.now() - Date.parse(reference) > staleAfter);
+  return { percent, exhausted, resetPassed, stale };
+}
+
+function quotaStrip(quotas, label = "Provider windows") {
+  if (!quotas || !quotas.length) {
+    return `<div class="quota-strip empty"><span>${esc(label)}: none configured.</span><button class="btn ghost" data-act="go" data-view="settings">Add a window in Settings</button></div>`;
+  }
+  return `<div class="quota-strip" aria-label="${esc(label)}">
+    <span class="quota-label">${esc(label)}</span>
+    ${quotas
+      .map((quota) => {
+        const view = quotaView(quota);
+        const cls = view.stale ? "stale" : view.exhausted ? "exhausted" : view.resetPassed ? "expired" : "fresh";
+        return `<span class="quota ${cls}" title="${esc(`${quota.used}/${quota.limit} · ${quota.source}${view.stale ? " · stale data" : ""}`)}">
+          <b>${esc(quota.provider || quota.adapter || "provider")}</b>
+          <span class="window">${esc(quota.window)}</span>
+          <span class="bar"><i style="width:${view.percent}%"></i></span>
+          <span class="pct">${view.percent}%</span>
+          <span class="reset">${esc(view.resetPassed ? "reset passed" : `resets ${until(quota.resetAt)}`)}</span>
+          <span class="source">${esc(view.stale ? "stale" : quota.source)}</span>
+        </span>`;
+      })
+      .join("")}
+  </div>`;
+}
+
+function dispatchBanner() {
+  const dispatch = state?.dispatch;
+  if (dispatch?.mode !== "paused") return "";
+  return `<div class="dispatch-banner">
+    <strong>Dispatch paused.</strong>
+    <span>${esc(dispatch.reason || "no reason recorded")} · new runs will not start; live runs continue.</span>
+    <button class="btn" data-act="dispatch-open">Resume…</button>
+  </div>`;
+}
+
+function fleetTabs(counts) {
+  const labels = [
+    ["all", "All"],
+    ["running", "Running"],
+    ["queued", "Queued"],
+    ["acceptance", "Acceptance"],
+    ["done", "Done"],
+  ];
+  return `<div class="fleet-tabs" role="tablist" aria-label="Fleet status">
+    ${labels
+      .map(
+        ([id, label]) =>
+          `<button role="tab" aria-selected="${fleetStatus === id}" data-act="fleet-status" data-status="${id}">${label} <b>${counts[id] || 0}</b></button>`,
+      )
+      .join("")}
+  </div>`;
+}
+
+function fleetFilters() {
+  const projects = [...new Map(campaigns().map((c) => [c.project, c.root])).entries()];
+  const adapters = [...new Set(fleetRows().map((row) => row.adapter).filter(Boolean))].sort();
+  return `<div class="fleet-filters">
+    <input type="search" data-role="fleet-search" value="${esc(fleetQuery)}" placeholder="Search task, project, model, queue reason…" aria-label="Search the fleet" autocomplete="off" spellcheck="false" />
+    <select data-role="fleet-project" aria-label="Filter by project">
+      <option value="">all projects</option>
+      ${projects.map(([name, root]) => `<option value="${esc(name)}" ${fleetProject === name || fleetProject === root ? "selected" : ""}>${esc(name)}</option>`).join("")}
+    </select>
+    <select data-role="fleet-adapter" aria-label="Filter by adapter">
+      <option value="">all adapters</option>
+      ${adapters.map((id) => `<option value="${esc(id)}" ${fleetAdapter === id ? "selected" : ""}>${esc(id)}</option>`).join("")}
+    </select>
+    <span class="hint" id="fleet-summary"></span>
+  </div>`;
+}
+
+function viewFleet() {
+  if (!campaigns().length) return noCampaigns();
+  const rows = fleetRows();
+  const counts = fleetCounts(rows);
+  return `<h1 class="page">Fleet</h1>
+    <p class="lede">Every ticket across every project, with why it is or is not moving. Click a row to open the ticket; acceptance rows open the delivery.</p>
+    ${dispatchBanner()}
+    ${quotaStrip(state?.console?.quotas || [])}
+    ${fleetTabs(counts)}
+    ${fleetFilters()}
+    <div class="fleet-wrap">
+      <table class="fleet-table">
+        <thead><tr><th>Task</th><th>Stage / waiting</th><th>Model</th><th class="num">Cost</th><th class="num">Updated</th></tr></thead>
+        <tbody id="fleet-body"></tbody>
+      </table>
+    </div>
+    <div id="fleet-more" class="fleet-more"></div>`;
+}
+
+function fleetRow(row) {
+  const open = row.type === "acceptance"
+    ? `data-act="open-acceptance" data-root="${esc(row.root)}" data-campaign="${esc(row.campaign)}" data-item="${esc(row.item)}"`
+    : `data-act="open-ticket" data-root="${esc(row.root)}" data-campaign="${esc(row.campaign)}" data-ticket="${esc(row.ticket)}"`;
+  const model = row.model ? `${row.adapter} · ${row.model}` : row.adapter;
+  return `<tr class="fleet-row" data-family="${esc(row.family)}" tabindex="0" ${open}>
+    <td class="task"><span class="id">${esc(row.ticket || "→")}</span><span class="name">${esc(row.title)}</span><span class="where">${esc(row.project)} / ${esc(row.campaign)}${row.kind ? ` · ${esc(row.kind)}` : ""}</span></td>
+    <td><span class="badge">${esc(row.stage)}</span>${row.queue?.text ? `<span class="queue">${esc(row.queue.text)}</span>` : ""}</td>
+    <td class="mono">${esc(model)}</td>
+    <td class="num">${esc(fleetCostText(row.cost))}</td>
+    <td class="num">${esc(row.updated ? elapsed(row.updated) : "—")}</td>
+  </tr>`;
+}
+
+function paintFleet() {
+  const body = document.getElementById("fleet-body");
+  if (!body) return;
+  const rows = filteredFleet();
+  const visible = rows.slice(0, fleetLimit);
+  body.innerHTML = visible.length
+    ? visible.map(fleetRow).join("")
+    : `<tr><td colspan="5" class="fleet-empty">No rows match. Try another status, project or search.</td></tr>`;
+  const summary = document.getElementById("fleet-summary");
+  if (summary) summary.textContent = `${rows.length} shown · ${fleetRows().length} total`;
+  const more = document.getElementById("fleet-more");
+  if (more) {
+    more.innerHTML =
+      rows.length > fleetLimit
+        ? `<button class="btn" data-act="fleet-more">Load ${Math.min(200, rows.length - fleetLimit)} more</button><span class="hint">${fleetLimit} of ${rows.length} rendered</span>`
+        : rows.length > 200
+          ? `<span class="hint">All ${rows.length} rows rendered. Server-side query comes beyond 1,000.</span>`
+          : "";
+  }
+  syncFleetUrl();
+}
+
+function syncFleetUrl() {
+  if (drawer) return;
+  const params = new URLSearchParams();
+  if (fleetStatus !== "all") params.set("status", fleetStatus);
+  if (fleetProject) params.set("project", fleetProject);
+  if (fleetAdapter) params.set("adapter", fleetAdapter);
+  if (fleetQuery.trim()) params.set("q", fleetQuery.trim());
+  const query = params.toString();
+  const hash = view === "fleet" ? `#fleet${query ? `?${query}` : ""}` : `#${view}`;
+  history.replaceState(null, "", hash);
+}
+
+function updateBulkBar() {
+  const picks = [...document.querySelectorAll("[data-accept-select]:checked")];
+  const button = document.querySelector('[data-act="approve-selected"]');
+  const hint = document.getElementById("accept-hint");
+  if (!button || !hint) return;
+  if (!picks.length) {
+    button.disabled = true;
+    hint.textContent = "Select one campaign's deliveries.";
+    return;
+  }
+  const campaigns = new Set(picks.map((pick) => `${pick.dataset.root}:${pick.dataset.campaign}`));
+  if (campaigns.size > 1) {
+    button.disabled = true;
+    hint.textContent = "Bulk approval is limited to one campaign.";
+    return;
+  }
+  const over = picks.find((pick) => pick.dataset.under !== "true");
+  if (over) {
+    button.disabled = true;
+    hint.textContent = "This delivery is not eligible for bulk approval; approve it individually.";
+    return;
+  }
+  button.disabled = false;
+  hint.textContent = `${picks.length} selected in one campaign, under the autoship line.`;
+}
+
+function viewAcceptance(items) {
+  const groups = new Map();
+  for (const item of items) {
+    const key = `${item.campaign.root}:${item.campaign.slug}`;
+    if (!groups.has(key)) groups.set(key, { campaign: item.campaign, items: [] });
+    groups.get(key).items.push(item);
+  }
+  const body = items.length
+    ? [...groups.values()]
+        .map(({ campaign, items: group }) => {
+          const stats = campaign.delivery?.stats;
+          const lines = Number(stats?.lines || 0);
+          const limit = Number(campaign.maxAutoshipLines || 200);
+          const under = Boolean(stats) && lines <= limit;
+          const unknown = !stats;
+          const rule = unknown
+            ? "diff not recorded — approve individually"
+            : under
+              ? "under the autoship line"
+              : "over the autoship line — approve individually";
+          return `<section class="acceptance-group">
+            <header>
+              <h2>${esc(campaign.project)} / ${esc(campaign.slug)}</h2>
+              <span class="hint">${stats ? `${lines} changed lines · autoship limit ${limit}` : "diff not recorded"} · ${esc(campaign.autonomy)}</span>
+            </header>
+            ${group
+              .map(
+                (item) => `<article class="acceptance-card" data-root="${esc(campaign.root)}" data-campaign="${esc(campaign.slug)}" data-item="${esc(item.id)}" data-lines="${lines}" data-limit="${limit}" data-under="${under}">
+                  <header>
+                    <label class="pick"><input type="checkbox" data-accept-select data-root="${esc(campaign.root)}" data-campaign="${esc(campaign.slug)}" data-item="${esc(item.id)}" data-lines="${lines}" data-limit="${limit}" data-under="${under}" /> select</label>
+                    <span class="kind">delivery</span>
+                    <span class="where">${esc(campaign.project)} / ${esc(campaign.slug)}</span>
+                    <span class="wait">waiting ${esc(elapsed(item.created))}</span>
+                  </header>
+                  <h2>${esc(item.title || campaign.slug)}</h2>
+                  ${item.brief ? `<p class="brief">${esc(item.brief)}</p>` : ""}
+                  <div class="acceptance-meta">
+                    <span>${stats ? `${num(stats.added)} added, ${num(stats.removed)} removed` : "single-item approval"}</span>
+                    <span class="${under ? "ok" : "warn"}">${rule}</span>
+                  </div>
+                  <textarea data-accept-note="${esc(item.id)}" placeholder="Optional note for the record"></textarea>
+                  <div class="actions">
+                    <button class="btn primary" data-act="approve-acceptance" data-root="${esc(campaign.root)}" data-campaign="${esc(campaign.slug)}" data-item="${esc(item.id)}">Approve and merge</button>
+                    <button class="btn signal" data-act="reject-acceptance" data-root="${esc(campaign.root)}" data-campaign="${esc(campaign.slug)}" data-item="${esc(item.id)}">Send back</button>
+                    <button class="btn ghost" data-act="open-campaign" data-root="${esc(campaign.root)}" data-campaign="${esc(campaign.slug)}">Open campaign</button>
+                  </div>
+                </article>`,
+              )
+              .join("")}
+          </section>`;
+        })
+        .join("")
+    : `<div class="empty"><h2>Nothing is waiting for acceptance.</h2><p>Deliveries appear here when a campaign passes its gates and its landing policy needs a person.</p><button class="btn" data-act="go" data-view="fleet">Back to the fleet</button></div>`;
+  return `<h1 class="page">Acceptance${items.length ? ` · ${items.length} waiting` : ""}</h1>
+    <p class="lede">Deliveries only. Questions and failures stay in the Inbox. Bulk approval is limited to one campaign and to a diff under its autoship line.</p>
+    ${items.length ? `<div class="bulk-bar"><button class="btn primary" data-act="approve-selected" disabled>Approve selected</button><span class="hint" id="accept-hint">Select one campaign's deliveries.</span></div>` : ""}
+    ${body}`;
+}
+
 /* --- render --------------------------------------------------------------- */
 
 function render() {
   ensureSelection();
   const items = openItems();
+  const acceptance = acceptanceItems();
   tabCount.textContent = items.length ? String(items.length) : "";
-  signalEl.classList.toggle("alert", items.length > 0);
+  acceptCount.textContent = acceptance.length ? String(acceptance.length) : "";
+  signalEl.classList.toggle("alert", items.length + acceptance.length > 0);
   footState.textContent = state ? `${campaigns().length} campaign${campaigns().length === 1 ? "" : "s"} · ${state.projects.length} project${state.projects.length === 1 ? "" : "s"}` : "local";
   const theme = document.documentElement.dataset.theme || "dark";
   document.querySelectorAll("[data-act='theme']").forEach((b) => {
@@ -397,19 +801,34 @@ function render() {
   document.querySelectorAll("[data-act='text-size']").forEach((b) => {
     b.setAttribute("aria-pressed", String(Number(b.dataset.size) === size));
   });
+  renderDispatch();
 
   renderRail();
   renderCrumbs();
   renderTabs();
 
   if (!state) return;
-  if (view === "inbox") app.innerHTML = viewInbox(items);
+  if (view === "fleet") {
+    app.innerHTML = viewFleet();
+    paintFleet();
+  } else if (view === "inbox") app.innerHTML = viewInbox(items);
   else if (view === "board") app.innerHTML = viewBoard();
   else if (view === "campaign") app.innerHTML = viewCampaign();
+  else if (view === "acceptance") app.innerHTML = viewAcceptance(acceptance);
   else if (view === "settings") app.innerHTML = viewSettings();
 
   autoSize();
   markFresh();
+}
+
+function renderDispatch() {
+  const dispatch = state?.dispatch || { mode: "auto", reason: null };
+  const paused = dispatch.mode === "paused";
+  dispatchPill.textContent = paused ? `Dispatch paused${dispatch.reason ? `: ${dispatch.reason}` : ""}` : "Dispatch auto";
+  dispatchPill.classList.toggle("paused", paused);
+  dispatchPill.title = paused
+    ? "New runs are paused. Live runs continue. Click to resume."
+    : "Dispatch is automatic. Click to pause new runs.";
 }
 
 function renderRail() {
@@ -432,6 +851,18 @@ function renderRail() {
 }
 
 function renderCrumbs() {
+  if (view === "fleet") {
+    crumbsEl.innerHTML = `<b>Fleet</b><span>·</span>${campaigns().length} campaign${campaigns().length === 1 ? "" : "s"}<span>·</span>${fleetRows().length} rows`;
+    return;
+  }
+  if (view === "acceptance") {
+    crumbsEl.innerHTML = `<b>Acceptance</b><span>·</span>${acceptanceItems().length} waiting`;
+    return;
+  }
+  if (view === "settings") {
+    crumbsEl.innerHTML = `<b>Console</b><span>·</span>this machine`;
+    return;
+  }
   const c = current();
   if (!c) {
     crumbsEl.innerHTML = `<span>no campaign</span>`;
@@ -458,8 +889,8 @@ function viewInbox(items) {
         <p>Every campaign is running on its own. The board shows what is moving.</p>
         <dl class="legend">
           <dt>Question</dt><dd>A worker needs a decision no written source answers.</dd>
-          <dt>Delivery</dt><dd>Work passed its gates and waits for you to take it.</dd>
           <dt>Failure</dt><dd>Attempts ran out, or a merge would not resolve.</dd>
+          <dt>Delivery</dt><dd>Deliveries wait in the Acceptance queue, not here.</dd>
         </dl>
         <button class="btn" data-act="go" data-view="board">Open the board</button>
       </div>`;
@@ -630,6 +1061,7 @@ function viewCampaign() {
       ${c.stage === "running" ? `<button class="btn" data-act="pause" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Pause</button>` : ""}
       ${c.stage === "paused" ? `<button class="btn" data-act="resume" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Resume</button>` : ""}
     </div>
+    ${quotaStrip(c.quotas || [], "Quotas")}
     ${c.planErrors?.length ? `<div class="errors"><strong>Cannot dispatch yet</strong><ul>${c.planErrors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>` : ""}
     <div class="campaign-grid">
       <div class="doc-col">
@@ -688,6 +1120,11 @@ function viewCampaign() {
           <h3>Checks</h3>
           <textarea class="mono" name="checks" rows="3" placeholder="tests | node --test" aria-label="Checks">${esc(checks)}</textarea>
           <p class="sub" style="margin:6px 0 0">One per line, <span class="mono">name | command</span>. The supervisor runs them in the ticket's worktree.</p>
+        </div>
+
+        <div class="group">
+          <h3>Provider quotas <span class="sub">campaign additions and overrides</span></h3>
+          ${quotaEditor("campaign")}
         </div>
 
         ${campaignActions(c)}
@@ -765,8 +1202,7 @@ function viewCampaign() {
     </details>`;
 }
 
-function budgetEstimate(c) {
-  const budget = c.budget?.tokens;
+function budgetEstimate(c) {  const budget = c.budget?.tokens;
   if (!budget) return null;
   const scores = [];
   for (const kind of Object.values(c.effectiveKinds || {})) {
@@ -780,6 +1216,67 @@ function budgetEstimate(c) {
   const low = (budget * Math.min(...scores)) / 1_000_000;
   const high = (budget * Math.max(...scores)) / 1_000_000;
   return `${budget.toLocaleString()} tokens ≈ $${low.toFixed(2)}–$${high.toFixed(2)} at the bound prices`;
+}
+
+function quotaSourceRows(scope) {
+  if (scope === "console") return state?.console?.quotas || [];
+  return current()?.campaignQuotas || [];
+}
+
+function quotaRows(scope) {
+  const key = scope === "console" ? "console" : "campaign";
+  if (!quotaDraft[key]) quotaDraft[key] = quotaSourceRows(scope).map((quota) => ({ ...quota }));
+  return quotaDraft[key];
+}
+
+function readQuotaRows(scope) {
+  const rows = [...document.querySelectorAll(`[data-quota-scope="${scope}"]`)];
+  return rows.map((row) => {
+    const read = (field) => row.querySelector(`[data-quota-field="${field}"]`)?.value ?? "";
+    const adapter = read("adapter").trim();
+    return {
+      provider: read("provider").trim() || null,
+      adapter: adapter || null,
+      window: read("window").trim() || "weekly",
+      used: Number(read("used") || 0),
+      limit: Number(read("limit") || 100),
+      resetAt: read("resetAt").trim() || null,
+      source: read("source") || "manual",
+      updatedAt: new Date().toISOString(),
+    };
+  });
+}
+
+function quotaEditor(scope) {
+  const rows = quotaRows(scope);
+  return `<div class="quota-editor" id="quota-editor-${scope}">
+    <div class="quota-editor-head"><span>provider</span><span>adapter</span><span>window</span><span>used</span><span>limit</span><span>resets (ISO)</span><span>source</span><span></span></div>
+    ${rows
+      .map(
+        (quota, index) => `<div class="quota-row" data-quota-scope="${scope}">
+          <input data-quota-field="provider" value="${esc(quota.provider || "")}" placeholder="opencode-go" aria-label="Provider" />
+          <input data-quota-field="adapter" value="${esc(quota.adapter || "")}" placeholder="optional (agy-acp)" aria-label="Adapter" />
+          <input data-quota-field="window" value="${esc(quota.window || "weekly")}" placeholder="5h" aria-label="Window" />
+          <input data-quota-field="used" type="number" min="0" value="${esc(quota.used ?? 0)}" aria-label="Used" />
+          <input data-quota-field="limit" type="number" min="1" value="${esc(quota.limit ?? 100)}" aria-label="Limit" />
+          <input data-quota-field="resetAt" value="${esc(quota.resetAt || "")}" placeholder="2026-11-10T15:00:00Z" aria-label="Reset at" />
+          <select data-quota-field="source" aria-label="Source">
+            ${["manual", "api", "stale"].map((source) => `<option ${quota.source === source ? "selected" : ""}>${source}</option>`).join("")}
+          </select>
+          <button class="btn ghost" data-act="quota-remove" data-scope="${scope}" data-index="${index}" aria-label="Remove quota">×</button>
+        </div>`,
+      )
+      .join("")}
+    <div class="actions">
+      <button class="btn" data-act="quota-add" data-scope="${scope}">Add window</button>
+      <span class="hint">Stale entries are visible but never block dispatch. A reset time in the past clears the window.</span>
+    </div>
+  </div>`;
+}
+
+function refreshQuotaEditor(scope) {
+  const el = document.getElementById(`quota-editor-${scope}`);
+  if (el) el.outerHTML = quotaEditor(scope);
 }
 
 function viewSettings() {
@@ -809,6 +1306,12 @@ function viewSettings() {
       <label class="num-field"><span>Sandbox</span>${sandboxSelect("console")}</label>
     </div>
     <p class="note" style="margin:8px 0 0">Subscription-only hides metered models; metered-ok shows every discovered model with its price. Changing the adapter changes which catalog the chains below can pick from.</p>
+  </section>
+
+  <section class="settings-block">
+    <header><h2 class="page">Provider quotas</h2><span class="hint">windows that hold back dispatch when exhausted</span></header>
+    <p class="note" style="margin:-4px 0 12px">Match a model by provider, or by adapter for a whole subscription. A campaign can add its own windows in Campaign → Provider quotas. Stale data is displayed but never enforced.</p>
+    ${quotaEditor("console")}
   </section>
 
   <section class="settings-block">
@@ -874,6 +1377,7 @@ async function command(root, body) {
     });
     toast(`${body.type.replace(/\./g, " ")} queued`);
     setTimeout(() => load(), body.type === "catalog.refresh" ? 3500 : 350);
+    setTimeout(() => load({ quiet: true }), 2600);
   } catch (err) {
     toast(err.message);
   }
@@ -936,6 +1440,7 @@ function saveCampaign(root, slug) {
       ack_unmetered: Boolean(document.querySelector('[name="budget_ack"]')?.checked),
     },
     max_autoship_lines: Number(value("max_autoship_lines") || 200),
+    quotas: readQuotaRows("campaign"),
     kinds,
   };
   return command(root, { type: "campaign.save", campaign: slug, patch, body });
@@ -965,6 +1470,7 @@ function saveSettings() {
         spend: value("spend") || "metered-ok",
         sandbox: value("sandbox") || "auto",
       },
+      quotas: readQuotaRows("console"),
     },
   });
 }
@@ -1066,7 +1572,23 @@ function drawerHtml(c, t) {
     <button class="btn ghost" data-act="close-drawer">Close</button>
   </header>
   <div class="drawer-body">
-    ${t.waitingOn ? `<p class="meta">Waiting for a free lane on ${esc(t.waitingOn)}</p>` : ""}
+    ${t.queue?.text ? `<p class="meta">${esc(t.queue.text)}</p>` : t.waitingOn ? `<p class="meta">Waiting for a free lane on ${esc(t.waitingOn)}</p>` : ""}
+    ${latest ? `<section class="telemetry">
+      <h2>Telemetry <span class="hint">${esc(latest.id.replace(/^r-\d{8}T/, ""))} · ${esc(latest.adapter || "?")}${latest.adapterVersion ? ` ${esc(latest.adapterVersion)}` : ""}${latest.host ? ` · ${esc(latest.host)}` : ""}</span></h2>
+      <dl>${telemetryOf(latest)
+        .map(([key, value]) => `<dt>${esc(key)}</dt><dd>${esc(value || "—")}</dd>`)
+        .join("")}</dl>
+    </section>` : ""}
+    ${latest?.children?.length ? `<section class="telemetry children">
+      <h2>Child runs <span class="hint">observed only · not tickets · ${num(latest.childTokens || 0)} tokens${latest.childDollars ? ` · ${usd(latest.childDollars)}` : ""}</span></h2>
+      <table><thead><tr><th>Child</th><th>Model</th><th>Status</th><th class="num">Tokens</th><th class="num">Cost</th></tr></thead><tbody>
+        ${latest.children
+          .map(
+            (child) => `<tr><td class="mono">${esc(child.name || child.id)}</td><td class="mono">${esc(child.model || "—")}</td><td>${esc(child.status || "—")}</td><td class="num">${num(child.tokens)}</td><td class="num">${child.dollars ? usd(child.dollars) : "—"}</td></tr>`,
+          )
+          .join("")}
+      </tbody></table>
+    </section>` : ""}
     <h2>What to build</h2><div class="doc">${esc(t.body || "")}</div>
     <h2>Acceptance</h2><div class="doc">${(t.accepted || []).map((a) => `· ${esc(a.text)}`).join("\n") || "none declared"}</div>
     ${(t.attachments || []).length ? `<h2>Attached files</h2><div class="doc">${(t.attachments || []).map((p) => `· ${esc(p)}`).join("\n")}</div>` : ""}
@@ -1076,7 +1598,7 @@ function drawerHtml(c, t) {
     <table><thead><tr><th>Run</th><th>Role</th><th>Model</th><th>Report</th><th class="num">Cost</th></tr></thead><tbody>
       ${runs
         .map(
-          (r) => `<tr><td class="mono" style="font-size:0.76rem" title="${esc(r.id)}">${esc(r.id.replace(/^r-\d{8}T/, ""))}</td><td>${esc(r.role)}</td><td class="mono" style="font-size:0.76rem">${esc(r.model || "")}</td><td>${esc(r.reportStatus || r.status)}${r.killed ? ` (${esc(r.killed)})` : ""}</td><td class="num">${r.unmetered ? "unmetered" : usd(r.dollars)}</td></tr>`,
+          (r) => `<tr><td class="mono" style="font-size:0.76rem" title="${esc(r.id)}">${esc(r.id.replace(/^r-\d{8}T/, ""))}</td><td>${esc(r.role)}</td><td class="mono" style="font-size:0.76rem">${esc(r.model || "")}</td><td>${esc(r.reportStatus || r.status)}${r.killed ? ` (${esc(r.killed)})` : ""}</td><td class="num">${esc(r.cost?.text || (r.unmetered ? "included" : usd(r.dollars)))}</td></tr>`,
         )
         .join("") || `<tr><td colspan="5" class="hint">No runs yet.</td></tr>`}
     </tbody></table>
@@ -1166,28 +1688,50 @@ function closeDrawer() {
   drawer = null;
   drawerEl.hidden = true;
   clearInterval(logTimer);
-  if (location.hash.startsWith("#ticket/")) history.replaceState(null, "", `#${view}`);
+  if (location.hash.startsWith("#ticket/")) {
+    if (view === "campaign" && selected.campaign) {
+      history.replaceState(null, "", `#campaign/${encodeURIComponent(selected.campaign)}`);
+    } else {
+      syncFleetUrl();
+    }
+  }
 }
 
 function routeFromHash() {
-  const hash = location.hash.slice(1);
-  if (hash.startsWith("campaign/")) {
-    const slug = decodeURIComponent(hash.slice("campaign/".length));
+  const raw = location.hash.slice(1);
+  const [name, query = ""] = raw.split("?");
+  const params = new URLSearchParams(query);
+  if (name.startsWith("campaign/")) {
+    const slug = decodeURIComponent(name.slice("campaign/".length));
     const found = campaigns().find((c) => c.slug === slug);
     if (found) selected = { root: found.root, campaign: found.slug };
     view = "campaign";
     render();
     return;
   }
-  if (hash.startsWith("ticket/")) {
-    const id = decodeURIComponent(hash.slice("ticket/".length));
+  if (name.startsWith("ticket/")) {
+    const id = decodeURIComponent(name.slice("ticket/".length));
     if (current() && id) openTicket(current().root, current().slug, id);
     return;
   }
-  if (VIEWS.includes(hash) && hash !== view) {
-    view = hash;
-    closeDrawer();
-    render();
+  if (VIEWS.includes(name)) {
+    const nextStatus = FLEET_STATUS.includes(params.get("status")) ? params.get("status") : "all";
+    const changed =
+      name !== view ||
+      nextStatus !== fleetStatus ||
+      (params.get("project") || "") !== fleetProject ||
+      (params.get("adapter") || "") !== fleetAdapter ||
+      (params.get("q") || "") !== fleetQuery;
+    view = name;
+    fleetStatus = nextStatus;
+    fleetProject = params.get("project") || "";
+    fleetAdapter = params.get("adapter") || "";
+    fleetQuery = params.get("q") || "";
+    fleetLimit = 200;
+    if (changed) {
+      closeDrawer();
+      render();
+    }
   }
 }
 
@@ -1282,12 +1826,46 @@ async function openSelectedFolder() {
 
 document.addEventListener("click", (event) => {
   if (event.target.id === "folder-picker") event.target.hidden = true;
+  if (event.target.id === "dispatch-modal") event.target.hidden = true;
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !document.getElementById("folder-picker").hidden) {
-    document.getElementById("folder-picker").hidden = true;
-  }
+  if (event.key !== "Escape") return;
+  if (!document.getElementById("folder-picker").hidden) document.getElementById("folder-picker").hidden = true;
+  if (!document.getElementById("dispatch-modal").hidden) document.getElementById("dispatch-modal").hidden = true;
 });
+
+function openDispatchModal() {
+  if (!campaigns().length) return toast("Open a repository before changing dispatch");
+  const paused = state?.dispatch?.mode === "paused";
+  dispatchModalMode = paused ? "auto" : "paused";
+  const modal = document.getElementById("dispatch-modal");
+  modal.hidden = false;
+  document.getElementById("dispatch-title").textContent = paused ? "Resume dispatch" : "Pause dispatch";
+  document.getElementById("dispatch-copy").textContent = paused
+    ? "New runs will resume on the next tick. Live runs were never paused."
+    : "Pausing stops new dispatches on every project. Live runs keep going.";
+  const reason = document.getElementById("dispatch-reason");
+  reason.value = paused ? "" : state?.dispatch?.reason || "";
+  reason.placeholder = paused ? "optional note" : "quota exhausted, machine busy, a person is reviewing…";
+  document.getElementById("dispatch-apply").textContent = paused ? "Resume dispatch" : "Pause dispatch";
+  document.getElementById("dispatch-note").textContent = paused
+    ? `Paused${state?.dispatch?.at ? ` ${elapsed(state.dispatch.at)} ago` : ""}${state?.dispatch?.by ? ` by ${state.dispatch.by}` : ""}`
+    : "A reason is required.";
+  reason.focus();
+}
+
+function applyDispatchSwitch() {
+  const root = campaigns()[0]?.root;
+  if (!root) return toast("Open a repository first");
+  const reason = document.getElementById("dispatch-reason").value.trim();
+  if (dispatchModalMode === "paused" && !reason) return toast("A pause needs a reason");
+  document.getElementById("dispatch-modal").hidden = true;
+  return command(root, {
+    type: dispatchModalMode === "paused" ? "dispatch.pause" : "dispatch.resume",
+    reason: reason || null,
+    by: "panel",
+  });
+}
 
 function closeModelSuggest() {
   document.querySelectorAll(".model-suggest").forEach((box) => {
@@ -1372,6 +1950,21 @@ document.addEventListener("keydown", (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  const fleetProjectSelect = event.target.closest("[data-role='fleet-project']");
+  if (fleetProjectSelect) {
+    fleetProject = fleetProjectSelect.value;
+    fleetLimit = 200;
+    render();
+    return syncFleetUrl();
+  }
+  const fleetAdapterSelect = event.target.closest("[data-role='fleet-adapter']");
+  if (fleetAdapterSelect) {
+    fleetAdapter = fleetAdapterSelect.value;
+    fleetLimit = 200;
+    render();
+    return syncFleetUrl();
+  }
+  if (event.target.closest("[data-accept-select]")) return updateBulkBar();
   const files = event.target.closest("input[data-role='attach-files']");
   if (files) {
     uploadAttachments(files);
@@ -1401,6 +1994,76 @@ document.addEventListener("click", (event) => {
       view = target.dataset.view;
       history.replaceState(null, "", `#${view}`);
       return render();
+    case "fleet-status":
+      fleetStatus = target.dataset.status;
+      fleetLimit = 200;
+      render();
+      return syncFleetUrl();
+    case "fleet-more":
+      fleetLimit += 200;
+      return paintFleet();
+    case "open-acceptance":
+      view = "acceptance";
+      closeDrawer();
+      history.replaceState(null, "", "#acceptance");
+      return render();
+    case "open-campaign": {
+      const found = campaignOf(root, campaign);
+      if (found) selected = { root: found.root, campaign: found.slug };
+      view = "campaign";
+      history.replaceState(null, "", `#campaign/${encodeURIComponent(campaign)}`);
+      return render();
+    }
+    case "approve-acceptance": {
+      const note = document.querySelector(`[data-accept-note="${item}"]`)?.value || "";
+      return command(root, { type: "review.approve", campaign, item, text: note });
+    }
+    case "reject-acceptance": {
+      const note = document.querySelector(`[data-accept-note="${item}"]`)?.value || "";
+      if (!note.trim()) return toast("Say what needs to change before sending it back");
+      return command(root, { type: "review.reject", campaign, item, text: note });
+    }
+    case "approve-selected": {
+      const picks = [...document.querySelectorAll("[data-accept-select]:checked")];
+      if (!picks.length) return toast("Select a delivery first");
+      const campaigns = new Set(picks.map((pick) => `${pick.dataset.root}:${pick.dataset.campaign}`));
+      if (campaigns.size > 1) return toast("Bulk approval is limited to one campaign");
+      const first = picks[0];
+      const root = first.dataset.root;
+      const campaign = first.dataset.campaign;
+      const over = picks.find((pick) => pick.dataset.under !== "true");
+      if (over) return toast("This delivery is not eligible for bulk approval; approve it individually");
+      return command(root, {
+        type: "review.approve-bulk",
+        campaign,
+        items: picks.map((pick) => pick.dataset.item),
+        text: "Approved in bulk from the acceptance queue.",
+      });
+    }
+    case "quota-add": {
+      const scope = target.dataset.scope;
+      const rows = readQuotaRows(scope);
+      rows.push({ provider: "", adapter: "", window: "weekly", used: 0, limit: 100, resetAt: "", source: "manual" });
+      quotaDraft[scope] = rows;
+      return refreshQuotaEditor(scope);
+    }
+    case "quota-remove": {
+      const scope = target.dataset.scope;
+      const rows = readQuotaRows(scope);
+      rows.splice(Number(target.dataset.index), 1);
+      quotaDraft[scope] = rows;
+      return refreshQuotaEditor(scope);
+    }
+    case "dispatch-open":
+      return openDispatchModal();
+    case "dispatch-preset":
+      document.getElementById("dispatch-reason").value = target.dataset.reason || "";
+      return document.getElementById("dispatch-reason").focus();
+    case "close-dispatch":
+      document.getElementById("dispatch-modal").hidden = true;
+      return;
+    case "dispatch-apply":
+      return applyDispatchSwitch();
     case "select-campaign":
       clearDrafts("campaign");
       adapterChoice.campaign = null;
@@ -1543,8 +2206,9 @@ tabsEl.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-view]");
   if (!button) return;
   view = button.dataset.view;
-  history.replaceState(null, "", `#${view}`);
+  closeDrawer();
   render();
+  syncFleetUrl();
 });
 
 document.addEventListener("keydown", (event) => {
@@ -1554,9 +2218,28 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     openTicket(stripEl.dataset.root, stripEl.dataset.campaign, stripEl.dataset.ticket);
   }
+  const fleetRow = event.target.closest?.(".fleet-row");
+  if (fleetRow && (event.key === "Enter" || event.key === " ")) {
+    event.preventDefault();
+    if (fleetRow.dataset.act === "open-acceptance") {
+      view = "acceptance";
+      closeDrawer();
+      history.replaceState(null, "", "#acceptance");
+      render();
+    } else {
+      openTicket(fleetRow.dataset.root, fleetRow.dataset.campaign, fleetRow.dataset.ticket);
+    }
+  }
 });
 
 document.addEventListener("input", (event) => {
+  const search = event.target.closest("[data-role='fleet-search']");
+  if (search) {
+    fleetQuery = search.value;
+    fleetLimit = 200;
+    paintFleet();
+    return;
+  }
   if (event.target.matches("textarea.doc")) {
     event.target.style.height = "auto";
     event.target.style.height = `${event.target.scrollHeight + 2}px`;

@@ -1,12 +1,12 @@
 ---
 name: orchestration
-description: Plan a complex, multi-ticket campaign, bind a model to each ticket kind, dispatch parallel worker agents under slots and worktrees, park real questions in one inbox, and land verified work. Ships a local panel that shows the campaign live.
+description: Plan a complex, multi-ticket campaign, bind a model to each ticket kind, dispatch parallel worker agents under slots, quotas and worktrees, park real questions in one inbox, accept deliveries in one queue, and land verified work. Ships a local fleet panel that shows every campaign live.
 disable-model-invocation: true
 ---
 
 # Orchestration
 
-A **campaign** turns one paragraph of intent into landed work. You plan it as **tickets** with blocking edges, approve the model binding for each **ticket kind**, then a supervisor dispatches **runs** in parallel, up to its **slots**. Work that needs a person stops at the **inbox**; work that passes its **gates** lands.
+A **campaign** turns one paragraph of intent into landed work. You plan it as **tickets** with blocking edges, approve the model binding for each **ticket kind**, then a supervisor dispatches **runs** in parallel, up to its **slots** and provider quota windows. Questions stop at the **inbox**; finished deliveries wait in **acceptance**; work that passes its **gates** lands.
 
 The supervisor is a zero-dependency Node process (`scripts/orchestrate.mjs`) plus a local panel. Read the reference for a branch before acting on it:
 
@@ -52,7 +52,7 @@ Show the plan and the table together. The human confirms once, in chat or in the
 
 ### 4. Supervise
 
-Run the supervisor (`run`) or let a timer drive it (`tick`). From here the loop is mechanical: dispatch the frontier into free slots, collect **reports**, run **gates**, land what passes, and route what does not. Your job between ticks is the inbox: answer what a worker could not, approve what a gate could not, and re-cut tickets when the plan meets reality.
+Run the supervisor (`run`) or let a timer drive it (`tick`). From here the loop is mechanical: dispatch the frontier into free slots, collect **reports**, run **gates**, land what passes, and route what does not. Your job between ticks is the fleet and the queues: answer what a worker could not in the inbox, accept deliveries in the acceptance queue, watch provider quota windows, and re-cut tickets when the plan meets reality.
 
 Answer questions with a decision, not with advice. A worker resumes from the answer in its own session, so it already knows what it asked — and the answer is written to the campaign's decision log, so the next worker on those paths inherits it instead of asking again.
 
@@ -62,7 +62,7 @@ Answer questions with a decision, not with advice. A worker resumes from the ans
 
 Report what landed, what was dropped and why, what the spend was, and which tickets cost more than one attempt. If a class of failure repeated, propose a check that would have caught it. The campaign stage is `archived`.
 
-**Done when:** the report is written and the panel shows no open inbox item for the campaign.
+**Done when:** the report is written and the panel shows no open inbox item or waiting delivery for the campaign.
 
 ## Commands
 
@@ -88,13 +88,16 @@ The script is the source of truth; the skill's slash commands are conveniences o
 | `context [--ticket 03]` | The substrate a worker reads: relevant decisions, siblings, diff, history |
 | `decisions [campaign] [--all]` | List decisions with their ids |
 | `promote <decision-id> [campaign]` | Share one decision with every campaign |
-| `inbox` | Open items across all projects, oldest first |
+| `inbox` | Open questions and failures across all projects, oldest first |
+| `acceptance` | Deliveries waiting for acceptance, oldest first |
 | `answer <item> "..."` | Deliver a decision to the parked run |
 | `review <item> approve\|reject "..."` | Accept landed work or send it back with findings |
 | `deliver <campaign>` | Take a manual delivery now, without waiting for a new inbox item |
 | `retry <ticket>` | New run on the next model in the chain |
 | `stop <ticket>` | Kill the run, keep the branch |
-| `pause\|resume <campaign>` | Stop and resume dispatch without touching live runs |
+| `pause\|resume <campaign>` | Stop and resume one campaign without touching live runs |
+| `dispatch [status\|pause\|resume] [--reason "..."]` | The console-wide switch: stop every new claim, or resume |
+| `quota list\|set\|remove ...` | Provider windows: `--window 5h --used 72 --limit 100 --reset <iso>` |
 | `panel` | Print the panel URL |
 | `link` | Put an `orchestrate` command in `~/.local/bin` |
 | `desktop [remove]` | Add or remove a desktop menu launcher that runs `orchestrate up` |

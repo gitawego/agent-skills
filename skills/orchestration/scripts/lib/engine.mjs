@@ -48,8 +48,10 @@ import { adapterIds, getAdapter, readCatalogCache, refreshCatalog, rowsFor } fro
 import { ADAPTER_IDS, SPEND_MODES } from "./adapter-ids.mjs";
 import { joinFrontmatter, splitFrontmatter, updateFrontmatter } from "./yaml.mjs";
 import {
+  childrenFromLog,
   killRun,
   newRunId,
+  rollupChildren,
   runStuck,
   runTimedOut,
   sessionIdFor,
@@ -74,6 +76,8 @@ import {
 } from "./landing.mjs";
 import { drainCommands } from "./commands.mjs";
 import { addTicket, createCampaign, editTicket, removeTicket } from "./create.mjs";
+import { loadDispatch, setDispatch } from "./dispatch.mjs";
+import { quotaBlock, quotaText, resolveQuotas, validateQuotas } from "./quotas.mjs";
 import {
   appendDecision,
   decisionsFor,
@@ -147,6 +151,7 @@ export function tickCampaign(root, slug, consoleConfig) {
   syncBlockedQueued(root, slug, state, plan);
   collectRuns(root, slug, state, plan, kinds, consoleConfig, data);
 
+  const dispatch = loadDispatch();
   if (state.stage === "running") {
     const exhausted = budgetExhausted(state, data.budget);
     if (exhausted) {
@@ -158,10 +163,11 @@ export function tickCampaign(root, slug, consoleConfig) {
           brief: `Spend reached ${state.spend.tokens} tokens and $${state.spend.dollars.toFixed(2)}.`,
         });
       }
-    } else {
+    } else if (dispatch.mode !== "paused") {
       dispatchFrontier(root, slug, state, plan, kinds, consoleConfig, data);
     }
   }
+  annotateQueue(root, slug, state, plan, kinds, consoleConfig, data, dispatch);
 
   const delivered = maybeDeliver(root, slug, state, plan, data);
   if (delivered) writeClose(root, slug, state, plan, data);
@@ -220,6 +226,20 @@ function collectRuns(root, slug, state, plan, kinds, consoleConfig, data) {
     if (session?.config) run.appliedConfig = session.config;
     run.usage = summary.usage;
     addSpend(state, { model: run.model, ...summary.usage });
+    const children = childrenFromLog(root, slug, runId);
+    const childUsage = rollupChildren(children);
+    if (children.length) {
+      run.children = children;
+      run.childUsage = childUsage;
+      if (childUsage.tokens || childUsage.dollars) {
+        addSpend(state, {
+          model: run.model,
+          tokens: childUsage.tokens,
+          dollars: childUsage.dollars,
+          unmetered: Boolean(summary.usage?.unmetered),
+        });
+      }
+    }
     appendEvent(root, {
       campaign: slug,
       ticket: run.ticket,
@@ -274,6 +294,19 @@ function adapterAudit(adapter) {
     adapterVersion: adapter.version ? adapter.version() : null,
     systemPromptMode: caps.systemPrompt || null,
     toolsMode: caps.tools || null,
+  };
+}
+
+/* Billing and context travel with the run, so a later catalog change cannot
+   rewrite the meaning of an old report. */
+function modelAudit(modelEntry) {
+  return {
+    price: modelEntry?.price || null,
+    billing: modelEntry?.billing || null,
+    included: modelEntry?.included === true,
+    plan: modelEntry?.plan || null,
+    contextTokens: modelEntry?.contextTokens || null,
+    maxOutTokens: modelEntry?.maxOutTokens || null,
   };
 }
 
@@ -637,14 +670,31 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
     return { item, adapterId, rows, model: item ? resolveModel(item.model, rows) : null };
   };
   let chainIndex = entry.chainIndex || 0;
+  const quotas = resolveQuotas(consoleConfig, data);
+  const quotaOf = (info) =>
+    info.model ? quotaBlock(quotas, { provider: info.model.provider, adapter: info.adapterId }) : null;
   let chosen = entryInfo(chainIndex);
-  if (!chosen.model) {
-    chainIndex = kind.models.findIndex((_, index) => entryInfo(index).model);
-    if (chainIndex < 0) {
-      setStage(root, slug, state, id, "failed", { reason: `no usable model for kind "${ticket.data.kind}"` });
+  if (!chosen.model || quotaOf(chosen)) {
+    const start = chainIndex;
+    const order = kind.models.map((_, index) => (start + index) % kind.models.length);
+    const candidates = order.map((index) => entryInfo(index));
+    const viable = candidates.find((info) => info.model && !quotaOf(info));
+    if (!viable) {
+      const withModel = candidates.find((info) => info.model);
+      if (!withModel) {
+        setStage(root, slug, state, id, "failed", { reason: `no usable model for kind "${ticket.data.kind}"` });
+        return null;
+      }
+      const blocked = quotaOf(withModel);
+      entry.queue = {
+        code: "quota",
+        text: `quota blocked: ${quotaText(blocked)}`,
+        at: nowIso(),
+      };
       return null;
     }
-    chosen = entryInfo(chainIndex);
+    chainIndex = kind.models.indexOf(viable.item);
+    chosen = viable;
   }
   let adapterId = chosen.adapterId;
   let modelEntry = chosen.model;
@@ -703,7 +753,10 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
     return null;
   }
   if (attached.items.some((item) => item.kind === "image") && modelEntry.images !== true) {
-    const alt = kind.models.findIndex((_, index) => entryInfo(index).model?.images === true);
+    const alt = kind.models.findIndex((_, index) => {
+      const info = entryInfo(index);
+      return info.model?.images === true && !quotaOf(info);
+    });
     if (alt < 0) {
       const reason = `kind "${ticket.data.kind}" has image attachments, but its models cannot read images`;
       setStage(root, slug, state, id, "failed", { reason });
@@ -756,8 +809,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
     kind: ticket.data.kind,
     adapter: adapterId,
     ...adapterAudit(getAdapter(adapterId)),
-    price: modelEntry.price || null,
-    billing: modelEntry.billing || null,
+    ...modelAudit(modelEntry),
     sandbox: runner.sandbox,
     catalogFetchedAt: readCatalogCache(adapterId)?.fetchedAt || null,
     model: modelKey(modelEntry),
@@ -904,6 +956,7 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
     kind: "review",
     adapter: current.adapterId,
     ...adapterAudit(getAdapter(current.adapterId)),
+    ...modelAudit(modelEntry),
     model: modelKey(modelEntry),
     chain: kind.models.map((m) => m.model),
     chainIndex: index,
@@ -1002,6 +1055,7 @@ function startJudge({ root, slug, state, plan, ticket, run, report, kinds, conso
     kind: "plan",
     adapter: adapterId,
     ...adapterAudit(getAdapter(adapterId)),
+    ...modelAudit(modelEntry),
     model: modelKey(modelEntry),
     chain: kind.models.map((m) => m.model),
     chainIndex: 0,
@@ -1082,6 +1136,7 @@ function startMerge({ root, slug, state, ticketId, run, conflict, kinds, console
     kind: "chores",
     adapter: adapterId,
     ...adapterAudit(getAdapter(adapterId)),
+    ...modelAudit(modelEntry),
     model: modelKey(modelEntry),
     chain: kind.models.map((m) => m.model),
     chainIndex: 0,
@@ -1125,6 +1180,88 @@ function startMerge({ root, slug, state, ticketId, run, conflict, kinds, console
     data: { conflict: firstLine(conflict) },
   });
   return record;
+}
+
+// --- queue reasons ---------------------------------------------------------
+
+/* A queued row must say why it is queued: slots, a lane, a quota, or a person.
+   The panel renders this text verbatim, so it is written for a person. */
+function annotateQueue(root, slug, state, plan, kinds, consoleConfig, data, dispatch) {
+  const running = liveRuns(state).map(([, run]) => run);
+  const total = running.length;
+  const cap = consoleConfig.limits.max_concurrent;
+  const perKind = {};
+  for (const run of running) perKind[run.kind] = (perKind[run.kind] || 0) + 1;
+  const touched = running.flatMap((run) => [
+    ...asArray(run.touches),
+    ...(state.tickets[run.ticket]?.actualTouches || []),
+  ]);
+  const quotas = resolveQuotas(consoleConfig, data);
+
+  for (const ticket of plan.ordered) {
+    const id = ticket.data.id;
+    const entry = ticketState(state, id);
+    if (!["queued", "blocked", "needs_changes"].includes(entry.stage)) {
+      delete entry.queue;
+      continue;
+    }
+    const kind = kinds[ticket.data.kind];
+    const chain = kind?.models || [];
+    const blockedBy = blockersOf(ticket).filter((blocker) => !DONE.has(state.tickets[blocker]?.stage));
+    const chainStatus = chain.map((item) => {
+      const adapterId = item.adapter || runnerConfig(consoleConfig, data).adapter;
+      let rows = [];
+      try {
+        rows = rowsFor(adapterId, root);
+      } catch {
+        rows = [];
+      }
+      const model = resolveModel(item.model, rows);
+      return {
+        model,
+        blocked: model ? quotaBlock(quotas, { provider: model.provider, adapter: adapterId }) : null,
+      };
+    });
+    const quota =
+      chainStatus.length && chainStatus.every((status) => !status.model || status.blocked)
+        ? chainStatus.find((status) => status.blocked)?.blocked
+        : null;
+
+    let queue = null;
+    if (entry.queue?.code === "quota" && quota) queue = entry.queue;
+    else if (entry.stage === "blocked") {
+      queue = { code: "blocked", text: `blocked by ${blockedBy.join(", ") || "an unfinished ticket"}` };
+    } else if (state.stage !== "running") {
+      queue = {
+        code: "campaign",
+        text: `campaign ${state.stage}${state.reason ? `: ${state.reason}` : ""}`,
+      };
+    } else if (dispatch.mode === "paused") {
+      queue = { code: "dispatch", text: `dispatch paused${dispatch.reason ? `: ${dispatch.reason}` : ""}` };
+    } else if (state.planErrors?.length) {
+      queue = { code: "config", text: `plan has ${state.planErrors.length} error${state.planErrors.length === 1 ? "" : "s"}` };
+    } else if (!chain.length) {
+      queue = { code: "config", text: `no model bound for ${ticket.data.kind}` };
+    } else if (quota) {
+      queue = { code: "quota", text: `quota: ${quotaText(quota)}` };
+    } else if (total >= cap) {
+      queue = { code: "slots", text: `${total}/${cap} slots busy` };
+    } else if (kind && (perKind[ticket.data.kind] || 0) >= kind.max_concurrent) {
+      queue = {
+        code: "slots",
+        text: `${ticket.data.kind} ${perKind[ticket.data.kind] || 0}/${kind.max_concurrent} slots busy`,
+      };
+    } else if (entry.waitingOn) {
+      queue = { code: "lane", text: `lane ${entry.waitingOn} is busy` };
+    } else if (entry.stage === "needs_changes") {
+      queue = { code: "ready", text: "gates sent it back, waiting for a slot" };
+    } else if (entry.pendingResume) {
+      queue = { code: "ready", text: "answer recorded, waiting for a slot" };
+    } else {
+      queue = { code: "ready", text: "ready for the next tick" };
+    }
+    entry.queue = { ...queue, at: nowIso() };
+  }
 }
 
 // --- dispatch --------------------------------------------------------------
@@ -1336,6 +1473,26 @@ export function approveCampaign(root, slug, consoleConfig, { automatic = false, 
 export function applyCommand(root, command, consoleConfig) {
   const slug = command.campaign;
   const type = command.type;
+  if (type === "dispatch.pause" || type === "dispatch.resume") {
+    if (type === "dispatch.pause" && !String(command.reason || "").trim()) {
+      throw new UserError("Pausing dispatch requires a reason", [
+        "Say why: quota, budget, machine busy, or a person.",
+      ]);
+    }
+    try {
+      const dispatch = setDispatch(type === "dispatch.pause" ? "paused" : "auto", {
+        reason: command.reason || null,
+        by: command.by || "panel",
+      });
+      appendEvent(root, {
+        type: type === "dispatch.pause" ? "dispatch.paused" : "dispatch.resumed",
+        data: { reason: dispatch.reason || undefined, by: dispatch.by || undefined },
+      });
+      return { ok: true, dispatch };
+    } catch (err) {
+      throw new UserError(err.message);
+    }
+  }
   if (type === "catalog.refresh") {
     const config = loadConsole();
     const ids = command.adapter === "all" || command.all ? adapterIds() : [command.adapter || config.runner?.adapter || "pi"];
@@ -1367,6 +1524,11 @@ export function applyCommand(root, command, consoleConfig) {
         if (!Number.isInteger(value) || value < 0) throw new UserError(`limits.${key} must be a positive integer`);
         config.limits[key] = value;
       }
+    }
+    if (patch.quotas) {
+      const checked = validateQuotas(patch.quotas);
+      if (checked.errors.length) throw new UserError(`Invalid quotas: ${checked.errors.join("; ")}`);
+      config.quotas = checked.quotas;
     }
     for (const [id, change] of Object.entries(patch.kinds || {})) {
       const current = config.kinds[id];
@@ -1461,6 +1623,28 @@ export function applyCommand(root, command, consoleConfig) {
     saveState(root, slug, state);
     return { ok: true };
   }
+  if (type === "review.approve-bulk") {
+    const ids = Array.isArray(command.items) ? command.items : [];
+    if (!ids.length) throw new UserError("No review items selected");
+    const items = ids.map((id) => findItem(root, slug, id));
+    if (items.some((item) => !item || item.campaign !== slug || item.status !== "open" || item.kind !== "review"))
+      throw new UserError("Bulk approval only applies to open delivery reviews in one campaign", [
+        "Approve another campaign separately.",
+      ]);
+    const state = loadState(root, slug);
+    const data = readCampaign(root, slug).data;
+    const max = data.max_autoship_lines ?? 200;
+    const lines = Number(state.delivery?.stats?.lines || 0);
+    if (!state.delivery?.stats || lines > max) {
+      throw new UserError(`Bulk approval is limited to one campaign under ${max} changed lines`, [
+        `This delivery has ${state.delivery?.stats ? `${lines} changed lines` : "no recorded diff"}; approve it individually.`,
+      ]);
+    }
+    for (const item of items) {
+      applyCommand(root, { type: "review.approve", campaign: slug, item: item.id, text: command.text }, consoleConfig);
+    }
+    return { ok: true, approved: items.length };
+  }
   if (type === "answer" || type === "review.approve" || type === "review.reject") {
     const item = findItem(root, slug, command.item);
     if (!item) throw new UserError(`No inbox item "${command.item}"`);
@@ -1534,7 +1718,13 @@ export function applyCommand(root, command, consoleConfig) {
     const text = readText(file, null);
     if (text === null) throw new UserError(`No campaign "${slug}"`);
     const { data, body } = splitFrontmatter(text);
-    fs.writeFileSync(file, joinFrontmatter({ ...data, ...(command.patch || {}) }, command.body ?? body));
+    const patch = command.patch || {};
+    if (patch.quotas) {
+      const checked = validateQuotas(patch.quotas);
+      if (checked.errors.length) throw new UserError(`Invalid quotas: ${checked.errors.join("; ")}`);
+      patch.quotas = checked.quotas;
+    }
+    fs.writeFileSync(file, joinFrontmatter({ ...data, ...patch }, command.body ?? body));
     return { ok: true };
   }
   if (type === "promote") {

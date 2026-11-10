@@ -1,13 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { sandbox, project, writeConsole, writeCampaign, writeTicket, commitAll, scenario, sleep, gitOut, MODELS } from "./helpers.mjs";
 import { tick, applyCommand } from "../scripts/lib/engine.mjs";
 import { campaignView } from "../scripts/lib/view.mjs";
-import { loadState } from "../scripts/lib/state.mjs";
+import { loadState, saveState } from "../scripts/lib/state.mjs";
 import { loadConsole, readCampaign } from "../scripts/lib/config.mjs";
 import { listItems, createItem } from "../scripts/lib/inbox.mjs";
+import { loadDispatch, setDispatch } from "../scripts/lib/dispatch.mjs";
+import { childrenFromLog, rollupChildren } from "../scripts/lib/runs.mjs";
 
 const BODY = `## Goal
 
@@ -63,8 +66,11 @@ function setup({ autonomy = "trusted", tickets = 3, codeModels = null } = {}) {
   return { dir, slug: "demo" };
 }
 
-async function until(root, slug, predicate, { ticks = 120, wait = 60 } = {}) {
-  for (let i = 0; i < ticks; i++) {
+function liveRunsFor(root, slug) {
+  return Object.values(loadState(root, slug).runs || {}).filter((run) => run.status === "live").length;
+}
+
+async function until(root, slug, predicate, { ticks = 120, wait = 60 } = {}) {  for (let i = 0; i < ticks; i++) {
     tick({ root });
     const view = campaignView(root, slug);
     if (predicate(view)) return view;
@@ -72,7 +78,8 @@ async function until(root, slug, predicate, { ticks = 120, wait = 60 } = {}) {
   }
   const view = campaignView(root, slug);
   throw new Error(
-    `did not settle: ${view.tickets.map((t) => `${t.id}:${t.stage}`).join(" ")} inbox=${view.inbox.length}`,
+    `did not settle: ${view.tickets.map((t) => `${t.id}:${t.stage}`).join(" ")} inbox=${view.inbox.length} ` +
+      view.inbox.map((item) => `${item.kind}:${item.title}:${item.findings || item.brief || ""}`).join(" | "),
   );
 }
 
@@ -554,4 +561,176 @@ test("directory landing catches a file outside the ticket's paths", async () => 
   const view = await until(dir, "demo", (v) => v.tickets[0].stage === "failed");
   const findings = view.inbox.find((i) => i.kind === "failure")?.findings || "";
   assert.match(findings, /work-01\.txt/, "the stray file is named");
+});
+
+test("a global pause stops new dispatch, names the reason, and leaves the campaign running", async () => {
+  const { dir, slug } = setup({ tickets: 1 });
+  scenario({ work: [{ status: "ready", summary: "did it" }], review: [{ status: "ready", summary: "clean" }] });
+  setDispatch("paused", { reason: "quota exhausted", by: "test" });
+  tick({ root: dir });
+  const paused = campaignView(dir, slug);
+  assert.equal(paused.stage, "running", "the campaign itself is not paused");
+  assert.equal(paused.tickets[0].stage, "queued");
+  assert.match(paused.tickets[0].queue?.text || "", /dispatch paused: quota exhausted/);
+  assert.equal(liveRunsFor(dir, slug), 0, "nothing started");
+
+  setDispatch("auto", { reason: "test over", by: "test" });
+  const done = await until(dir, "demo", (v) => v.stage === "delivered");
+  assert.equal(done.tickets[0].stage, "done");
+  assert.equal(loadDispatch().mode, "auto");
+});
+
+test("an exhausted provider window holds the ticket and the queue says which window", async () => {
+  const { dir, slug } = setup({ tickets: 1 });
+  scenario({ work: [{ status: "ready", summary: "did it" }], review: [{ status: "ready", summary: "clean" }] });
+  const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  writeConsole({
+    quotas: [
+      {
+        provider: "test",
+        window: "weekly",
+        used: 100,
+        limit: 100,
+        resetAt: future,
+        source: "manual",
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+  });
+  tick({ root: dir });
+  const blocked = campaignView(dir, slug);
+  assert.equal(blocked.tickets[0].stage, "queued");
+  assert.match(blocked.tickets[0].queue?.text || "", /quota blocked: test weekly at 100%/);
+  assert.equal(liveRunsFor(dir, slug), 0, "no run was started");
+
+  const past = new Date(Date.now() - 1000).toISOString();
+  writeConsole({
+    quotas: [
+      {
+        provider: "test",
+        window: "weekly",
+        used: 100,
+        limit: 100,
+        resetAt: past,
+        source: "manual",
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+  });
+  const done = await until(dir, "demo", (v) => v.stage === "delivered");
+  assert.equal(done.tickets[0].stage, "done", "a passed reset clears the window");
+});
+
+test("an exhausted first model falls through to the next chain entry", async () => {
+  const { dir, slug } = setup({ tickets: 1, codeModels: [MODELS.strong, MODELS.backup] });
+  scenario({ work: [{ status: "ready", summary: "did it" }], review: [{ status: "ready", summary: "clean" }] });
+  writeConsole({
+    quotas: [
+      {
+        provider: "test",
+        window: "weekly",
+        used: 100,
+        limit: 100,
+        resetAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        source: "manual",
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+  });
+  tick({ root: dir });
+  const view = campaignView(dir, slug);
+  assert.equal(view.tickets[0].stage, "working");
+  assert.equal(view.tickets[0].run?.model, MODELS.backup);
+  assert.equal(liveRunsFor(dir, slug), 1);
+  await until(dir, "demo", (v) => v.stage === "delivered");
+});
+
+test("telemetry labels actual, estimated and included costs without pretending an estimate is a bill", async () => {
+  const { dir, slug } = setup({ tickets: 1 });
+  scenario({ work: [{ status: "ready", summary: "did it" }], review: [{ status: "ready", summary: "clean" }] });
+  const done = await until(dir, "demo", (v) => v.stage === "delivered");
+  const work = done.runs.find((run) => run.role === "work");
+  assert.ok(work, "a work run exists");
+  assert.ok(["actual", "estimated", "included", "unknown"].includes(work.cost.label));
+  assert.equal(work.inputTokens, 60, "pi usage input is parsed");
+  assert.equal(work.outputTokens, 40, "pi usage output is parsed");
+  assert.equal(work.cost.label, "actual");
+  assert.equal(work.cost.value, 0.01);
+  assert.ok(work.tokensPerSecond == null || work.tokensPerSecond > 0, "output speed is derived when the run spans a second");
+  assert.equal(work.host, os.hostname(), "the host is recorded on the run");
+});
+
+test("harness-reported child runs are observed, with rolled-up usage, and never become tickets", () => {
+  const box = sandbox();
+  const dir = project(path.join(box, "repo"));
+  const runPath = path.join(dir, ".orchestration", "campaigns", "demo", "runs", "r-child");
+  fs.mkdirSync(runPath, { recursive: true });
+  fs.writeFileSync(
+    path.join(runPath, "session.json"),
+    JSON.stringify({
+      sessionId: "parent",
+      children: [
+        {
+          id: "child-1",
+          name: "explore",
+          model: "test/model-fast",
+          status: "done",
+          usage: { inputTokens: 100, outputTokens: 20, cachedReadTokens: 40 },
+          dollars: 0.002,
+        },
+      ],
+    }),
+  );
+  fs.writeFileSync(
+    path.join(runPath, "log.jsonl"),
+    JSON.stringify({ type: "subagent_finished", id: "child-2", name: "review", model: "other/model-backup", usage: { totalTokens: 60, cost: { total: 0.001 } } }) + "\n",
+  );
+  const children = childrenFromLog(dir, "demo", "r-child");
+  assert.equal(children.length, 2, "both session and log children are found");
+  const rollup = rollupChildren(children);
+  assert.equal(rollup.count, 2);
+  assert.equal(rollup.tokens, 220);
+  assert.equal(rollup.dollars, 0.003);
+  assert.ok(children.some((child) => child.name === "explore"));
+  assert.ok(children.some((child) => child.name === "review"));
+});
+
+test("a stale quota is visible but never blocks dispatch", async () => {
+  const { dir, slug } = setup({ tickets: 1 });
+  scenario({ work: [{ status: "ready", summary: "did it" }], review: [{ status: "ready", summary: "clean" }] });
+  writeConsole({
+    quotas: [
+      {
+        provider: "test",
+        window: "weekly",
+        used: 100,
+        limit: 100,
+        resetAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        source: "stale",
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+  });
+  tick({ root: dir });
+  const view = campaignView(dir, slug);
+  assert.equal(view.tickets[0].stage, "working", "a stale window does not hold the fleet");
+  assert.equal(view.quotas[0].source, "stale");
+  await until(dir, "demo", (v) => v.stage === "delivered");
+});
+
+test("bulk acceptance is refused over the autoship line and accepted under it", () => {
+  const { dir, slug } = setup({ tickets: 1 });
+  const item = createItem(dir, slug, { kind: "review", title: "Campaign ready: demo", brief: "Ready." });
+  const state = loadState(dir, slug);
+  state.delivery = { mode: "manual", stats: { added: 300, removed: 300, lines: 600 } };
+  saveState(dir, slug, state);
+  assert.throws(
+    () => applyCommand(dir, { type: "review.approve-bulk", campaign: slug, items: [item.id] }, loadConsole()),
+    /under 200 changed lines/,
+  );
+  state.delivery = { mode: "manual", stats: { added: 3, removed: 3, lines: 6 } };
+  saveState(dir, slug, state);
+  const result = applyCommand(dir, { type: "review.approve-bulk", campaign: slug, items: [item.id] }, loadConsole());
+  assert.equal(result.ok, true);
+  assert.equal(result.approved, 1);
 });

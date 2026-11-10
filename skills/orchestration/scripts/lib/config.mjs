@@ -15,6 +15,7 @@ import {
 import { splitFrontmatter } from "./yaml.mjs";
 import { listPiModels, resetPiCatalog } from "./pi-catalog.mjs";
 import { ADAPTER_IDS, DEFAULT_ADAPTER, DEFAULT_SPEND, SPEND_MODES } from "./adapter-ids.mjs";
+import { validateQuotas } from "./quotas.mjs";
 
 export const DEFAULT_KINDS = {
   plan: {
@@ -88,6 +89,7 @@ export function defaultConsole() {
     },
     kinds: structuredClone(DEFAULT_KINDS),
     runner: { command: "pi", adapter: DEFAULT_ADAPTER, sandbox: "auto" },
+    quotas: [],
   };
 }
 
@@ -109,6 +111,7 @@ function mergeConsole(raw) {
     panel: { ...base.panel, ...(raw.panel || {}) },
     limits: { ...base.limits, ...(raw.limits || {}) },
     runner: { ...base.runner, ...(raw.runner || {}) },
+    quotas: Array.isArray(raw.quotas) ? raw.quotas : base.quotas,
     kinds: Object.fromEntries(
       Object.entries({ ...base.kinds, ...(raw.kinds || {}) }).map(([id, kind]) => [
         id,
@@ -190,6 +193,7 @@ const CAMPAIGN_FIELDS = new Set([
   "max_autoship_lines",
   "kinds",
   "runner",
+  "quotas",
 ]);
 
 const STAGES = new Set(["draft", "awaiting_approval", "running", "paused", "delivered", "archived"]);
@@ -322,6 +326,8 @@ export function validateCampaign({ root, consoleConfig, data, tickets = [], cata
   const limits = consoleConfig.limits;
   if (data.max_autoship_lines != null && !Number.isInteger(data.max_autoship_lines))
     errors.push("max_autoship_lines must be an integer");
+  for (const error of validateQuotas(data.quotas || []).errors) errors.push(error);
+  for (const error of validateQuotas(consoleConfig.quotas || []).errors) errors.push(`console ${error}`);
 
   const kinds = resolveKinds(consoleConfig, data);
   for (const [id, kind] of Object.entries(data.kinds || {})) {

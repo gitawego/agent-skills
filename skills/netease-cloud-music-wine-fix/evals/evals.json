@@ -1,0 +1,23 @@
+{
+  "skill_name": "netease-cloud-music-wine-fix",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "my netease cloud music on linux (installed through lutris/wine) shows grey empty squares instead of album covers and playlist art. the text and song lists are totally fine. how do i fix this?",
+      "expected_output": "Identifies the stale-session-state cause (covers go through orpheus://cache), installs the Lutris pre-launch cleanup hook via scripts/install-lutris-hook.py rather than only wiping the cache once, preserves login (no deletion of webapp*/Cookies), and verifies by restarting and screenshotting.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "封面又不显示了。上次你让我清一下缓存就好了，结果重启之后又变灰了。能不能搞成永久的？",
+      "expected_output": "Explains why a one-off cache wipe always regresses (state written by one session is unreadable by the next under Wine), makes the fix permanent by installing the prelaunch hook, keeps the user logged in, and mentions the possible one-time '网易云音乐崩溃了' dialog plus the webapp* glob so a client update does not break it.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "is disabling ipv6 the real fix for netease cloud music covers not showing up in wine? i saw a blog post about it",
+      "expected_output": "Rejects the IPv6 folklore with reasoning: the bug persists without any IPv6 address or default route, and the app's own fetch() to the cover CDN succeeds while <img> fails. Does not change sysctl settings; points at the orpheus://cache state issue instead.",
+      "files": []
+    }
+  ]
+}
