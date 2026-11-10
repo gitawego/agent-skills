@@ -42,8 +42,10 @@ import {
   resetCatalog,
   runnerConfig,
   saveConsole,
+  ticketKindsUsed,
   validateCampaign,
 } from "./config.mjs";
+import { boundFirstModels, pendingDefaultKinds, resolveDefaultChains } from "./defaults.mjs";
 import { adapterIds, getAdapter, readCatalogCache, refreshCatalog, rowsFor } from "./catalogs.mjs";
 import { ADAPTER_IDS, SPEND_MODES } from "./adapter-ids.mjs";
 import { joinFrontmatter, splitFrontmatter, updateFrontmatter } from "./yaml.mjs";
@@ -1560,6 +1562,79 @@ export function applyCommand(root, command, consoleConfig) {
     }
     saveConsole(config);
     return { ok: true };
+  }
+  if (type === "defaults.apply") {
+    const scope = command.scope === "campaign" ? "campaign" : "console";
+    const force = Boolean(command.force);
+    if (scope === "console") {
+      const config = loadConsole();
+      const runner = runnerConfig(config, {});
+      const pending = pendingDefaultKinds(config.kinds, { force });
+      if (!pending.length) {
+        throw new UserError("Every console chain is already bound", [
+          "Run `orchestrate defaults --apply --force` to replace them with the newest releases.",
+        ]);
+      }
+      const resolved = resolveDefaultChains({
+        rows: rowsFor(runner.adapter, root),
+        adapter: runner.adapter,
+        spend: runner.spend,
+        kinds: pending,
+        avoid: force ? null : boundFirstModels(config.kinds, pending),
+      });
+      if (!Object.keys(resolved.chains).length) {
+        throw new UserError(`no default chain resolved from the ${runner.adapter} catalog`, [
+          `Run \`orchestrate catalog --adapter ${runner.adapter} --refresh\` and try again.`,
+        ]);
+      }
+      const applied = [];
+      for (const [kind, chain] of Object.entries(resolved.chains)) {
+        if (!config.kinds[kind]) continue;
+        config.kinds[kind].models = chain.models;
+        applied.push(kind);
+      }
+      saveConsole(config);
+      return { ok: true, scope, applied, notes: resolved.notes, warnings: resolved.warnings };
+    }
+    const campaign = readCampaign(root, slug);
+    const state = loadState(root, slug);
+    const live = Object.values(state.runs || {}).some((run) => run.status === "live");
+    if ((state.stage === "running" || campaign.data.stage === "running" || live) && !force) {
+      throw new UserError(`Campaign "${slug}" is running; defaults may change only while nothing is running`, [
+        `Pause it first: orchestrate pause ${slug}`,
+      ]);
+    }
+    const runner = runnerConfig(consoleConfig, campaign.data);
+    const plan = loadPlan(root, slug);
+    const kinds = [...new Set([...ticketKindsUsed(plan.ordered), ...Object.keys(campaign.data.kinds || {}), "review"])].sort();
+    const effective = resolveKinds(consoleConfig, campaign.data);
+    const pending = pendingDefaultKinds(effective, { force, kinds });
+    if (!pending.length) {
+      throw new UserError("Every campaign chain is already bound", [
+        `Run \`orchestrate defaults ${slug} --apply --force\` to pin the newest releases here.`,
+      ]);
+    }
+    const resolved = resolveDefaultChains({
+      rows: rowsFor(runner.adapter, root),
+      adapter: runner.adapter,
+      spend: runner.spend,
+      kinds: pending,
+      avoid: force ? null : boundFirstModels(effective, pending),
+    });
+    if (!Object.keys(resolved.chains).length) {
+      throw new UserError(`no default chain resolved from the ${runner.adapter} catalog`, [
+        `Run \`orchestrate catalog --adapter ${runner.adapter} --refresh\` and try again.`,
+      ]);
+    }
+    const kindsPatch = campaign.data.kinds || {};
+    const applied = [];
+    for (const [kind, chain] of Object.entries(resolved.chains)) {
+      kindsPatch[kind] = { ...(kindsPatch[kind] || {}), models: chain.models };
+      applied.push(kind);
+    }
+    fs.writeFileSync(campaign.file, joinFrontmatter({ ...campaign.data, kinds: kindsPatch }, campaign.body));
+    appendEvent(root, { campaign: slug, type: "defaults.applied", data: { kinds: applied } });
+    return { ok: true, scope, applied, notes: resolved.notes, warnings: resolved.warnings };
   }
   if (type === "approve") {
     approveCampaign(root, slug, consoleConfig);

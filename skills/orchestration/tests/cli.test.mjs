@@ -32,6 +32,24 @@ test("campaign-scoped verbs accept a positional campaign when several exist", ()
   assert.match(first.stdout, /first-campaign \[draft\]/);
 });
 
+test("ticket add refuses to guess when several campaigns exist, and accepts --campaign", () => {
+  const box = sandbox();
+  const dir = project(path.join(box, "repo"));
+  writeConsole();
+  assert.equal(cli(dir, ["init"]).status, 0);
+  assert.equal(cli(dir, ["start", "first campaign", "--campaign", "first"]).status, 0);
+  assert.equal(cli(dir, ["start", "second campaign", "--campaign", "second"]).status, 0);
+
+  const args = ["ticket", "add", "CLI slice", "--kind", "code", "--touches", "src/cli/**", "--what", "Add it.", "--accept", "It works"];
+  const refused = cli(dir, args);
+  assert.notEqual(refused.status, 0);
+  assert.match(`${refused.stdout}${refused.stderr}`, /Several campaigns exist/);
+
+  const added = cli(dir, [...args, "--campaign", "first"]);
+  assert.equal(added.status, 0, added.stderr);
+  assert.ok(fs.existsSync(path.join(dir, "orchestration", "first", "tickets", "01-cli-slice.md")));
+});
+
 test("init, start, catalog, bind, plan and approve work from the CLI", () => {
   const box = sandbox();
   const dir = project(path.join(box, "repo"));

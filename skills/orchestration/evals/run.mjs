@@ -122,6 +122,53 @@ check("eval 6 — a supervised campaign waits for a person and does not merge", 
   assert(!fs.existsSync(path.join(dir, "work-01.txt")), "main is untouched until approval");
 });
 
+/* eval 7: free-form context becomes a validated plan in one import */
+check("eval 7 — free-form context becomes a validated plan in one import", () => {
+  const dir = fresh();
+  writeConsole({ unbound: true });
+  cli(dir, ["init"]);
+  cli(dir, ["start", "Notes CLI", "--campaign", "notes"]);
+  const box = path.dirname(dir);
+  const note = path.join(box, "context.md");
+  fs.writeFileSync(note, "Plain files only. No database. Tests first.\n");
+  const context = cli(dir, ["context", "append", "notes", "--from", note]);
+  assert(context.status === 0, context.out);
+  assert(fs.existsSync(path.join(dir, "orchestration", "notes", "context.md")), "context.md was written");
+
+  const plan = path.join(box, "plan.yml");
+  fs.writeFileSync(
+    plan,
+    `version: 1
+goal: Notes CLI
+brief: |
+  A zero-dependency notes CLI.
+criteria:
+  - notes can be added
+constraints: No database.
+reading: README.md
+tickets:
+  - key: store
+    title: Storage slice
+    kind: code
+    touches: [src/store/**]
+    what: Append and read entries.
+    accept: [A note survives a restart]
+  - key: cli
+    title: CLI slice
+    kind: code
+    blocked_by: [store]
+    touches: [src/cli/**]
+    what: Add and list commands.
+    accept: [add prints added]
+`,
+  );
+  const imported = cli(dir, ["plan", "import", "notes", "--file", plan, "--json"]);
+  assert(imported.status === 0, imported.out);
+  const body = JSON.parse(imported.out);
+  assert(body.tickets.length === 2, "both tickets imported");
+  assert(body.tickets[1].blocked_by[0] === body.tickets[0].id, "blocked_by resolves by key");
+});
+
 for (const result of results) {
   if (result.skipped) console.log(`SKIP  ${result.name} (no running panel in this environment)`);
   else console.log(`${result.ok ? "PASS" : "FAIL"}  ${result.name}${result.ok ? "" : `\n      ${result.error}`}`);

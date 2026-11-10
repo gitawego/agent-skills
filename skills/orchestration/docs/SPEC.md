@@ -28,9 +28,12 @@ A campaign is one paragraph of intent plus a set of tickets with blocking edges.
 | 16 | One approval gate: plan and role table together | Two gates is ceremony; the bindings are part of the plan |
 | 17 | The orchestrator may answer from a written source, and must cite it | The biggest lever on inbox volume; the citation is what keeps it honest |
 | 18 | User-invoked only | Spawning processes and spending money is never implicit |
-| 19 | No vendor, no model, no price in the skill's defaults | A default missing from the machine's catalog is a setup failure disguised as configuration; chains ship empty and approval requires a bound one |
+| 19 | Defaults name model families, never pinned vendor ids | A default is resolved against the live catalog, so a family missing from the machine binds nothing and approval still refuses an empty chain; a pinned id missing from the catalog would be a setup failure disguised as configuration |
 | 20 | A binding may change only while nothing is running | Pause or stop first; a chain that moves under a live ticket makes the ledger's "which model produced this" unanswerable |
 | 21 | A delivery that cannot fast-forward merges instead, and `deliver` takes it on demand | The base moves while a campaign runs (a plan commit is enough); refusing would strand a finished campaign behind a race |
+| 22 | The panel monitors and configures; the agent converses and decides | A decision that needs a sentence happens in the agent; the panel offers switches that need none, plus one manual New ticket form for a single slice |
+| 23 | Raw context is append-only; the plan is synthesized and imported atomically | `context.md` is evidence, `campaign.md` and `tickets/` are the contract. One validated import replaces a dozen edits and keeps the plan explainable |
+| 24 | Tickets have a dedicated manifest; a manual form is a one-off convenience | The ticket graph is the campaign's center of gravity. The agent is the primary author; the form covers one extra slice without a conversation, never a whole plan |
 
 ## Refinements made while writing
 
@@ -59,10 +62,10 @@ Each stage ends when its verification holds. All six are built; `node --test tes
 
 1. **Foundation.** `scripts/orchestrate.mjs` with `init`, `catalog`, `status`; console and campaign config load and validate; ticket parser and graph validation (acyclic, every criterion claimed, kinds known); ledger append; state derivation. *Verify:* `node:test` fixtures for a valid plan and eight invalid ones, each refused with the right message.
 2. **Tick engine.** Frontier, slots, dispatch of a real `pi` process, report collection, retries, timeouts, stuck detection, restart recovery. *Verify:* a scratch repo with three tickets (one blocked, two parallel) completes unattended, and a killed supervisor resumes once.
-3. **Read-only panel.** `/api/state`, `/api/events`, Board, Ticket, Inbox. *Verify:* a running campaign renders live, and a page reload loses nothing.
-4. **Writes and judgement.** Command queue, answer and review actions, orchestrator judgement with citations, decisions log. *Verify:* a worker's question is answered from the brief with a citation and never reaches the inbox; a second question without a source does.
+3. **Read-only panel.** `/api/state`, `/api/events`, Fleet, Campaign → Tickets, Inbox, Acceptance. *Verify:* a running campaign renders live, and a page reload loses nothing.
+4. **Writes and judgement.** Command queue, configuration and operational switches, orchestrator judgement with citations, decisions log. Answers, reviews and approvals run through the agent. *Verify:* a worker's question is answered from the brief with a citation and never reaches the inbox; a second question without a source does.
 5. **Gates and landing.** Checks, review run, branch landing with integration branch and serial merges, directory landing, delivery under each autonomy level and the diff-size override. *Verify:* a failing check sends the ticket to `needs_changes` and the same session fixes it; a conflict parks once and is resolved by a chores run.
-6. **Surface and evals.** Campaign form in the panel, `assets/ui` polish, `evals/evals.json` with a fixture campaign, SKILL.md and references re-read against what was built.
+6. **Surface and evals.** Campaign workspace (Overview/Tickets/Configure/History), `context append` and `plan import`, `assets/ui` polish, `evals/evals.json` with a fixture campaign, SKILL.md and references re-read against what was built.
 
 ## What building it changed
 

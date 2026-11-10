@@ -10,7 +10,7 @@ A **campaign** turns one paragraph of intent into landed work. You plan it as **
 
 The supervisor is a zero-dependency Node process (`scripts/orchestrate.mjs`) plus a local panel. Read the reference for a branch before acting on it:
 
-- [references/config.md](references/config.md): campaign form, ticket kinds, model chains, budget, inheritance, validation.
+- [references/config.md](references/config.md): campaign document, ticket kinds, model chains, budget, inheritance, validation.
 - [references/protocol.md](references/protocol.md): stages, ticket files, report schema, slots, retries, gates, landing, events.
 - [references/contract.md](references/contract.md): the standing rules appended to every worker's system prompt.
 - [references/roles/](references/roles/): one contract per kind — code, design, visual, research, plan, chores, review, judge, merge.
@@ -36,7 +36,9 @@ The human invokes `/orchestration start <goal>`. Scaffold if this project has no
 
 ### 2. Plan
 
-Fill the campaign form: brief, acceptance criteria, constraints, and the reading list (files, material, links) that a worker should read before touching anything. Then slice the work into **tickets**: each a vertical slice, each sized to one fresh context window, each declaring the tickets that **block** it and the paths it **touches**.
+Take the human's free-form context — notes, links, constraints, prior attempts, screenshots — and persist it with `orchestrate context append <campaign> --from notes.md`. It lands in `orchestration/<campaign>/context.md` as raw, timestamped input; the brief is your synthesis, the context is the source.
+
+Then write one compact plan: goal, brief, acceptance criteria, constraints, reading list, and the **tickets**. Each ticket is a vertical slice, sized to one fresh context window, declaring the tickets that **block** it and the paths it **touches**. Import it atomically with `orchestrate plan import <campaign> --file plan.yml`; re-import is idempotent by ticket `key`, so a conversation that changes the shape is one command, not a dozen edits.
 
 Grill the human first, one capped round of at most seven questions on the frontier (scope, the shape of the deliverable, what "verified" means, hard constraints). Ask only what changes the tickets; facts are yours to look up.
 
@@ -44,9 +46,21 @@ Grill the human first, one capped round of at most seven questions on the fronti
 
 ### 3. Bind and approve
 
-Read the catalog for the campaign's adapter (`node scripts/orchestrate.mjs catalog --adapter <id>`) and propose a chain for every kind the plan uses: a first model that matches the kind's work, a fallback from another provider where one exists, and a thinking level. One line of reasoning per kind, so the human can disagree with the choice rather than re-derive it. Nothing is pre-bound and no vendor name ships with this skill, so this step is never empty. The picker is ordered cheapest first; the human still chooses.
+Read the catalog for the campaign's adapter (`node scripts/orchestrate.mjs catalog --adapter <id>`) and confirm the chain for every kind the plan uses: a first model that matches the kind's work, a fallback from another family where one exists, and a thinking level. A new console already resolved the newest DeepSeek Flash, Muse Spark Contributor and MiMo Flash releases into the kinds (the reviewer stays on a different first model); `orchestrate defaults <campaign> --apply` fills empty chains against the live catalog. Confirm, adjust, and say why in one line per kind, so the human can disagree with the choice rather than re-derive it. If a family is absent from the adapter's catalog, that chain is still empty and must be bound by hand. The picker is ordered cheapest first; the human still chooses.
 
-Show the plan and the table together. The human confirms once, in chat or in the panel. A binding can change at any time while the campaign is not running; while it is, the supervisor refuses the change rather than let a live run's model be rewritten.
+The panel is a flight deck: it shows the plan, the tickets, the next action and the telemetry, and it configures the fleet. It never hosts the conversation. It has one manual **Tickets → New ticket** form for a single one-off slice; do not send the whole plan there. Approvals, answers and delivery reviews happen in this session, with a copyable command shown in the panel. The supervisor never invents tickets.
+
+**Tickets from chat.** The human does not need a form. Ask for the slice and make the contract explicit — **including the campaign**:
+
+- One ticket: “Add a ticket to `<campaign>` for the CLI slice: kind code, blocked by 01, touches `src/cli/**`, what: add and list commands, acceptance: `add` prints added.”
+- Several: “In `<campaign>`, split this context into tickets: storage first, then CLI on top, then docs. Show me the table before importing.”
+- Whole plan: paste the context and say “In `<campaign>`, turn this into a plan; show the ticket table and the chain table before importing.”
+
+**Which campaign?** The conversation names it. If the project has exactly one campaign, the CLI infers it; if there are several and the human did not say which, run `orchestrate status`, list them, and ask once. Never guess. Pass `--campaign <slug>` explicitly on every plan write so the command is unambiguous.
+
+For one ticket, run `orchestrate ticket add "<title>" --campaign <slug> --kind code --touches "src/cli/**" --blocked-by 01 --what "..." --accept "..."`. For a batch, write `plan.yml` and run `orchestrate plan import <campaign> --file plan.yml`. The panel form is the manual path for one slice, not a substitute for the plan.
+
+Show the plan table, the chain table and the next action together. The human confirms once, in chat. A binding can change at any time while the campaign is not running; while it is, the supervisor refuses the change rather than let a live run's model be rewritten.
 
 **Done when:** every kind in the plan has a chain, the human approves, the campaign stage is `running`, and the first frontier tickets are `queued`.
 
@@ -72,7 +86,9 @@ The script is the source of truth; the skill's slash commands are conveniences o
 | --- | --- |
 | `init` | Scaffold `orchestration/`, register the project in the console, write defaults |
 | `start <goal>` | Create a `draft` campaign |
-| `plan [campaign]` | Validate the plan and list every ticket |
+| `plan [campaign] [--json]` | Validate the plan and list every ticket |
+| `plan import <campaign> --file plan.yml [--prune] [--json]` | Write the campaign body and the ticket graph atomically; re-import is idempotent by ticket `key` |
+| `context append <campaign> --from notes.md` | Append free-form human input to `context.md` |
 | `ticket add "<title>" --kind code --touches "<globs>" [--attachments img.png] [--blocked-by 01] [--what ...] [--accept ...]` | Add one ticket with the next number |
 | `ticket edit <id> [--title ...] [--kind ...] [--touches ...] [--blocked-by ...] [--what ...] [--accept ...]` | Change a ticket; a change that would break the plan is rolled back |
 | `ticket remove <id>` | Delete a ticket, refused while it still blocks another |
@@ -80,6 +96,7 @@ The script is the source of truth; the skill's slash commands are conveniences o
 | `archive [campaign]` | Close a delivered campaign |
 | `approve <campaign>` | Approve plan and bindings; allow dispatch |
 | `bind <campaign> <kind> <model>[:thinking] [--fallback ...] [--adapter <id>]` | Set one kind's chain; refused while the campaign is running |
+| `defaults [campaign] [--apply] [--force]` | Resolve the newest default family per kind from the live catalog; `--apply` fills empty chains, `--force` replaces |
 | `up` | Start the supervisor and panel if they are not running, open the panel, print its URL |
 | `down` | Stop the supervisor and panel |
 | `run` | Supervisor: all registered campaigns, one tick loop, plus the panel |
@@ -106,7 +123,7 @@ The script is the source of truth; the skill's slash commands are conveniences o
 | `doctor` | Check harness versions and catalog freshness; `--refresh` probes live auth/catalog |
 | `adapter <id> [--spend mode]` | Set the console adapter and spend mode |
 
-Every panel action has a CLI equivalent and vice versa; both write the same command queue, and the supervisor is the only writer of state.
+Every panel action has a CLI equivalent; the agent also has CLI-only verbs (answer, review, approve, plan import, context append). Panel actions enqueue commands; the agent's plan verbs write committed plan files. The supervisor is the only writer of runtime state.
 
 ## Invariants
 
@@ -123,6 +140,7 @@ Every panel action has a CLI equivalent and vice versa; both write the same comm
 orchestration/                 # committed: the plan and its history
   <campaign>/
     campaign.md                # goal, brief, criteria, constraints, reading list, config
+    context.md                 # raw human input, timestamped, append-only
     tickets/01-slug.md         # vertical slices, blockers, touched paths
 .orchestration/                # gitignored: machine state
   events.jsonl                 # append-only ledger; the panel streams it
@@ -151,4 +169,4 @@ Then, from any project, `orchestrate up` starts the panel if it is not running, 
 
 Node 20 or newer, `git`, and either the `pi` CLI or an ACP harness such as `agy` (Antigravity) or `opencode`. No `npm install`, no lockfile, no `node_modules`; the runtime uses the Node standard library only. State is written to the user's project and to the console directory, never inside this skill folder. On Linux, `bwrap` is optional and enables the OS-level worker sandbox (`runner.sandbox: auto`). ImageMagick is optional and enables downscaling large images.
 
-The adapter catalog lives in `~/.local/state/orchestration/catalogs/<adapter>.json`. `bind` and `approve` refresh it from the harness; the panel reads the snapshot. If discovery fails, the campaign cannot leave `awaiting_approval`; fix the harness's credentials and run `orchestrate catalog --adapter <id> --refresh`. `init` binds nothing: reading the catalog and choosing a chain per kind is step 3 of the loop.
+The adapter catalog lives in `~/.local/state/orchestration/catalogs/<adapter>.json`. `bind` and `approve` refresh it from the harness; the panel reads the snapshot. If discovery fails, the campaign cannot leave `awaiting_approval`; fix the harness's credentials and run `orchestrate catalog --adapter <id> --refresh`. `init` seeds a new console from the default ladders; reading the catalog and confirming a chain per kind is step 3 of the loop.

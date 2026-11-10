@@ -5,6 +5,7 @@ import path from "node:path";
 import { sandbox, project, writeConsole, writeCampaign, writeTicket, MODELS } from "./helpers.mjs";
 import { startServer } from "../scripts/lib/server.mjs";
 import { enqueue } from "../scripts/lib/commands.mjs";
+import { tick } from "../scripts/lib/engine.mjs";
 
 const BODY = `## Goal
 
@@ -96,6 +97,29 @@ test("the panel serves state, refuses a missing token, and queues commands", asy
   });
   assert.equal(bad.status, 400);
 
+  panel.close();
+});
+
+test("the panel queues the manual new-ticket form and the supervisor writes it", async () => {
+  const root = fixture();
+  const panel = await startServer({ roots: [root], port: 0, onCommand: () => tick({ root }) });
+  const res = await fetch(`http://127.0.0.1:${panel.port}/api/commands?token=${panel.token}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      root,
+      type: "ticket.add",
+      campaign: "demo",
+      title: "Second slice",
+      kind: "code",
+      touches: ["src/second/**"],
+      what: "Build the second slice.",
+      criteria: ["It works"],
+    }),
+  });
+  assert.equal(res.status, 200);
+  const files = fs.readdirSync(path.join(root, "orchestration", "demo", "tickets")).sort();
+  assert.ok(files.some((file) => /^02-/.test(file)), `expected the next ticket, got ${files.join(", ")}`);
   panel.close();
 });
 

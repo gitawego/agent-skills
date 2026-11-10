@@ -1,6 +1,7 @@
 /* Orchestration panel. No framework, no build step: state in, DOM out. */
 
-const VIEWS = ["fleet", "inbox", "board", "campaign", "acceptance", "settings"];
+const VIEWS = ["fleet", "inbox", "acceptance", "settings"];
+const CAMPAIGN_TABS = ["overview", "tickets", "configure", "history"];
 const FLEET_STATUS = ["all", "running", "queued", "acceptance", "done"];
 const STAGES = [
   { id: "blocked", label: "Blocked", family: "idle" },
@@ -43,16 +44,19 @@ const initialHash = (() => {
   const [name, query = ""] = raw.split("?");
   return { name, params: new URLSearchParams(query) };
 })();
-let view = VIEWS.includes(initialHash.name)
-  ? initialHash.name
-  : initialHash.name.startsWith("campaign/")
-    ? "campaign"
-    : "fleet";
+const initialPath = initialHash.name.startsWith("campaign/")
+  ? decodeURIComponent(initialHash.name.slice("campaign/".length)).split("/")
+  : null;
+let view = VIEWS.includes(initialHash.name) ? initialHash.name : initialPath ? "campaign" : "fleet";
+let campaignTab = initialPath && CAMPAIGN_TABS.includes(initialPath[1]) ? initialPath[1] : "overview";
+let ticketView = "list";
+let ticketKind = "all";
+let ticketQuery = "";
 let fleetStatus = FLEET_STATUS.includes(initialHash.params.get("status")) ? initialHash.params.get("status") : "all";
 let fleetProject = initialHash.params.get("project") || "";
 let fleetAdapter = initialHash.params.get("adapter") || "";
 let fleetQuery = initialHash.params.get("q") || "";
-let initialCampaign = initialHash.params.get("campaign") || (initialHash.name.startsWith("campaign/") ? decodeURIComponent(initialHash.name.slice("campaign/".length)) : null);
+let initialCampaign = initialHash.params.get("campaign") || (initialPath ? initialPath[0] : null);
 let fleetLimit = 200;
 let dispatchModalMode = "paused";
 let quotaDraft = {};
@@ -66,7 +70,6 @@ let fresh = new Set();
 let clock = null;
 const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 let drafts = {};
-let compose = null;
 let dirtyViews = new Set();
 let clearAfterLoad = new Set();
 let lastErrorTs = null;
@@ -122,6 +125,22 @@ function toast(text) {
   el._t = setTimeout(() => el.classList.remove("on"), 2400);
 }
 
+function copyFallback(text) {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  try {
+    document.execCommand("copy");
+    toast("Copied");
+  } catch {
+    window.prompt("Copy this command", text);
+  }
+  area.remove();
+}
+
 function formBusy() {
   if (document.querySelector(".model-suggest:not([hidden])")) return true;
   const active = document.activeElement;
@@ -132,13 +151,12 @@ function formBusy() {
 
 /* The surface is what the person is actually editing, not just the nav tab. */
 function surface() {
-  return compose || view;
+  return view;
 }
 
 /* A background poll may update chrome, but it must never replace a form,
    a typed value, an open ticket form or an acceptance selection. */
 function pageBusy() {
-  if (compose) return true;
   if (formBusy()) return true;
   if (dirtyViews.has(surface())) return true;
   if (document.querySelector("#app details[open]")) return true;
@@ -172,7 +190,7 @@ async function load({ quiet = false } = {}) {
     connEl.className = "dot live";
     connText.textContent = "live";
     /* A background poll or SSE event must not rebuild the page under a form
-       control, a typed value or an open compose screen. Update the chrome
+       control, a typed value or an open form. Update the chrome
        (counts, rail, dispatch pill) and leave the working surface alone. */
     if (pageBusy()) {
       renderChrome();
@@ -400,16 +418,14 @@ function ensureSelection() {
     return;
   }
   if (!selected.campaign) {
-    if (view === "board" || view === "campaign") {
+    if (view === "campaign") {
       selected = { root: all[0].root, campaign: all[0].slug };
     }
     return;
   }
   const found = all.find((c) => (!selected.root || c.root === selected.root) && c.slug === selected.campaign);
   if (!found) {
-    selected = (view === "board" || view === "campaign")
-      ? { root: all[0].root, campaign: all[0].slug }
-      : { root: null, campaign: null };
+    selected = view === "campaign" ? { root: all[0].root, campaign: all[0].slug } : { root: null, campaign: null };
   }
 }
 
@@ -690,6 +706,7 @@ function viewFleet() {
     : "Every ticket across every project, with why it is or is not moving. Click a row to open the ticket; acceptance rows open the delivery.";
   return `<h1 class="page">Fleet${scopeTitle}</h1>
     <p class="lede">${lede}</p>
+    <div class="actions">${openCampaignButton()}</div>
     ${dispatchBanner()}
     ${quotaStrip(state?.console?.quotas || [])}
     ${fleetTabs(counts)}
@@ -741,6 +758,13 @@ function paintFleet() {
 
 function syncFleetUrl() {
   if (drawer) return;
+  /* the initial load renders Fleet before routeFromHash can translate an old
+     #campaign or #board link; do not overwrite the address it needs */
+  if (/^#(campaign|board)(\?|$)/.test(location.hash) || location.hash.startsWith("#ticket/")) return;
+  if (view === "campaign" && selected.campaign) {
+    history.replaceState(null, "", `#campaign/${encodeURIComponent(selected.campaign)}/${campaignTab}`);
+    return;
+  }
   const params = new URLSearchParams();
   if (fleetStatus !== "all") params.set("status", fleetStatus);
   if (fleetProject) params.set("project", fleetProject);
@@ -750,32 +774,6 @@ function syncFleetUrl() {
   const query = params.toString();
   const hash = view === "fleet" ? `#fleet${query ? `?${query}` : ""}` : `#${view}${selected.campaign ? `?campaign=${encodeURIComponent(selected.campaign)}` : ""}`;
   history.replaceState(null, "", hash);
-}
-
-function updateBulkBar() {
-  const picks = [...document.querySelectorAll("[data-accept-select]:checked")];
-  const button = document.querySelector('[data-act="approve-selected"]');
-  const hint = document.getElementById("accept-hint");
-  if (!button || !hint) return;
-  if (!picks.length) {
-    button.disabled = true;
-    hint.textContent = "Select one campaign's deliveries.";
-    return;
-  }
-  const campaigns = new Set(picks.map((pick) => `${pick.dataset.root}:${pick.dataset.campaign}`));
-  if (campaigns.size > 1) {
-    button.disabled = true;
-    hint.textContent = "Bulk approval is limited to one campaign.";
-    return;
-  }
-  const over = picks.find((pick) => pick.dataset.under !== "true");
-  if (over) {
-    button.disabled = true;
-    hint.textContent = "This delivery is not eligible for bulk approval; approve it individually.";
-    return;
-  }
-  button.disabled = false;
-  hint.textContent = `${picks.length} selected in one campaign, under the autoship line.`;
 }
 
 function viewAcceptance(items) {
@@ -792,8 +790,7 @@ function viewAcceptance(items) {
           const lines = Number(stats?.lines || 0);
           const limit = Number(campaign.maxAutoshipLines || 200);
           const under = Boolean(stats) && lines <= limit;
-          const unknown = !stats;
-          const rule = unknown
+          const rule = !stats
             ? "diff not recorded — approve individually"
             : under
               ? "under the autoship line"
@@ -805,9 +802,8 @@ function viewAcceptance(items) {
             </header>
             ${group
               .map(
-                (item) => `<article class="acceptance-card" data-root="${esc(campaign.root)}" data-campaign="${esc(campaign.slug)}" data-item="${esc(item.id)}" data-lines="${lines}" data-limit="${limit}" data-under="${under}">
+                (item) => `<article class="acceptance-card handoff" data-root="${esc(campaign.root)}" data-campaign="${esc(campaign.slug)}" data-item="${esc(item.id)}">
                   <header>
-                    <label class="pick"><input type="checkbox" data-accept-select data-root="${esc(campaign.root)}" data-campaign="${esc(campaign.slug)}" data-item="${esc(item.id)}" data-lines="${lines}" data-limit="${limit}" data-under="${under}" /> select</label>
                     <span class="kind">delivery</span>
                     <span class="where">${esc(campaign.project)} / ${esc(campaign.slug)}</span>
                     <span class="wait">waiting ${esc(elapsed(item.created))}</span>
@@ -818,10 +814,9 @@ function viewAcceptance(items) {
                     <span>${stats ? `${num(stats.added)} added, ${num(stats.removed)} removed` : "single-item approval"}</span>
                     <span class="${under ? "ok" : "warn"}">${rule}</span>
                   </div>
-                  <textarea data-accept-note="${esc(item.id)}" placeholder="Optional note for the record"></textarea>
+                  ${commandRow("Approve in your agent", `orchestrate review ${item.id} approve "…"`)}
+                  ${commandRow("Send back in your agent", `orchestrate review ${item.id} reject "…"`)}
                   <div class="actions">
-                    <button class="btn primary" data-act="approve-acceptance" data-root="${esc(campaign.root)}" data-campaign="${esc(campaign.slug)}" data-item="${esc(item.id)}">Approve and merge</button>
-                    <button class="btn signal" data-act="reject-acceptance" data-root="${esc(campaign.root)}" data-campaign="${esc(campaign.slug)}" data-item="${esc(item.id)}">Send back</button>
                     <button class="btn ghost" data-act="open-campaign" data-root="${esc(campaign.root)}" data-campaign="${esc(campaign.slug)}">Open campaign</button>
                   </div>
                 </article>`,
@@ -830,12 +825,12 @@ function viewAcceptance(items) {
           </section>`;
         })
         .join("")
-    : `<div class="empty"><h2>Nothing is waiting for acceptance.</h2><p>Deliveries appear here when a campaign passes its gates and its landing policy needs a person.</p><button class="btn" data-act="go" data-view="fleet">Back to the fleet</button></div>`;
+    : `<div class="empty"><h2>Nothing is waiting for acceptance.</h2><p>Deliveries appear here when a campaign passes its gates and its landing policy needs a person. Review them in your agent session.</p><button class="btn" data-act="go" data-view="fleet">Back to the fleet</button></div>`;
   const countLabel = items.length ? ` · ${items.length} waiting` : "";
   const scopeLabel = selected.campaign ? ` <span class="hint">· ${esc(selected.campaign)}</span>` : "";
   return `<h1 class="page">Acceptance${scopeLabel}${countLabel}</h1>
-    <p class="lede">Deliveries only. Questions and failures stay in the Inbox. Bulk approval is limited to one campaign and to a diff under its autoship line.</p>
-    ${items.length ? `<div class="bulk-bar"><button class="btn primary" data-act="approve-selected" disabled>Approve selected</button><span class="hint" id="accept-hint">Select one campaign's deliveries.</span></div>` : ""}
+    <p class="lede">The panel shows the evidence. Approve or send back in your agent session; this queue clears on the next tick.</p>
+    <div class="actions">${openCampaignButton()}</div>
     ${body}`;
 }
 
@@ -869,18 +864,14 @@ function render({ preserveScroll = false } = {}) {
   const fleetScroll = preserveScroll ? document.querySelector(".fleet-wrap")?.scrollLeft || 0 : 0;
   renderChrome();
   if (!state) return;
-  if (compose === "new-campaign") {
-    app.innerHTML = newCampaignForm();
-  } else if (view === "fleet") {
+  if (view === "fleet") {
     app.innerHTML = viewFleet();
     paintFleet();
   } else if (view === "inbox") app.innerHTML = viewInbox(openItems());
-  else if (view === "board") app.innerHTML = viewBoard();
   else if (view === "campaign") app.innerHTML = viewCampaign();
   else if (view === "acceptance") app.innerHTML = viewAcceptance(acceptanceItems());
   else if (view === "settings") app.innerHTML = viewSettings();
 
-  autoSize();
   markFresh();
   if (preserveScroll) {
     window.scrollTo(0, scroll);
@@ -924,7 +915,7 @@ function renderRail() {
     const isCur = Boolean(selected.campaign && (!selected.root || c.root === selected.root) && c.slug === selected.campaign);
     return `<button class="campaign-row" data-stage="${esc(c.stage)}" data-act="select-campaign" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" aria-current="${isCur}">
       <span class="name">${esc(c.slug)}</span>
-      <span class="state">${esc(c.stage)}</span>
+      <span class="state">${esc(c.stage)}${c.nextAction?.actor === "you" ? " · you" : ""}</span>
       <span class="sub">${esc(label)}</span>
     </button>`;
   });
@@ -933,10 +924,6 @@ function renderRail() {
 }
 
 function renderCrumbs() {
-  if (compose === "new-campaign") {
-    crumbsEl.innerHTML = `<b>New campaign</b><span>·</span>not dispatched yet`;
-    return;
-  }
   if (view === "fleet") {
     if (selected.campaign) {
       crumbsEl.innerHTML = `<b>Fleet</b><span>·</span><b>${esc(selected.campaign)}</b><span>·</span>${fleetRows().length} row${fleetRows().length === 1 ? "" : "s"}`;
@@ -966,7 +953,8 @@ function renderCrumbs() {
   }
   const parts = [];
   if (c.project && c.project !== c.slug) parts.push(esc(c.project));
-  parts.push(`<b>${esc(c.slug)}</b>`, esc(c.stage));
+  const tabLabel = campaignTab ? campaignTab[0].toUpperCase() + campaignTab.slice(1) : "";
+  parts.push(`<b>${esc(c.slug)}</b>`, esc(c.stage), esc(tabLabel));
   crumbsEl.innerHTML = parts.join("<span>·</span>");
 }
 
@@ -982,18 +970,19 @@ function viewInbox(items) {
     ? items.map(itemRow).join("")
     : `<div class="empty">
         <h2>Nothing needs you.</h2>
-        <p>${selected.campaign ? `<b>${esc(selected.campaign)}</b> is running on its own.` : "Every campaign is running on its own."} The board shows what is moving.</p>
+        <p>${selected.campaign ? `<b>${esc(selected.campaign)}</b> is running on its own.` : "Every campaign is running on its own."} The Fleet shows what is moving.</p>
         <dl class="legend">
           <dt>Question</dt><dd>A worker needs a decision no written source answers.</dd>
           <dt>Failure</dt><dd>Attempts ran out, or a merge would not resolve.</dd>
           <dt>Delivery</dt><dd>Deliveries wait in the Acceptance queue, not here.</dd>
         </dl>
-        <button class="btn" data-act="go" data-view="board">Open the board</button>
+        <button class="btn" data-act="go" data-view="fleet">Back to the fleet</button>
       </div>`;
   const countLabel = items.length ? ` · ${items.length} open` : "";
   const scopeLabel = selected.campaign ? ` <span class="hint">· ${esc(selected.campaign)}</span>` : "";
   return `${failed.length ? `<div class="errors"><strong>Plan problems</strong><ul>${failed.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>` : ""}
     <h1 class="page">Inbox${scopeLabel}${countLabel}</h1>
+    <div class="actions">${openCampaignButton()}</div>
     ${body}`;
 }
 
@@ -1001,8 +990,15 @@ function itemRow(item) {
   const c = item.campaign;
   const ticket = item.ticket ? c.tickets.find((t) => t.id === item.ticket) : null;
   const attrs = `data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" data-item="${esc(item.id)}" data-ticket="${esc(item.ticket || "")}"`;
-  const answerId = `answer-${item.id}`;
-  return `<article class="item" data-kind="${esc(item.kind)}">
+  const command =
+    item.kind === "review"
+      ? `orchestrate review ${item.id} approve "…"`
+      : item.kind === "failure"
+        ? item.ticket
+          ? `orchestrate retry ${item.ticket}`
+          : "orchestrate inbox"
+        : `orchestrate answer ${item.id} "…"`;
+  return `<article class="item handoff" data-kind="${esc(item.kind)}">
     <div class="item-head">
       <span class="kind">${esc(item.kind)}</span>
       <span class="where">${esc(c.project)} / ${esc(c.slug)}${item.ticket ? ` / ${esc(item.ticket)}` : ""}</span>
@@ -1013,49 +1009,129 @@ function itemRow(item) {
     ${item.question?.options?.length ? `<p class="hint">options: ${item.question.options.map(esc).join(" · ")}${item.question.default ? ` · default: ${esc(item.question.default)}` : ""}</p>` : ""}
     ${item.brief ? `<p class="brief">${esc(item.brief)}</p>` : ""}
     ${item.findings ? `<details><summary>What it ran into</summary><pre class="log">${esc(item.findings)}</pre></details>` : ""}
-    <div class="answer">
-      <label class="sr" for="${answerId}">Your decision</label>
-      <textarea id="${answerId}" data-answer="${esc(item.id)}" placeholder="${item.kind === "review" ? "Optional note for the record" : "Your decision, in one or two sentences"}"></textarea>
-      <button class="btn primary" data-act="answer" ${attrs}>Answer</button>
-      ${item.kind === "review" ? `<button class="btn" data-act="approve-item" ${attrs}>Approve</button><button class="btn signal" data-act="reject-item" ${attrs}>Send back</button>` : ""}
-      ${ticket ? `<button class="btn ghost" data-act="open-ticket" ${attrs}>Open ticket</button>` : ""}
-    </div>
+    ${commandRow(item.kind === "review" ? "Review in your agent" : "Answer in your agent", command)}
+    ${ticket ? `<div class="actions"><button class="btn ghost" data-act="open-ticket" ${attrs}>Open ticket</button></div>` : ""}
   </article>`;
 }
 
-function viewBoard() {
-  const c = current();
-  if (!c) return noCampaigns();
-  const byStage = Object.fromEntries(STAGES.map((s) => [s.id, []]));
-  for (const t of c.tickets) (byStage[t.stage] || (byStage[t.stage] = [])).push(t);
-  const slots = c.tickets.filter((t) => t.stage === "working").length;
-  const bands = STAGES.filter((s) => byStage[s.id]?.length)
-    .map((stage) => band(stage, byStage[stage.id]))
-    .join("");
-  return `${campaignHead(c, slots)}
-    ${bands || `<div class="empty"><h2>No tickets yet.</h2><p>Add the first one in the campaign view: a title, what to build, and how it will be judged.</p><button class="btn" data-act="go" data-view="campaign">Open the campaign</button></div>`}
-    ${ledger(c)}`;
+function campaignControls(c) {
+  const attrs = `data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}"`;
+  const buttons = [];
+  if (c.stage === "running") {
+    buttons.push(`<button class="btn" data-act="pause" ${attrs}>Pause</button>`);
+    buttons.push(`<button class="btn signal" data-act="cancel-campaign" ${attrs}>Cancel all</button>`);
+  }
+  if (c.stage === "paused") {
+    buttons.push(`<button class="btn primary" data-act="resume" ${attrs}>Resume</button>`);
+    if (c.delivery?.mode === "manual") buttons.push(`<button class="btn" data-act="deliver" ${attrs}>Deliver</button>`);
+    buttons.push(`<button class="btn" data-act="archive-campaign" ${attrs}>Archive</button>`);
+  }
+  if (c.stage === "delivered") buttons.push(`<button class="btn" data-act="archive-campaign" ${attrs}>Archive</button>`);
+  return buttons.join("");
 }
 
-function campaignHead(c, slots) {
+function commandRow(label, command) {
+  if (!command) return "";
+  return `<div class="command-row"><span class="command-label">${esc(label)}</span><code>${esc(command)}</code><button class="btn ghost" data-act="copy" data-command="${esc(command)}" aria-label="Copy command">Copy</button></div>`;
+}
+
+function openCampaignButton() {
+  if (!selected.campaign) return "";
+  const c = campaignOf(selected.root, selected.campaign);
+  if (!c) return "";
+  return `<button class="btn" data-act="open-campaign" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Open campaign</button>`;
+}
+
+function nextActionBlock(c) {
+  const action = c.nextAction || { actor: "none", text: "", command: null };
+  const label = { you: "You", supervisor: "Supervisor", worker: "Worker", none: "Closed" }[action.actor] || action.actor;
+  return `<section class="next-action" data-actor="${esc(action.actor)}">
+    <span class="actor">${esc(label)}</span>
+    <span class="text">${esc(action.text)}</span>
+    ${action.command ? `<code>${esc(action.command)}</code><button class="btn ghost" data-act="copy" data-command="${esc(action.command)}" aria-label="Copy next command">Copy</button>` : ""}
+  </section>`;
+}
+
+function campaignSubnav(c) {
+  const items = [
+    ["overview", "Overview"],
+    ["tickets", `Tickets ${c.tickets.length}`],
+    ["configure", "Configure"],
+    ["history", "History"],
+  ];
+  return `<nav class="campaign-subnav" aria-label="Campaign sections">${items
+    .map(
+      ([id, label]) =>
+        `<button data-act="campaign-tab" data-tab="${id}" aria-current="${campaignTab === id}">${esc(label)}</button>`,
+    )
+    .join("")}</nav>`;
+}
+
+function campaignHeader(c) {
   const cap = Math.max(1, state?.console?.limits?.max_concurrent || 4);
+  const slots = c.tickets.filter((t) => t.stage === "working").length;
   const meter = Array.from({ length: cap }, (_, i) => `<i class="${i < slots ? "on" : ""}"></i>`).join("");
+  const goal = (c.goal || "").trim();
   return `<div class="campaign-head">
-      <div class="eyebrow">${esc(c.stage)}${c.reason ? ` · ${esc(c.reason)}` : ""}</div>
-      <h1>${esc(c.slug)}</h1>
+      <div class="eyebrow">${esc(c.project)} / ${esc(c.slug)} · ${esc(c.stage)}</div>
+      <h1>${esc(goal || c.slug)}</h1>
     </div>
     <div class="campaign-meta">
       <span class="meter" title="${slots} of ${cap} slots busy">${meter}<b>${slots}/${cap}</b> slots</span>
-      <span>${esc(c.autonomy)}</span>
-      <span>${esc(c.landing)}${c.landing === "branch" ? ` → ${esc(c.base)}` : ""}</span>
-      <span>${num(c.spend.tokens)} tok · ${usd(c.spend.dollars)}${c.spend.unmetered ? ` · ${c.spend.unmetered} unmetered` : ""}</span>
+      <span>${c.tickets.length} ticket${c.tickets.length === 1 ? "" : "s"}</span>
+      <span>${num(c.spend.tokens)} tok · ${usd(c.spend.dollars)}${c.spend.unmetered ? ` · ${esc(c.spend.unmetered)} unmetered` : ""}</span>
+      <span>${c.cacheHit == null ? "cache —" : `${(c.cacheHit * 100).toFixed(1)}% cached`}</span>
       <span class="spacer"></span>
-      ${c.stage === "running" ? `<button class="btn" data-act="pause" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Pause</button>` : ""}
-      ${c.stage === "paused" ? `<button class="btn" data-act="resume" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Resume</button>` : ""}
-      ${c.stage === "running" ? `<button class="btn" data-act="cancel-campaign" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Cancel all</button>` : ""}
-      ${c.delivery?.mode === "manual" ? `<button class="btn primary" data-act="deliver" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Deliver</button>` : ""}
-      ${["delivered", "paused"].includes(c.stage) ? `<button class="btn" data-act="archive-campaign" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Archive</button>` : ""}
-    </div>`;
+      ${campaignControls(c)}
+    </div>
+    ${nextActionBlock(c)}
+    ${campaignSubnav(c)}`;
+}
+
+function docBlock(title, text, hint) {
+  const body = String(text || "").trim();
+  return `<section class="doc-block">
+    <h2>${esc(title)}</h2>
+    ${body ? `<div class="doc">${esc(body)}</div>` : `<p class="hint">${esc(hint || "Not written yet. Your agent writes this from the plan and the context.")}</p>`}
+  </section>`;
+}
+
+function contextBlock(c) {
+  const context = c.context || {};
+  const body = String(context.text || "").trim();
+  return `<details class="doc-block context-block">
+    <summary><span class="doc-title">Context</span> <span class="hint">raw input · ${context.bytes || 0} bytes${context.truncated ? " · truncated" : ""}</span></summary>
+    ${body ? `<pre class="context-raw">${esc(body)}</pre>` : `<p class="hint">No raw context yet. Capture it in your agent session with <span class="mono">orchestrate context append ${esc(c.slug)} --from notes.md</span>.</p>`}
+  </details>`;
+}
+
+function stageCounts(c) {
+  return STAGES.filter((stage) => c.counts?.[stage.id])
+    .map(
+      (stage) =>
+        `<span class="count" data-family="${stage.family}"><b>${c.counts[stage.id]}</b> ${esc(stage.label)}</span>`,
+    )
+    .join("");
+}
+
+function campaignOverview(c) {
+  const open = (c.inbox || []).filter((item) => item.status === "open").length;
+  return `<div class="overview-health">
+      ${stageCounts(c) || `<span class="hint">No tickets yet.</span>`}
+      <span class="spacer"></span>
+      <span>${open} open question${open === 1 ? "" : "s"}</span>
+      <span>${c.counts?.working || 0} running</span>
+    </div>
+    ${c.tickets.length && (c.planErrors || []).length ? `<div class="errors"><strong>Plan needs attention</strong><ul>${c.planErrors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>` : ""}
+    ${!c.tickets.length ? `<div class="agent-prompt"><span class="hint">Ask your agent, in chat:</span><blockquote>“Plan campaign ${esc(c.slug)}: split the work into tickets and show me the table before importing.”</blockquote><button class="btn ghost" data-act="copy" data-command="Plan campaign ${esc(c.slug)}: split the work into tickets and show me the table before importing.">Copy prompt</button></div>` : ""}
+    <div class="briefing">
+      ${docBlock("Brief", c.brief)}
+      ${docBlock("Acceptance criteria", c.criteria)}
+      ${contextBlock(c)}
+      ${docBlock("Constraints", c.constraints)}
+      ${docBlock("What to read first", c.reading)}
+    </div>
+    ${ledger(c)}`;
 }
 
 function eventLine(event) {
@@ -1071,11 +1147,11 @@ function eventLine(event) {
   return `<li><span class="t">${esc(time)}</span><span class="tk">${esc(event.ticket || "—")}</span><span class="ty">${esc(what)}</span><span class="dt">${esc(String(detail).split("\n")[0].slice(0, 90))}</span></li>`;
 }
 
-function ledger(c) {
-  const events = (c.events || []).slice(-9).reverse();
+function ledger(c, limit = 9) {
+  const events = (c.events || []).slice(-limit).reverse();
   if (!events.length) return "";
   return `<section class="ledger">
-      <header><h2>Ledger</h2><span class="hint">newest first · showing ${Math.min(9, c.events.length)} of ${c.events.length}</span></header>
+      <header><h2>Ledger</h2><span class="hint">newest first · showing ${Math.min(limit, c.events.length)} of ${c.events.length}</span></header>
       <ol>${events.map(eventLine).join("")}</ol>
     </section>`;
 }
@@ -1109,74 +1185,166 @@ function strip(t, family = "idle") {
     </li>`;
 }
 
-/* One state, one set of actions: a button that cannot apply is not shown. */
-function campaignActions(c) {
-  const root = esc(c.root);
-  const slug = esc(c.slug);
-  const attrs = `data-root="${root}" data-campaign="${slug}"`;
-  const live = c.tickets.filter((t) => t.stage === "working").length;
-  const buttons = [`<button class="btn" data-act="save-campaign" ${attrs}>Save campaign</button>`];
-  let note = "";
-
-  if (c.stage === "draft") {
-    note = "Draft. Fill the goal, add tickets and bind a chain, then approve — nothing dispatches before that.";
-  } else if (c.stage === "awaiting_approval") {
-    buttons.push(`<button class="btn primary" data-act="approve-campaign" ${attrs}>Approve and dispatch</button>`);
-    note = "Plan ready. Approving dispatches the first frontier; nothing has run yet.";
-  } else if (c.stage === "running") {
-    buttons.push(`<button class="btn primary" data-act="pause" ${attrs}>Pause</button>`);
-    buttons.push(`<button class="btn signal" data-act="cancel-campaign" ${attrs}>Cancel all</button>`);
-    note = `Running${live ? ` · ${live} live run${live === 1 ? "" : "s"}` : " · no run in flight"}. The supervisor dispatches on its next tick.`;
-  } else if (c.stage === "paused") {
-    buttons.push(`<button class="btn primary" data-act="resume" ${attrs}>Resume</button>`);
-    if (c.delivery?.mode === "manual") buttons.push(`<button class="btn signal" data-act="deliver" ${attrs}>Deliver now</button>`);
-    buttons.push(`<button class="btn" data-act="archive-campaign" ${attrs}>Archive</button>`);
-    note = `Paused${c.reason ? ` — ${c.reason}` : ""}. Nothing dispatches until you resume.`;
-  } else if (c.stage === "delivered") {
-    buttons.push(`<button class="btn" data-act="resume" ${attrs}>Reopen to add tickets</button>`);
-    buttons.push(`<button class="btn" data-act="archive-campaign" ${attrs}>Archive</button>`);
-    note = c.delivery?.mode === "manual"
-      ? `Delivered, waiting for you: ${c.delivery.detail || "the branch is ready"}`
-      : "Delivered. Archive it when you have finished reading.";
-  } else {
-    note = "Archived. Reopen a new campaign rather than adding to a closed record.";
-  }
-
-  return `<div class="actions">${buttons.join("")}</div>
-    <p class="stage-note">${esc(note)}</p>`;
+function ticketFilter(c) {
+  const kinds = [...new Set(c.tickets.map((t) => t.kind))].sort();
+  return `<div class="ticket-toolbar">
+      <div class="ticket-counts">${stageCounts(c)}</div>
+      <div class="segmented" role="group" aria-label="Ticket view">
+        <button data-act="ticket-view" data-view="list" aria-pressed="${ticketView === "list"}">List</button>
+        <button data-act="ticket-view" data-view="board" aria-pressed="${ticketView === "board"}">Board</button>
+      </div>
+      <select data-role="ticket-kind" aria-label="Filter by kind">
+        <option value="all">all kinds</option>
+        ${kinds.map((kind) => `<option ${ticketKind === kind ? "selected" : ""}>${esc(kind)}</option>`).join("")}
+      </select>
+      <input type="text" data-role="ticket-search" value="${esc(ticketQuery)}" placeholder="Search tickets…" aria-label="Search tickets" />
+    </div>`;
 }
 
-function viewCampaign() {
+function filteredTickets(c) {
+  const query = ticketQuery.trim().toLowerCase();
+  return c.tickets.filter((ticket) => {
+    if (ticketKind !== "all" && ticket.kind !== ticketKind) return false;
+    if (
+      query &&
+      !`${ticket.id} ${ticket.title} ${ticket.kind} ${ticket.stage} ${ticket.model || ""}`
+        .toLowerCase()
+        .includes(query)
+    )
+      return false;
+    return true;
+  });
+}
+
+function ticketList(c, tickets) {
+  return `<table class="ticket-table">
+      <thead><tr><th>#</th><th>Title</th><th>Kind</th><th>Stage</th><th>Model</th><th class="num">Cost</th><th>Blocked by</th></tr></thead>
+      <tbody>
+        ${
+          tickets
+            .map(
+              (t) => `<tr tabindex="0" role="button" data-act="open-ticket" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" data-ticket="${esc(t.id)}">
+              <td class="mono">${esc(t.id)}</td>
+              <td class="title">${esc(t.title)}</td>
+              <td class="mono">${esc(t.kind)}</td>
+              <td><span class="badge" data-family="${esc((STAGES.find((s) => s.id === t.stage) || {}).family || "idle")}">${esc(t.stage)}</span></td>
+              <td class="mono">${esc(t.model || "—")}</td>
+              <td class="num mono">${esc(t.cost?.text || (t.unmetered ? "included" : "—"))}</td>
+              <td class="mono">${esc((t.blockedBy || []).join(", ") || "—")}</td>
+            </tr>`,
+            )
+            .join("") || `<tr><td colspan="7" class="hint">No tickets match.</td></tr>`
+        }
+      </tbody>
+    </table>`;
+}
+
+function ticketBoard(c, tickets) {
+  const byStage = Object.fromEntries(STAGES.map((stage) => [stage.id, []]));
+  for (const ticket of tickets) (byStage[ticket.stage] || (byStage[ticket.stage] = [])).push(ticket);
+  return `<div class="ticket-board">${STAGES.filter((stage) => byStage[stage.id]?.length)
+    .map((stage) => band(stage, byStage[stage.id]))
+    .join("")}</div>`;
+}
+
+function newTicketForm(c) {
+  const kinds = Object.keys(c.effectiveKinds || {});
+  return `<details class="new-ticket" ${c.tickets.length ? "" : "open"}>
+    <summary>New ticket</summary>
+    <div class="grid">
+      <div class="field" style="grid-template-columns:88px 1fr"><label for="t-title">Title</label><input id="t-title" name="t_title" type="text" placeholder="What this slice delivers" /></div>
+      <div class="field" style="grid-template-columns:88px 1fr"><label for="t-kind">Kind</label>
+        <select id="t-kind" name="t_kind">${kinds.map((k) => `<option ${k === "code" ? "selected" : ""}>${esc(k)}</option>`).join("")}</select>
+      </div>
+      <div class="field" style="grid-template-columns:88px 1fr"><label for="t-blocked">Blocked by</label><input id="t-blocked" name="t_blocked" type="text" placeholder="01, 03" /></div>
+      <div class="field" style="grid-template-columns:88px 1fr"><label for="t-touches">Touches</label><input id="t-touches" name="t_touches" type="text" placeholder="src/api/**, docs/**" /></div>
+      <div class="field" style="grid-template-columns:88px 1fr"><label for="t-attachments">Files</label><input id="t-attachments" name="t_attachments" type="text" placeholder="orchestration/<campaign>/attachments/ref.png or spec.pdf" /></div>
+      <div class="field" style="grid-template-columns:88px 1fr"><label for="t-files">Upload</label><input id="t-files" type="file" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf" multiple data-role="attach-files" data-target="t_attachments" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" /></div>
+    </div>
+    <div class="field" style="grid-template-columns:88px 1fr"><label for="t-what">What to build</label><textarea id="t-what" name="t_what" rows="3" placeholder="The end-to-end behaviour, from the user's side."></textarea></div>
+    <div class="field" style="grid-template-columns:88px 1fr"><label for="t-accept">Acceptance</label><textarea id="t-accept" name="t_accept" rows="3" placeholder="One checkable outcome per line."></textarea></div>
+    <div class="actions" style="margin-top:4px">
+      <button class="btn primary" data-act="add-ticket" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Add ticket</button>
+      <span class="hint">Lands in <span class="mono">orchestration/${esc(c.slug)}/tickets/</span> with the next number. For several tickets at once, ask your agent to run <span class="mono">plan import</span>.</span>
+    </div>
+  </details>`;
+}
+
+function addTicket(root, slug) {
+  const title = value("t_title").trim();
+  if (!title) return toast("Give the ticket a title");
+  const touches = value("t_touches")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const blockedBy = value("t_blocked")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const criteria = value("t_accept")
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const attachments = value("t_attachments")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return command(root, {
+    type: "ticket.add",
+    campaign: slug,
+    title,
+    kind: value("t_kind"),
+    blocked_by: blockedBy,
+    touches,
+    attachments,
+    what: value("t_what") || title,
+    criteria,
+  });
+}
+
+function campaignTickets(c) {
+  const tickets = filteredTickets(c);
+  const body = ticketView === "board" ? ticketBoard(c, tickets) : ticketList(c, tickets);
+  const empty = !c.tickets.length
+    ? `<div class="empty">
+      <h2>No tickets yet.</h2>
+      <p>Add one here, or ask your agent to write the plan for you.</p>
+      <div class="agent-prompt">
+        <span class="hint">Ask your agent, in chat:</span>
+        <blockquote>“Add a ticket to ${esc(c.slug)} for the CLI slice: kind code, touches src/cli/**, blocked by 01, acceptance: add prints added.”</blockquote>
+        <button class="btn ghost" data-act="copy" data-command="Add a ticket to ${esc(c.slug)} for the CLI slice: kind code, touches src/cli/**, blocked by 01, acceptance: add prints added.">Copy prompt</button>
+        <span class="hint">Or add one from the CLI:</span>
+        ${commandRow("Add one ticket", `orchestrate ticket add "CLI slice" --campaign ${c.slug} --kind code --touches "src/cli/**" --blocked-by 01 --what "Add and list commands." --accept "add prints added"`)}
+        <span class="hint">Or import a whole graph:</span>
+        ${commandRow("Import a plan", `orchestrate plan import ${c.slug} --file plan.yml`)}
+      </div>
+    </div>`
+    : "";
+  return `${ticketFilter(c)}
+    ${c.tickets.length ? `<div id="ticket-list">${body}</div>` : ""}
+    ${empty}
+    ${newTicketForm(c)}`;
+}
+
+function paintTickets() {
   const c = current();
-  if (!c) return noCampaigns();
+  const box = document.getElementById("ticket-list");
+  if (!c || !box) return;
+  const tickets = filteredTickets(c);
+  box.innerHTML = ticketView === "board" ? ticketBoard(c, tickets) : ticketList(c, tickets);
+  const counts = document.querySelector(".ticket-counts");
+  if (counts) counts.innerHTML = stageCounts(c);
+}
+
+function campaignConfigure(c) {
   const kinds = Object.entries(c.effectiveKinds || {});
   const checks = (c.checks || []).map((k) => `${k.name} | ${k.cmd}`).join("\n");
-  return `<div class="campaign-head">
-      <div class="eyebrow">${esc(c.stage)}${c.delivery ? ` · delivery ${esc(c.delivery.mode)}` : ""}</div>
-      <h1>${esc(c.slug)}</h1>
-    </div>
-    <div class="campaign-meta"><span class="mono-muted">${esc(c.root)}</span><span class="spacer"></span>
-      ${c.stage === "running" ? `<button class="btn" data-act="pause" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Pause</button>` : ""}
-      ${c.stage === "paused" ? `<button class="btn" data-act="resume" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Resume</button>` : ""}
-    </div>
-    ${quotaStrip(c.quotas || [], "Quotas")}
-    ${c.planErrors?.length ? `<div class="errors"><strong>Cannot dispatch yet</strong><ul>${c.planErrors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>` : ""}
-    <div class="campaign-grid">
-      <div class="doc-col">
-        <h2>Goal</h2>
-        <textarea class="doc" name="goal" rows="2" aria-label="Goal">${esc(c.goal)}</textarea>
-        <h2>Brief</h2>
-        <textarea class="doc" name="brief" rows="6" aria-label="Brief">${esc(c.brief)}</textarea>
-        <h2>Acceptance criteria</h2>
-        <textarea class="doc" name="criteria" rows="6" aria-label="Acceptance criteria">${esc(c.criteria)}</textarea>
-        <h2>Constraints</h2>
-        <textarea class="doc" name="constraints" rows="4" aria-label="Constraints">${esc(c.constraints)}</textarea>
-        <h2>What to read first</h2>
-        <textarea class="doc" name="reading" rows="4" aria-label="What to read first">${esc(c.reading)}</textarea>
-      </div>
-      <div class="ops">
-        <div class="group">
-          <h3>Delivery</h3>
+  const attrs = `data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}"`;
+  return `<p class="note">Plan text is read-only here. Edit the brief and the ticket graph in your agent session; this screen owns the runtime configuration.</p>
+    <div class="config-grid">
+      <section class="settings-block">
+        <header><h2 class="page">Delivery</h2><span class="hint">how the campaign is allowed to finish</span></header>
+        <div class="config-fields">
           <div class="field"><label for="autonomy">Autonomy</label><div class="stack">
             <select id="autonomy" name="autonomy">
               ${["supervised", "trusted", "unattended"].map((v) => `<option ${c.autonomy === v ? "selected" : ""}>${v}</option>`).join("")}
@@ -1185,12 +1353,18 @@ function viewCampaign() {
           </div></div>
           <div class="field"><label for="plan_gate">Plan gate</label><div class="stack">
             <select id="plan_gate" name="plan_gate">${["human", "auto"].map((v) => `<option ${c.planGate === v ? "selected" : ""}>${v}</option>`).join("")}</select>
-            <span class="sub">human: dispatch waits for approval.</span>
+            <span class="sub">human: dispatch waits for approval in your agent.</span>
           </div></div>
           <div class="field"><label for="landing">Landing</label><div class="stack">
             <select id="landing" name="landing">${["branch", "directory"].map((v) => `<option ${c.landing === v ? "selected" : ""}>${v}</option>`).join("")}</select>
           </div></div>
           <div class="field"><label for="base">Base</label><input id="base" name="base" type="text" value="${esc(c.base)}" /></div>
+        </div>
+      </section>
+
+      <section class="settings-block">
+        <header><h2 class="page">Runtime</h2><span class="hint">models, tools and billing</span></header>
+        <div class="config-fields">
           <div class="field"><label>Adapter</label><div class="stack">${adapterSelect("campaign")}<span class="sub">models, tools and billing of this campaign</span></div></div>
           <div class="field"><label>Spend</label><div class="stack">${spendSelect("campaign")}<span class="sub">subscription-only hides metered models</span></div></div>
           <div class="field"><label>Sandbox</label><div class="stack">${sandboxSelect("campaign")}<span class="sub">bwrap isolates writes on Linux</span></div></div>
@@ -1207,30 +1381,28 @@ function viewCampaign() {
             <label class="sub" style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="budget_ack" ${c.budget?.ack_unmetered ? "checked" : ""}/> acknowledge unmetered adapters</label>
           </div></div>
         </div>
+      </section>
 
-        <div class="group">
-          <h3>Generated paths <span class="sub">never counted as drift</span></h3>
-          <input name="allow_paths" type="text" value="${esc((c.allowPaths || []).join(", "))}" placeholder="package-lock.json, snapshots/**" aria-label="Generated paths" />
-          <p class="sub" style="margin:6px 0 0">Lockfiles, snapshots and other files a worker regenerates without declaring them.</p>
-        </div>
+      <section class="settings-block">
+        <header><h2 class="page">Checks</h2><span class="hint">the supervisor runs these in the ticket's worktree</span></header>
+        <textarea class="mono" name="checks" rows="4" placeholder="tests | node --test" aria-label="Checks">${esc(checks)}</textarea>
+        <p class="sub" style="margin:6px 0 0">One per line, <span class="mono">name | command</span>.</p>
+      </section>
 
-        <div class="group">
-          <h3>Checks</h3>
-          <textarea class="mono" name="checks" rows="3" placeholder="tests | node --test" aria-label="Checks">${esc(checks)}</textarea>
-          <p class="sub" style="margin:6px 0 0">One per line, <span class="mono">name | command</span>. The supervisor runs them in the ticket's worktree.</p>
-        </div>
-
-        <div class="group">
-          <h3>Provider quotas <span class="sub">campaign additions and overrides</span></h3>
-          ${quotaEditor("campaign")}
-        </div>
-
-        ${campaignActions(c)}
-      </div>
+      <section class="settings-block">
+        <header><h2 class="page">Generated paths</h2><span class="hint">never counted as drift</span></header>
+        <input name="allow_paths" type="text" value="${esc((c.allowPaths || []).join(", "))}" placeholder="package-lock.json, snapshots/**" aria-label="Generated paths" />
+        <p class="sub" style="margin:6px 0 0">Lockfiles, snapshots and other files a worker regenerates without declaring them.</p>
+      </section>
     </div>
 
+    <section class="settings-block">
+      <header><h2 class="page">Provider quotas</h2><span class="hint">campaign additions and overrides</span></header>
+      ${quotaEditor("campaign")}
+    </section>
+
     <section class="chains">
-      <header><h2 class="page">Model chains</h2><span class="hint">first model starts the ticket; each next one is the fallback</span><button class="btn" data-act="refresh-catalog" data-scope="campaign">Refresh models</button></header>
+      <header><h2 class="page">Model chains</h2><span class="hint">first model starts the ticket; each next one is the fallback</span><button class="btn" data-act="defaults" data-scope="campaign">Use defaults</button><button class="btn" data-act="refresh-catalog" data-scope="campaign">Refresh models</button></header>
       <div class="chain-grid">
         ${kinds
           .map(
@@ -1246,58 +1418,68 @@ function viewCampaign() {
       </div>
     </section>
 
-    <h2 class="page" style="margin-top:34px">Tickets</h2>
-    <div class="ticket-head"><span>#</span><span>Title</span><span>Kind</span><span class="tele">State</span></div>
-    <ol class="strips">
-      ${c.tickets
-        .map(
-          (t) => `<li class="strip" tabindex="0" role="button" data-act="open-ticket" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" data-ticket="${esc(t.id)}">
-            <span class="num">${esc(t.id)}</span>
-            <span class="title">${esc(t.title)}</span>
-            <span class="kind">${esc(t.kind)}</span>
-            <span class="tele">${esc(t.stage)}${t.blockedBy?.length ? ` · blocked by ${esc(t.blockedBy.join(", "))}` : ""}</span>
-          </li>`,
-        )
-        .join("") || `<li class="strip"><span></span><span class="hint">No tickets yet.</span><span></span><span></span></li>`}
-    </ol>
+    <div class="save-bar">
+      <button class="btn primary" data-act="save-campaign" ${attrs}>Save configuration</button>
+      <span class="hint">Changes are validated before they are written. Pause the campaign before changing chains.</span>
+    </div>`;
+}
 
-    <section class="chains" style="margin-top:2rem">
-      <header><h2 class="page">Decisions</h2><span class="hint">written by you or the orchestrator · read by every worker on these paths</span></header>
-      <ol class="decision-list">
-        ${(c.decisions || []).length
-          ? c.decisions
+function campaignHistory(c) {
+  const spend = c.spendByModel || [];
+  return `<section class="history-spend">
+      <header><h2 class="page">Spend and cache</h2><span class="hint">${num(c.spend.tokens)} tokens · ${usd(c.spend.dollars)} · ${c.cacheHit == null ? "cache —" : `${(c.cacheHit * 100).toFixed(1)}% cached read`}</span></header>
+      <table class="ticket-table">
+        <thead><tr><th>Model</th><th class="num">Runs</th><th class="num">Tokens</th><th class="num">Cached read</th><th class="num">Cache hit</th><th class="num">Cost</th></tr></thead>
+        <tbody>
+          ${
+            spend
               .map(
-                (d) => `<li>
+                (row) => `<tr><td class="mono">${esc(row.model)}</td><td class="num">${row.runs}</td><td class="num">${num(row.tokens)}</td><td class="num">${num(row.cachedReadTokens)}</td><td class="num">${row.cacheHit == null ? "—" : `${(row.cacheHit * 100).toFixed(1)}%`}</td><td class="num">${usd(row.dollars)}</td></tr>`,
+              )
+              .join("") || `<tr><td colspan="6" class="hint">No runs yet.</td></tr>`
+          }
+        </tbody>
+      </table>
+    </section>
+    ${ledger(c, 40)}
+    <section class="settings-block">
+      <header><h2 class="page">Decisions</h2><span class="hint">written by you or the orchestrator · read by workers on these paths</span></header>
+      <ol class="decision-list">
+        ${
+          (c.decisions || []).length
+            ? c.decisions
+                .map(
+                  (d) => `<li>
                   <span class="scope">${esc(d.scope === "console" ? "shared" : d.by)}</span>
                   <span class="text">${esc(d.text)}</span>
                   <span class="cite">${esc(d.cite || "")}</span>
-                  ${d.scope === "campaign" ? `<button class="btn ghost" data-act="promote" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" data-id="${esc(d.id)}">share</button>` : ""}
+                  ${d.scope === "campaign" ? `<button class="btn ghost" data-act="copy" data-command="orchestrate promote ${esc(d.id)} ${esc(c.slug)}">share</button>` : ""}
                 </li>`,
-              )
-              .join("")
-          : `<li class="empty"><span class="text">Nothing yet. Answers to worker questions land here, and every worker on these paths reads them.</span></li>`}
+                )
+                .join("")
+            : `<li class="empty"><span class="text">Nothing yet. Answers to worker questions land here, and every worker on these paths reads them.</span></li>`
+        }
       </ol>
     </section>
+    ${
+      c.delivery
+        ? `<section class="settings-block"><header><h2 class="page">Delivery</h2><span class="hint">${esc(c.delivery.mode)} · ${esc(c.delivery.detail || "")}</span></header>${commandRow("Close the campaign", `orchestrate archive ${c.slug}`)}</section>`
+        : ""
+    }`;
+}
 
-    <details class="new-ticket" ${c.tickets.length ? "" : "open"}>
-      <summary>New ticket</summary>
-      <div class="grid">
-        <div class="field" style="grid-template-columns:88px 1fr"><label for="t-title">Title</label><input id="t-title" name="t_title" type="text" placeholder="What this slice delivers" /></div>
-        <div class="field" style="grid-template-columns:88px 1fr"><label for="t-kind">Kind</label>
-          <select id="t-kind" name="t_kind">${Object.keys(c.effectiveKinds || {}).map((k) => `<option ${k === "code" ? "selected" : ""}>${esc(k)}</option>`).join("")}</select>
-        </div>
-        <div class="field" style="grid-template-columns:88px 1fr"><label for="t-blocked">Blocked by</label><input id="t-blocked" name="t_blocked" type="text" placeholder="01, 03" /></div>
-        <div class="field" style="grid-template-columns:88px 1fr"><label for="t-touches">Touches</label><input id="t-touches" name="t_touches" type="text" placeholder="src/api/**, docs/**" /></div>
-        <div class="field" style="grid-template-columns:88px 1fr"><label for="t-attachments">Files</label><input id="t-attachments" name="t_attachments" type="text" placeholder="orchestration/<campaign>/attachments/ref.png or spec.pdf" /></div>
-        <div class="field" style="grid-template-columns:88px 1fr"><label for="t-files">Upload</label><input id="t-files" type="file" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf" multiple data-role="attach-files" data-target="t_attachments" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" /></div>
-      </div>
-      <div class="field" style="grid-template-columns:88px 1fr"><label for="t-what">What to build</label><textarea id="t-what" name="t_what" rows="3" placeholder="The end-to-end behaviour, from the user's side."></textarea></div>
-      <div class="field" style="grid-template-columns:88px 1fr"><label for="t-accept">Acceptance</label><textarea id="t-accept" name="t_accept" rows="3" placeholder="One checkable outcome per line."></textarea></div>
-      <div class="actions" style="margin-top:4px">
-        <button class="btn primary" data-act="add-ticket" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Add ticket</button>
-        <span class="hint">It lands in <span class="mono">orchestration/${esc(c.slug)}/tickets/</span> with the next number.</span>
-      </div>
-    </details>`;
+function viewCampaign() {
+  const c = current();
+  if (!c) return noCampaigns();
+  const body =
+    campaignTab === "tickets"
+      ? campaignTickets(c)
+      : campaignTab === "configure"
+        ? campaignConfigure(c)
+        : campaignTab === "history"
+          ? campaignHistory(c)
+          : campaignOverview(c);
+  return `${campaignHeader(c)}${body}`;
 }
 
 function budgetEstimate(c) {  const budget = c.budget?.tokens;
@@ -1413,7 +1595,7 @@ function viewSettings() {
   </section>
 
   <section class="settings-block">
-    <header><h2 class="page">Ticket kinds</h2><span class="hint">first model starts the ticket; each next one is the fallback</span></header>
+    <header><h2 class="page">Ticket kinds</h2><span class="hint">first model starts the ticket; each next one is the fallback</span><button class="btn" data-act="defaults" data-scope="console">Use defaults</button></header>
     <p class="note" style="margin:-4px 0 12px">Models come from the selected adapter's catalog, enriched with price and modalities; cheapest capable first. ${catalog().length} available right now. ${catalog().length ? "" : "Run <span class=\"mono\">orchestrate catalog --refresh</span> once credentials are set."}</p>
     <div class="kind-grid">
       ${Object.entries(cfg.kinds || {})
@@ -1434,32 +1616,10 @@ function viewSettings() {
 function noCampaigns() {
   return `<div class="empty">
       <h2>No campaigns yet.</h2>
-      <p>A campaign is one goal, a set of tickets, and the models that build them. Start one here, or from a project with <span class="mono">orchestrate start "&lt;goal&gt;"</span>.</p>
-      <button class="btn primary" data-act="new-campaign">New campaign</button>
+      <p>A campaign starts in your agent session: one goal, free-form context, and a ticket graph the agent imports. This panel watches it and configures the fleet.</p>
+      ${commandRow("Start a campaign", 'orchestrate start "<goal>"')}
     </div>`;
 }
-
-function newCampaignForm() {
-  return `<h1 class="page">New campaign</h1>
-    <p class="lede">Name the outcome in one sentence. The plan and its tickets come next, before anything is dispatched.</p>
-    <div class="campaign-grid">
-      <div class="doc-col">
-        <div class="field" style="grid-template-columns:110px 1fr"><label for="nc-goal">Goal</label><textarea id="nc-goal" name="nc_goal" rows="2" placeholder="A zero-dependency CLI that logs habits and prints streaks."></textarea></div>
-        <div class="field" style="grid-template-columns:110px 1fr"><label for="nc-slug">Name</label><input id="nc-slug" name="nc_slug" type="text" placeholder="from the goal" /></div>
-        <div class="field" style="grid-template-columns:110px 1fr"><label for="nc-root">Project</label>
-          <select id="nc-root" name="nc_root">${state.projects.map((p) => `<option value="${esc(p.root)}">${esc(p.name)} — ${esc(p.root)}</option>`).join("")}</select>
-        </div>
-      </div>
-      <div class="ops">
-        <div class="field"><label for="nc-autonomy">Autonomy</label><select id="nc-autonomy" name="nc_autonomy"><option>supervised</option><option selected>trusted</option><option>unattended</option></select></div>
-        <div class="field"><label for="nc-landing">Landing</label><select id="nc-landing" name="nc_landing"><option selected>branch</option><option>directory</option></select></div>
-        <div class="field"><label for="nc-base">Base</label><input id="nc-base" name="nc_base" type="text" value="main" /></div>
-        <div class="actions"><button class="btn primary" data-act="create-campaign">Create campaign</button><button class="btn ghost" data-act="close-compose">Cancel</button></div>
-      </div>
-    </div>`;
-}
-
-/* --- interaction ---------------------------------------------------------- */
 
 function value(name) {
   const el = document.querySelector(`[name="${name}"]`);
@@ -1488,28 +1648,6 @@ async function command(root, body) {
 function saveCampaign(root, slug) {
   const c = campaignOf(root, slug);
   if (!c) return;
-  const body = [
-    "## Goal",
-    "",
-    value("goal"),
-    "",
-    "## Brief",
-    "",
-    value("brief"),
-    "",
-    "## Acceptance criteria",
-    "",
-    value("criteria"),
-    "",
-    "## Constraints",
-    "",
-    value("constraints"),
-    "",
-    "## What to read first",
-    "",
-    value("reading"),
-    "",
-  ].join("\n");
   const checks = value("checks")
     .split("\n")
     .map((line) => line.trim())
@@ -1545,7 +1683,7 @@ function saveCampaign(root, slug) {
     quotas: readQuotaRows("campaign"),
     kinds,
   };
-  return command(root, { type: "campaign.save", campaign: slug, patch, body });
+  return command(root, { type: "campaign.save", campaign: slug, patch });
 }
 
 function saveSettings() {
@@ -1577,64 +1715,6 @@ function saveSettings() {
   });
 }
 
-function addTicket(root, slug) {
-  const title = value("t_title").trim();
-  if (!title) return toast("Give the ticket a title");
-  const touches = value("t_touches")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const blockedBy = value("t_blocked")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const criteria = value("t_accept")
-    .split("\n")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const attachments = value("t_attachments")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return command(root, {
-    type: "ticket.add",
-    campaign: slug,
-    title,
-    kind: value("t_kind"),
-    blocked_by: blockedBy,
-    touches,
-    attachments,
-    what: value("t_what") || title,
-    criteria,
-  });
-}
-
-async function createCampaign() {
-  const goal = value("nc_goal").trim();
-  if (!goal) return toast("Give the campaign a goal");
-  const root = value("nc_root");
-  if (!root) return toast("Pick a project");
-  const ok = await command(root, {
-    type: "campaign.create",
-    goal,
-    slug: value("nc_slug").trim() || undefined,
-    autonomy: value("nc_autonomy"),
-    landing: value("nc_landing"),
-    base: value("nc_base") || "main",
-  });
-  if (ok) {
-    compose = null;
-    dirtyViews.delete("compose");
-  }
-}
-
-function autoSize() {
-  document.querySelectorAll("textarea.doc").forEach((el) => {
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight + 2}px`;
-  });
-}
-
 function markFresh() {
   const seen = new Map();
   for (const c of campaigns()) for (const t of c.tickets) seen.set(`${c.slug}/${t.id}`, t.stage);
@@ -1649,7 +1729,7 @@ function markFresh() {
   if (fresh.size) {
     setTimeout(() => {
       fresh = new Set();
-      if (view === "board") document.querySelectorAll(".strip.fresh").forEach((el) => el.classList.remove("fresh"));
+      if (view === "campaign" && campaignTab === "tickets") document.querySelectorAll(".strip.fresh").forEach((el) => el.classList.remove("fresh"));
     }, 1400);
   }
 }
@@ -1711,30 +1791,10 @@ function drawerHtml(c, t) {
     </tbody></table>
     <h2>Log${latest ? ` · ${esc(latest.id.replace(/^r-\d{8}T/, ""))}` : ""}</h2>
     <pre class="log" id="log">${latest ? "" : "Nothing has run for this ticket."}</pre>
-    ${editBlock(c, t)}
+    ${commandRow("Edit in your agent", `orchestrate ticket edit ${t.id} --campaign ${c.slug} --title "…"`)}
+    ${t.stage === "needs_answer" ? commandRow("Answer in your agent", "orchestrate inbox") : ""}
   </div>
   <footer class="drawer-foot">${drawerActions(c, t)}</footer>`;
-}
-
-function editBlock(c, t) {
-  const attrs = `data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" data-ticket="${esc(t.id)}"`;
-  return `<details class="edit-ticket">
-    <summary>Edit ticket</summary>
-    <div class="field" style="grid-template-columns:5.5rem 1fr"><label>Title</label><input name="e_title" type="text" value="${esc(t.title)}" /></div>
-    <div class="field" style="grid-template-columns:5.5rem 1fr"><label>Kind</label>
-      <select name="e_kind">${Object.keys(c.effectiveKinds || {}).map((k) => `<option ${k === t.kind ? "selected" : ""}>${esc(k)}</option>`).join("")}</select>
-    </div>
-    <div class="field" style="grid-template-columns:5.5rem 1fr"><label>Paths</label><input name="e_touches" type="text" value="${esc((t.touches || []).join(", "))}" /></div>
-    <div class="field" style="grid-template-columns:5.5rem 1fr"><label>Files</label><input name="e_attachments" type="text" value="${esc((t.attachments || []).join(", "))}" /></div>
-    <div class="field" style="grid-template-columns:5.5rem 1fr"><label>Upload</label><input type="file" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf" multiple data-role="attach-files" data-target="e_attachments" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" /></div>
-    <div class="field" style="grid-template-columns:5.5rem 1fr"><label>Blocked by</label><input name="e_blocked" type="text" value="${esc((t.blockedBy || []).join(", "))}" /></div>
-    <div class="field" style="grid-template-columns:5.5rem 1fr"><label>What to build</label><textarea name="e_what" rows="4">${esc(t.body || "")}</textarea></div>
-    <div class="field" style="grid-template-columns:5.5rem 1fr"><label>Acceptance</label><textarea name="e_accept" rows="4">${esc((t.accepted || []).map((a) => a.text).join("\n"))}</textarea></div>
-    <div class="actions">
-      <button class="btn primary" data-act="save-ticket" ${attrs}>Save ticket</button>
-      <button class="btn signal" data-act="remove-ticket" ${attrs}>Remove ticket</button>
-    </div>
-  </details>`;
 }
 
 function drawerActions(c, t) {
@@ -1743,9 +1803,8 @@ function drawerActions(c, t) {
   const buttons = [];
   if (live) buttons.push(`<button class="btn signal" data-act="stop" ${attrs}>Stop run</button>`);
   if (["failed", "needs_changes"].includes(t.stage)) buttons.push(`<button class="btn" data-act="retry" ${attrs}>Retry ticket</button>`);
-  if (t.stage === "needs_answer") buttons.push(`<button class="btn primary" data-act="open-inbox" ${attrs}>Answer in the inbox</button>`);
   if (!buttons.length) {
-    const note = { done: "Landed. Nothing to do here.", dropped: "Dropped: there was no work.", queued: "Queued. The next tick dispatches it.", working: "Running. Watch the log, or stop the run." }[t.stage] || "";
+    const note = { done: "Landed. Nothing to do here.", dropped: "Dropped: there was no work.", queued: "Queued. The next tick dispatches it.", working: "Running. Watch the log, or stop the run.", needs_answer: "Waiting for a decision in your agent session." }[t.stage] || "";
     return `<span class="hint">${esc(note)}</span>`;
   }
   return buttons.join("");
@@ -1797,7 +1856,7 @@ function closeDrawer() {
   clearInterval(logTimer);
   if (location.hash.startsWith("#ticket/")) {
     if (view === "campaign" && selected.campaign) {
-      history.replaceState(null, "", `#campaign/${encodeURIComponent(selected.campaign)}`);
+      history.replaceState(null, "", `#campaign/${encodeURIComponent(selected.campaign)}/${campaignTab}`);
     } else {
       syncFleetUrl();
     }
@@ -1808,24 +1867,52 @@ function routeFromHash() {
   const raw = location.hash.slice(1);
   const [name, query = ""] = raw.split("?");
   const params = new URLSearchParams(query);
-  if (name.startsWith("campaign/")) {
-    const slug = decodeURIComponent(name.slice("campaign/".length));
-    const found = campaigns().find((c) => c.slug === slug);
-    if (found) selected = { root: found.root, campaign: found.slug };
-    view = "campaign";
-    render();
-    return;
-  }
   if (name.startsWith("ticket/")) {
     const id = decodeURIComponent(name.slice("ticket/".length));
     if (current() && id) openTicket(current().root, current().slug, id);
     return;
   }
-  if (VIEWS.includes(name)) {
-    if (compose) {
-      compose = null;
-      dirtyViews.clear();
+  if (name.startsWith("campaign/")) {
+    const [slugPart, tabPart] = decodeURIComponent(name.slice("campaign/".length)).split("/");
+    const found = campaigns().find((c) => c.slug === slugPart);
+    if (found) selected = { root: found.root, campaign: found.slug };
+    view = "campaign";
+    campaignTab = CAMPAIGN_TABS.includes(tabPart) ? tabPart : "overview";
+    closeDrawer();
+    render();
+    return;
+  }
+  if (name === "campaign") {
+    const found =
+      (params.get("campaign") && campaigns().find((c) => c.slug === params.get("campaign"))) ||
+      (selected.campaign && campaigns().find((c) => c.slug === selected.campaign)) ||
+      campaigns()[0];
+    if (found) {
+      selected = { root: found.root, campaign: found.slug };
+      view = "campaign";
+      campaignTab = "overview";
+      history.replaceState(null, "", `#campaign/${encodeURIComponent(found.slug)}`);
+      closeDrawer();
+      render();
+      return;
     }
+  }
+  if (name === "board") {
+    const found = selected.campaign
+      ? campaigns().find((c) => c.slug === selected.campaign && (!selected.root || c.root === selected.root))
+      : campaigns()[0];
+    if (found) {
+      selected = { root: found.root, campaign: found.slug };
+      view = "campaign";
+      campaignTab = "tickets";
+      ticketView = "board";
+      history.replaceState(null, "", `#campaign/${encodeURIComponent(found.slug)}/tickets`);
+      closeDrawer();
+      render();
+      return;
+    }
+  }
+  if (VIEWS.includes(name)) {
     const nextStatus = FLEET_STATUS.includes(params.get("status")) ? params.get("status") : "all";
     const campaignParam = params.get("campaign");
     let nextCampaign = selected.campaign;
@@ -1866,6 +1953,8 @@ function routeFromHash() {
 
 /* --- events --------------------------------------------------------------- */
 
+/* --- events --------------------------------------------------------------- */
+
 function readDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1899,7 +1988,7 @@ async function uploadAttachments(input) {
   }
   target.value = paths.join(", ");
   input.value = "";
-  toast("image attached");
+  toast("file attached");
 }
 
 let folderState = { path: null, parent: null };
@@ -2048,6 +2137,12 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("input", (event) => {
+  const ticketSearch = event.target.closest('[data-role="ticket-search"]');
+  if (ticketSearch) {
+    ticketQuery = ticketSearch.value;
+    paintTickets();
+    return;
+  }
   const input = event.target.closest('[data-role="model-search"]');
   if (!input) return;
   const picker = input.closest(".model-picker");
@@ -2079,6 +2174,17 @@ document.addEventListener("keydown", (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  const files = event.target.closest("input[data-role='attach-files']");
+  if (files) {
+    uploadAttachments(files);
+    return;
+  }
+  const ticketKindSelect = event.target.closest('[data-role="ticket-kind"]');
+  if (ticketKindSelect) {
+    ticketKind = ticketKindSelect.value;
+    paintTickets();
+    return;
+  }
   const fleetCampaignSelect = event.target.closest("[data-role='fleet-campaign']");
   if (fleetCampaignSelect) {
     const val = fleetCampaignSelect.value;
@@ -2117,15 +2223,6 @@ document.addEventListener("change", (event) => {
     render();
     return syncFleetUrl();
   }
-  if (event.target.closest("[data-accept-select]")) {
-    dirtyViews.add(surface());
-    return updateBulkBar();
-  }
-  const files = event.target.closest("input[data-role='attach-files']");
-  if (files) {
-    uploadAttachments(files);
-    return;
-  }
   if (event.target.closest("#app")) dirtyViews.add(surface());
   const spend = event.target.closest("select[name='spend']");
   if (spend) {
@@ -2145,13 +2242,38 @@ document.addEventListener("click", (event) => {
   const target = event.target.closest("[data-act]");
   if (!target) return;
   const { act, root, campaign, item, ticket } = target.dataset;
-  const text = item ? document.querySelector(`[data-answer="${item}"]`)?.value || "" : "";
   switch (act) {
-    case "go":
-      compose = null;
+    case "go": {
       dirtyViews.clear();
-      view = target.dataset.view;
+      const next = target.dataset.view;
+      if (next === "campaign" && selected.campaign) {
+        view = "campaign";
+        campaignTab = target.dataset.tab || "overview";
+        history.replaceState(null, "", `#campaign/${encodeURIComponent(selected.campaign)}/${campaignTab}`);
+        return render();
+      }
+      view = next;
       history.replaceState(null, "", `#${view}`);
+      return render();
+    }
+    case "copy": {
+      const command = target.dataset.command || "";
+      const done = () => toast("Copied");
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(command).then(done).catch(() => copyFallback(command));
+      } else {
+        copyFallback(command);
+      }
+      return;
+    }
+    case "campaign-tab": {
+      campaignTab = CAMPAIGN_TABS.includes(target.dataset.tab) ? target.dataset.tab : "overview";
+      closeDrawer();
+      history.replaceState(null, "", `#campaign/${encodeURIComponent(selected.campaign)}/${campaignTab}`);
+      return render();
+    }
+    case "ticket-view":
+      ticketView = target.dataset.view === "board" ? "board" : "list";
       return render();
     case "fleet-status":
       fleetStatus = target.dataset.status;
@@ -2162,7 +2284,6 @@ document.addEventListener("click", (event) => {
       fleetLimit += 200;
       return paintFleet();
     case "open-acceptance": {
-      compose = null;
       dirtyViews.clear();
       view = "acceptance";
       closeDrawer();
@@ -2172,39 +2293,13 @@ document.addEventListener("click", (event) => {
       return render();
     }
     case "open-campaign": {
-      compose = null;
       dirtyViews.clear();
       const found = campaignOf(root, campaign);
       if (found) selected = { root: found.root, campaign: found.slug };
       view = "campaign";
+      campaignTab = "overview";
       history.replaceState(null, "", `#campaign/${encodeURIComponent(campaign)}`);
       return render();
-    }
-    case "approve-acceptance": {
-      const note = document.querySelector(`[data-accept-note="${item}"]`)?.value || "";
-      return command(root, { type: "review.approve", campaign, item, text: note });
-    }
-    case "reject-acceptance": {
-      const note = document.querySelector(`[data-accept-note="${item}"]`)?.value || "";
-      if (!note.trim()) return toast("Say what needs to change before sending it back");
-      return command(root, { type: "review.reject", campaign, item, text: note });
-    }
-    case "approve-selected": {
-      const picks = [...document.querySelectorAll("[data-accept-select]:checked")];
-      if (!picks.length) return toast("Select a delivery first");
-      const campaigns = new Set(picks.map((pick) => `${pick.dataset.root}:${pick.dataset.campaign}`));
-      if (campaigns.size > 1) return toast("Bulk approval is limited to one campaign");
-      const first = picks[0];
-      const root = first.dataset.root;
-      const campaign = first.dataset.campaign;
-      const over = picks.find((pick) => pick.dataset.under !== "true");
-      if (over) return toast("This delivery is not eligible for bulk approval; approve it individually");
-      return command(root, {
-        type: "review.approve-bulk",
-        campaign,
-        items: picks.map((pick) => pick.dataset.item),
-        text: "Approved in bulk from the acceptance queue.",
-      });
     }
     case "quota-add": {
       const scope = target.dataset.scope;
@@ -2234,18 +2329,27 @@ document.addEventListener("click", (event) => {
       clearDrafts("campaign");
       adapterChoice.campaign = null;
       spendChoice.campaign = null;
-      compose = null;
+      ticketView = "list";
+      ticketKind = "all";
+      ticketQuery = "";
       dirtyViews.clear();
       selected = { root: root || null, campaign: campaign || null };
-      if (!campaign && (view === "campaign" || view === "board")) {
+      if (!campaign) {
         view = "fleet";
+        campaignTab = "overview";
         history.replaceState(null, "", "#fleet");
-      } else if (view === "campaign" && campaign) {
+      } else if (view === "campaign") {
+        history.replaceState(null, "", `#campaign/${encodeURIComponent(campaign)}/${campaignTab}`);
+      } else if (view === "settings") {
+        view = "campaign";
+        campaignTab = "overview";
         history.replaceState(null, "", `#campaign/${encodeURIComponent(campaign)}`);
       } else {
-        syncFleetUrl();
+        history.replaceState(null, "", `#${view}?campaign=${encodeURIComponent(campaign)}`);
       }
       return render();
+    case "add-ticket":
+      return addTicket(root, campaign);
     case "open-ticket":
       event.preventDefault();
       return openTicket(root, campaign, ticket);
@@ -2256,12 +2360,6 @@ document.addEventListener("click", (event) => {
       history.replaceState(null, "", "#inbox");
       closeDrawer();
       return render();
-    case "answer":
-      return command(root, { type: "answer", campaign, item, text });
-    case "approve-item":
-      return command(root, { type: "review.approve", campaign, item, text });
-    case "reject-item":
-      return command(root, { type: "review.reject", campaign, item, text });
     case "retry":
       return command(root, { type: "retry", campaign, ticket });
     case "stop":
@@ -2270,24 +2368,6 @@ document.addEventListener("click", (event) => {
       return command(root, { type: "pause", campaign });
     case "resume":
       return command(root, { type: "resume", campaign });
-    case "save-ticket": {
-      const patch = {
-        title: value("e_title"),
-        kind: value("e_kind"),
-        touches: value("e_touches"),
-        attachments: value("e_attachments"),
-        blocked_by: value("e_blocked"),
-        what: value("e_what"),
-        criteria: value("e_accept"),
-      };
-      closeDrawer();
-      return command(root, { type: "ticket.edit", campaign, ticket, patch });
-    }
-    case "remove-ticket": {
-      if (!confirm(`Remove ticket ${ticket}? The ticket file is deleted; its history stays in the ledger.`)) return;
-      closeDrawer();
-      return command(root, { type: "ticket.remove", campaign, ticket });
-    }
     case "cancel-campaign": {
       if (!confirm("Stop every live run and pause this campaign?")) return;
       return command(root, { type: "cancel", campaign });
@@ -2296,12 +2376,8 @@ document.addEventListener("click", (event) => {
       if (!confirm("Archive this campaign? It leaves the board; the branches stay.")) return;
       return command(root, { type: "archive", campaign });
     }
-    case "promote":
-      return command(root, { type: "promote", campaign, id: target.dataset.id });
     case "deliver":
       return command(root, { type: "deliver", campaign });
-    case "approve-campaign":
-      return command(root, { type: "approve", campaign });
     case "save-campaign":
       return saveCampaign(root, campaign);
     case "save-settings":
@@ -2312,8 +2388,17 @@ document.addEventListener("click", (event) => {
       const scope = target.dataset.scope || (view === "campaign" ? "campaign" : "console");
       return command(root, { type: "catalog.refresh", adapter: "all", all: true });
     }
-    case "add-ticket":
-      return addTicket(root, campaign);
+    case "defaults": {
+      const scope = target.dataset.scope === "campaign" ? "campaign" : "console";
+      const project = root || campaigns()[0]?.root;
+      if (!project) return toast("No project registered yet");
+      clearAfterLoad.add(scope);
+      return command(project, {
+        type: "defaults.apply",
+        campaign: scope === "campaign" ? campaign : undefined,
+        scope,
+      });
+    }
     case "chain-add": {
       const scope = target.dataset.scope;
       const kind = target.dataset.kind;
@@ -2369,25 +2454,12 @@ document.addEventListener("click", (event) => {
     case "close-folder":
       document.getElementById("folder-picker").hidden = true;
       return;
-    case "new-campaign":
-      compose = "new-campaign";
-      dirtyViews.delete("compose");
-      render();
-      return autoSize();
-    case "close-compose":
-      compose = null;
-      dirtyViews.delete("compose");
-      render();
-      return;
-    case "create-campaign":
-      return createCampaign();
   }
 });
 
 tabsEl.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-view]");
   if (!button) return;
-  compose = null;
   dirtyViews.clear();
   view = button.dataset.view;
   closeDrawer();
@@ -2425,10 +2497,6 @@ document.addEventListener("input", (event) => {
     return;
   }
   if (event.target.closest("#app")) dirtyViews.add(surface());
-  if (event.target.matches("textarea.doc")) {
-    event.target.style.height = "auto";
-    event.target.style.height = `${event.target.scrollHeight + 2}px`;
-  }
 });
 
 window.addEventListener("hashchange", routeFromHash);

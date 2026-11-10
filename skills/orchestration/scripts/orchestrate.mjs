@@ -15,6 +15,7 @@ import {
   nowIso,
   registryFile,
   readJson,
+  readText,
   writeJson,
   consoleFile,
   consoleStateDir,
@@ -23,9 +24,22 @@ import {
   panelToken,
   pidAlive,
 } from "./lib/util.mjs";
-import { catalog, ensureConsole, listCampaigns, loadConsole, readCampaign, resolveModel, runnerConfig, saveConsole } from "./lib/config.mjs";
+import {
+  catalog,
+  ensureConsole,
+  listCampaigns,
+  loadConsole,
+  readCampaign,
+  resolveKinds,
+  resolveModel,
+  runnerConfig,
+  saveConsole,
+  ticketKindsUsed,
+} from "./lib/config.mjs";
+import { boundFirstModels, pendingDefaultKinds, resolveDefaultChains } from "./lib/defaults.mjs";
+import { appendContext, importPlan, parsePlanText, readContext } from "./lib/plan-import.mjs";
 import { refreshCatalog, rowsFor, adaptersView } from "./lib/catalogs.mjs";
-import { ADAPTER_IDS, SPEND_MODES } from "./lib/adapter-ids.mjs";
+import { ADAPTER_IDS, DEFAULT_SPEND, SPEND_MODES } from "./lib/adapter-ids.mjs";
 import { bwrapAvailable } from "./lib/sandbox.mjs";
 import { asArray, loadPlan, ticketTitle } from "./lib/plan.mjs";
 import { decisionsFor, promoteDecision, readDecisions, summaryLine } from "./lib/memory.mjs";
@@ -131,6 +145,31 @@ function money(value) {
   return n > 0 && n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
 }
 
+/* A new console starts bound when the adapter's catalog already knows the
+   default families. An existing console is never rewritten by init: a chain a
+   person cleared stays cleared until `orchestrate defaults --apply` says so. */
+function seedConsoleDefaults({ root, config }) {
+  const bound = Object.values(config.kinds || {}).some((kind) => (kind.models || []).length);
+  if (bound) return { applied: [], warnings: [] };
+  const runner = runnerConfig(config, {});
+  let rows = [];
+  try {
+    rows = rowsFor(runner.adapter, root);
+  } catch {
+    return { applied: [], warnings: [] };
+  }
+  if (!rows.length) return { applied: [], warnings: [] };
+  const resolved = resolveDefaultChains({ rows, adapter: runner.adapter, spend: runner.spend });
+  const applied = [];
+  for (const [kind, chain] of Object.entries(resolved.chains)) {
+    if (!config.kinds[kind]) continue;
+    config.kinds[kind].models = chain.models;
+    applied.push(kind);
+  }
+  if (applied.length) saveConsole(config);
+  return { applied, warnings: resolved.warnings };
+}
+
 function printTickets(root, slug) {
   const plan = loadPlan(root, slug);
   const state = loadState(root, slug);
@@ -178,6 +217,11 @@ const commands = {
         saveConsole(config);
         console.log(`adapter   defaulted to ${installed.id} (no pi catalog found)`);
       }
+      const seeded = seedConsoleDefaults({ root, config });
+      if (seeded.applied.length) {
+        console.log(`chains    defaulted ${seeded.applied.join(", ")} to the newest catalogue release`);
+      }
+      for (const warning of seeded.warnings) console.log(`chains    ${warning}`);
     }
     console.log(`catalog   set the adapter with \`orchestrate adapter <id>\`, then refresh it in the panel`);
     console.log("");
@@ -291,7 +335,7 @@ const commands = {
     console.log("");
     console.log("Next: fill the form, add tickets under tickets/, then");
     console.log(`  node ${self} catalog`);
-    console.log(`  node ${self} bind ${created.slug} code <provider/model>:high --fallback <provider/model>:medium`);
+    console.log(`  node ${self} defaults ${created.slug} --apply   # or bind each kind by hand`);
     console.log(`  node ${self} approve ${created.slug}`);
   },
 
@@ -357,6 +401,19 @@ const commands = {
 
   context({ flags, positional }) {
     const root = rootDir(flags);
+    if (positional[0] === "append") {
+      const slug = resolveCampaign(root, positional[1] || flags.campaign);
+      let text = flags.text;
+      if (!text && flags.from) {
+        text = flags.from === "-" ? fs.readFileSync(0, "utf8") : readText(path.resolve(root, flags.from), null);
+        if (text == null) throw new UserError(`No context file at ${flags.from}`);
+      }
+      if (!text) throw new UserError('Usage: orchestrate context append <campaign> --from notes.md | --text "..."');
+      const result = appendContext({ root, slug, text, source: flags.source || "human" });
+      console.log(`context ${slug}: ${result.bytes} bytes appended (${result.total} total)`);
+      console.log(result.file);
+      return;
+    }
     const slug = flags.campaign || process.env.ORCH_CAMPAIGN || resolveCampaign(root, undefined);
     const campaign = readCampaign(root, slug);
     const plan = loadPlan(root, slug);
@@ -442,11 +499,160 @@ const commands = {
     console.log(`  ${promoted.text}`);
   },
 
-  plan({ flags }) {
+  plan({ flags, positional }) {
     const root = rootDir(flags);
-    const slug = resolveCampaign(root, flags.campaign);
+    if (positional[0] === "import") {
+      const slug = resolveCampaign(root, positional[1] || flags.campaign);
+      const campaign = readCampaign(root, slug);
+      const file = flags.file || (flags.stdin ? "-" : null);
+      if (!file) throw new UserError("Usage: orchestrate plan import <campaign> --file plan.yml | --stdin");
+      const text = file === "-" ? fs.readFileSync(0, "utf8") : readText(path.resolve(root, file), null);
+      if (text == null) throw new UserError(`No plan file at ${file}`);
+      const plan = parsePlanText(text);
+      const consoleConfig = loadConsole();
+      const allowedKinds = Object.keys(resolveKinds(consoleConfig, campaign.data));
+      const state = loadState(root, slug);
+      const live = Object.values(state.runs || {}).some((run) => run.status === "live");
+      if ((state.stage === "running" || campaign.data.stage === "running" || live) && !flags.force) {
+        throw new UserError(`Campaign "${slug}" is running; the plan may change only while nothing is running`, [
+          `Pause it first: orchestrate pause ${slug}`,
+          "or pass --force if you mean to change the plan under a live run.",
+        ]);
+      }
+      const canRemove = (id) => !Object.values(state.runs || {}).some((run) => String(run.ticket) === String(id));
+      const result = importPlan({ root, slug, plan, allowedKinds, prune: Boolean(flags.prune), canRemove });
+      if (flags.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+      const pad = (value, n) => String(value).padEnd(n);
+      console.log(`${pad("#", 4)} ${pad("key", 18)} ${pad("kind", 9)} ${pad("blocked", 10)} title`);
+      for (const ticket of result.tickets) {
+        console.log(
+          `${pad(ticket.id, 4)} ${pad(ticket.key, 18)} ${pad(ticket.kind, 9)} ${pad(ticket.blocked_by.join(",") || "—", 10)} ${ticket.title}`,
+        );
+      }
+      console.log("");
+      console.log(
+        `${result.tickets.length} tickets · ${result.created.length} new · ${result.updated.length} updated${result.removed.length ? ` · ${result.removed.length} removed` : ""}`,
+      );
+      console.log(`plan    ${result.file}`);
+      const context = readContext(root, slug);
+      if (context.bytes) console.log(`context ${context.file} (${context.bytes} bytes)`);
+      console.log(`next    orchestrate defaults ${slug} --apply   # bind chains if the plan has none`);
+      console.log(`        orchestrate approve ${slug}`);
+      return;
+    }
+    const slug = resolveCampaign(root, flags.campaign || positional[0]);
+    if (flags.json) {
+      const plan = loadPlan(root, slug);
+      console.log(
+        JSON.stringify(
+          {
+            campaign: slug,
+            tickets: plan.ordered.map((entry) => ({
+              id: entry.data.id,
+              title: ticketTitle(entry),
+              kind: entry.data.kind,
+              blocked_by: entry.data.blocked_by || [],
+              touches: entry.data.touches || [],
+            })),
+            errors: plan.errors,
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
     console.log(slug);
     printTickets(root, slug);
+  },
+
+  defaults({ flags, positional }) {
+    const root = rootDir(flags);
+    const slug = positional[0] && positional[0] !== true ? positional[0] : flags.campaign;
+    const campaign = slug ? readCampaign(root, resolveCampaign(root, slug)) : null;
+    const config = loadConsole();
+    const runner = runnerConfig(config, campaign?.data || {});
+    const adapter = flags.adapter || runner.adapter;
+    /* an explicit adapter brings its own default spend mode; only the runner
+       adapter inherits the console/campaign setting */
+    const spend = flags.adapter ? DEFAULT_SPEND[adapter] || "metered-ok" : runner.spend;
+    const plan = campaign ? loadPlan(root, campaign.slug) : null;
+    const target = campaign ? campaign.data.kinds || {} : config.kinds;
+    const effective = campaign ? resolveKinds(config, campaign.data) : config.kinds;
+    const allKinds = campaign
+      ? [...new Set([...ticketKindsUsed(plan.ordered), ...Object.keys(campaign.data.kinds || {}), "review"])].sort()
+      : Object.keys(config.kinds);
+    /* fill only chains that are effectively empty; --force replaces even the
+       ones inherited from the console */
+    const pending = pendingDefaultKinds(effective, { force: Boolean(flags.force), kinds: allKinds });
+    if (!pending.length) {
+      console.log(
+        campaign
+          ? "every chain this campaign uses is already bound; pass --force to pin the newest releases here"
+          : "every console chain is already bound; pass --force to replace them",
+      );
+      return;
+    }
+    const resolved = resolveDefaultChains({
+      rows: rowsFor(adapter, root),
+      adapter,
+      spend,
+      kinds: pending,
+      avoid: flags.force ? null : boundFirstModels(effective, pending),
+    });
+    if (flags.json) {
+      console.log(JSON.stringify(resolved, null, 2));
+    } else {
+      for (const [kind, chain] of Object.entries(resolved.chains)) {
+        console.log(`${kind.padEnd(9)} ${chain.models.map((entry) => `${entry.model}:${entry.thinking}`).join(" -> ")}`);
+      }
+      for (const note of resolved.notes.filter((n) => !n.fallback)) {
+        console.log(`  ${note.kind}: ${note.label} ${note.version} -> ${note.model}${note.included ? " (included)" : ""}`);
+      }
+      for (const warning of resolved.warnings) console.error(`! ${warning}`);
+    }
+    if (!flags.apply) {
+      if (!flags.json) console.log("\nDry run. Pass --apply to write these chains; --force rebinds non-empty ones.");
+      return;
+    }
+    if (!campaign && flags.adapter && adapter !== runner.adapter) {
+      throw new UserError(`the console runner uses "${runner.adapter}", not "${adapter}"`, [
+        `Preview is fine, but apply needs the console on that adapter: orchestrate adapter ${adapter}`,
+      ]);
+    }
+    if (!Object.keys(resolved.chains).length) {
+      throw new UserError(`no default chain resolved from the ${adapter} catalog`, [
+        `Run \`orchestrate catalog --adapter ${adapter} --refresh\` and try again.`,
+      ]);
+    }
+    const applied = [];
+    for (const [kind, chain] of Object.entries(resolved.chains)) {
+      target[kind] = { ...(target[kind] || {}), models: chain.models };
+      applied.push(kind);
+    }
+    if (campaign) {
+      const state = loadState(root, campaign.slug);
+      const live = Object.values(state.runs).some((run) => run.status === "live");
+      if ((state.stage === "running" || campaign.data.stage === "running" || live) && !flags.force) {
+        throw new UserError(`Campaign "${campaign.slug}" is running; defaults may change only while nothing is running`, [
+          `Pause it first: orchestrate pause ${campaign.slug}`,
+          "or pass --force if you mean to change it under a live run.",
+        ]);
+      }
+      fs.writeFileSync(campaign.file, joinFrontmatter({ ...campaign.data, kinds: target }, campaign.body));
+    } else {
+      saveConsole(config);
+    }
+    console.log(
+      applied.length
+        ? `applied defaults to ${campaign ? campaign.slug : "the console"}: ${applied.join(", ")}`
+        : campaign
+          ? "this campaign already inherits the same chains; pass --force to pin them here"
+          : "every console chain was already bound; pass --force to replace them",
+    );
   },
 
   bind({ flags, positional }) {
@@ -936,8 +1142,10 @@ const commands = {
 
   init                                  scaffold this project, register it, write console defaults
   start "<goal>"                        create a draft campaign
-  plan [campaign]                       list tickets and validation errors
+  plan [campaign] [--json]              list tickets and validation errors
+  plan import <campaign> --file f       atomically write campaign body and ticket graph; --prune, --force
   context [--ticket 03]                 the substrate a worker reads: decisions, siblings, diff, history
+  context append <campaign> --from f   append free-form human context to context.md
   decisions [campaign] [--all]          list decisions, with ids
   promote <decision-id> [campaign]      share one decision with every campaign
   ticket add|edit|remove ...            change the plan: add, edit a ticket, remove one
@@ -947,6 +1155,7 @@ const commands = {
   adapters                               adapters, versions and catalog status
   doctor [--refresh]                      check harness versions and catalog freshness
   adapter <id> [--spend mode]            set the console adapter and spend mode
+  defaults [campaign] [--apply]          resolve the newest default family per kind; --force rebinds
   bind <campaign> <kind> <model>[:t]    set a kind's chain; --fallback for the next entry
   approve <campaign>                    approve plan and bindings, then dispatch
   up                                    start the panel if needed, open it, print the URL

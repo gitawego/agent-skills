@@ -4,14 +4,14 @@
     {
       "id": 1,
       "prompt": "This repo needs a CSV export on the reports page. Orchestrate it: break it down, then run the campaign.",
-      "expected_output": "A campaign under orchestration/<slug>/ with a filled campaign form and 2+ tickets that declare blockers and touched paths, a plan table, and a refused dispatch because no ticket kind is bound yet, naming `orchestrate bind`.",
+      "expected_output": "A campaign under orchestration/<slug>/ with a filled campaign form and 2+ tickets that declare blockers and touched paths, a plan table, and the default chain table for every kind the plan uses, confirmed against the live catalog. Approval refuses any kind left unbound and names `orchestrate bind`.",
       "files": [],
       "expectations": [
         "Creates orchestration/<slug>/campaign.md with a one-sentence goal, brief, acceptance criteria, constraints and a reading list",
-        "Creates one file per ticket under orchestration/<slug>/tickets/, each with id, kind, touches and at least one acceptance criterion",
-        "Runs `node scripts/orchestrate.mjs plan` and reports the ticket table, not a prose summary",
-        "Refuses to approve while a ticket kind has no model chain, and names the exact bind command",
-        "Never names a model until `catalog` has been read in this session"
+        "Persists the human's free-form context with `orchestrate context append` before planning",
+        "Creates the ticket graph with one `orchestrate plan import` (or one ticket file per ticket) and reports the plan table",
+        "Confirms the default chains (or binds each kind), and refuses approval while a kind has no model chain",
+        "Does not send the human to the panel for the whole plan; the manual form is only for a single one-off slice"
       ]
     },
     {
@@ -72,6 +72,19 @@
         "Explains that supervised leaves the delivery as a review item in the Inbox",
         "Shows the review item after delivery, with the added and removed line counts",
         "Claims no merge into main until `orchestrate review <item> approve` or the panel equivalent"
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "Context for the work: a zero-dependency notes CLI, plain files only, no database, tests first, and the README must match the commands. Set up the orchestration and show me the plan.",
+      "expected_output": "The context saved under orchestration/<slug>/context.md as timestamped raw input, then one validated plan import that writes the brief and a blocked ticket graph, followed by the plan table and the chain table. No web form is requested.",
+      "files": [],
+      "expectations": [
+        "Runs `orchestrate start` and `orchestrate context append` with the free-form context",
+        "Writes one plan file and runs `orchestrate plan import`, not a dozen ad-hoc ticket edits",
+        "Shows the plan table (ids, titles, kinds, blockers) and the model chain table",
+        "Leaves approval as a chat decision and names `orchestrate approve`",
+        "Does not send the human to the panel for the whole plan; the manual form is only for a single one-off slice"
       ]
     }
   ]

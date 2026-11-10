@@ -18,9 +18,118 @@ import { campaignDecisionsFile } from "./util.mjs";
 import { resolveQuotas } from "./quotas.mjs";
 import { costOf, summarizeCost, telemetryOf } from "./telemetry.mjs";
 import { usageFromLog } from "./runs.mjs";
+import { readContext } from "./plan-import.mjs";
 
 export function projectName(root) {
   return path.basename(root);
+}
+
+/* What the panel should point at next. The panel never decides this with a
+   model; it reads the same state the supervisor writes. */
+export function deriveNextAction({ slug, stage, tickets = [], inbox = [], planErrors = [], reason = null, unboundKinds = [] }) {
+  const open = inbox.filter((item) => item.status === "open");
+  const review = open.find((item) => item.kind === "review");
+  const question = open.find((item) => item.kind === "needs_answer");
+  const failure = open.find((item) => item.kind === "failure");
+  if (stage === "archived") return { actor: "none", text: "The record is closed.", command: null };
+  if (stage === "delivered") {
+    return { actor: "you", text: "Close the campaign with a report.", command: `orchestrate archive ${slug}` };
+  }
+  if (review) {
+    return {
+      actor: "you",
+      text: "A delivery is waiting for review.",
+      command: `orchestrate review ${review.id} approve "…"`,
+    };
+  }
+  if (question) {
+    return {
+      actor: "worker",
+      text: `Ticket ${question.ticket || "?"} is waiting for a decision.`,
+      command: `orchestrate answer ${question.id} "…"`,
+    };
+  }
+  if (failure) {
+    return {
+      actor: "you",
+      text: failure.title || "A run failed and needs a person.",
+      command: "orchestrate inbox",
+    };
+  }
+  if (stage === "paused") {
+    return {
+      actor: "you",
+      text: reason ? `Paused: ${reason}.` : "Paused. Resume or re-plan.",
+      command: `orchestrate resume ${slug}`,
+    };
+  }
+  if (stage === "running") {
+    return { actor: "supervisor", text: "Supervisor is dispatching the frontier.", command: null };
+  }
+  if (stage === "awaiting_approval") {
+    return { actor: "you", text: "Approve the plan and bindings.", command: `orchestrate approve ${slug}` };
+  }
+  if (!tickets.length) {
+    return {
+      actor: "you",
+      text: "Write the plan in your agent session.",
+      command: `orchestrate plan import ${slug} --file plan.yml`,
+    };
+  }
+  if (unboundKinds.length) {
+    return {
+      actor: "you",
+      text: `Bind the model chain${unboundKinds.length === 1 ? "" : "s"} for ${unboundKinds.join(", ")}.`,
+      command: `orchestrate defaults ${slug} --apply`,
+    };
+  }
+  if (planErrors.some((error) => /has no model chain/.test(error))) {
+    return {
+      actor: "you",
+      text: "Bind the model chains.",
+      command: `orchestrate defaults ${slug} --apply`,
+    };
+  }
+  if (planErrors.length) {
+    return {
+      actor: "you",
+      text: "Fix the plan errors in your agent session.",
+      command: `orchestrate plan ${slug}`,
+    };
+  }
+  return { actor: "you", text: "Approve the plan and bindings.", command: `orchestrate approve ${slug}` };
+}
+
+function spendByModel(runs) {
+  const map = new Map();
+  for (const run of runs) {
+    if (!run.model) continue;
+    const key = `${run.adapter || "?"} · ${run.model}`;
+    const entry = map.get(key) || {
+      model: key,
+      runs: 0,
+      tokens: 0,
+      dollars: 0,
+      cachedReadTokens: 0,
+      promptTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+    };
+    entry.runs += 1;
+    entry.tokens += Number(run.totalTokens || run.tokens || 0);
+    entry.dollars += Number(run.dollars || 0);
+    entry.cachedReadTokens += Number(run.cachedReadTokens || 0);
+    entry.promptTokens += Number(run.promptTokens || 0);
+    entry.inputTokens += Number(run.inputTokens || 0);
+    entry.outputTokens += Number(run.outputTokens || 0);
+    map.set(key, entry);
+  }
+  return [...map.values()]
+    .map((entry) => ({
+      ...entry,
+      cacheHit: entry.promptTokens ? entry.cachedReadTokens / entry.promptTokens : null,
+    }))
+    .sort((a, b) => b.tokens - a.tokens || a.model.localeCompare(b.model));
 }
 
 export function campaignView(root, slug) {
@@ -81,6 +190,8 @@ export function campaignView(root, slug) {
     runsByTicket.get(run.ticket).push(run);
   }
 
+  const inboxItems = listItems(root, slug);
+  const context = readContext(root, slug);
   const tickets = plan.ordered.map((ticket) => {
     const entry = state.tickets[ticket.data.id] || {};
     const run = entry.run ? state.runs[entry.run] : null;
@@ -180,9 +291,27 @@ export function campaignView(root, slug) {
     planErrors: state.planErrors || [],
     spend: state.spend,
     delivery: state.delivery || null,
+    approvedAt: state.approvedAt || null,
+    context: {
+      file: context.file,
+      bytes: context.bytes,
+      updatedAt: context.updatedAt,
+      truncated: context.text.length > 24_000,
+      text: context.text.length > 24_000 ? `${context.text.slice(0, 24_000)}\n\n… truncated …` : context.text,
+    },
+    counts: tickets.reduce((acc, ticket) => {
+      acc[ticket.stage] = (acc[ticket.stage] || 0) + 1;
+      return acc;
+    }, {}),
+    spendByModel: spendByModel(runs),
+    cacheHit: (() => {
+      const cached = runs.reduce((n, run) => n + Number(run.cachedReadTokens || 0), 0);
+      const prompt = runs.reduce((n, run) => n + Number(run.promptTokens || 0), 0);
+      return prompt ? cached / prompt : null;
+    })(),
     tickets,
     runs,
-    inbox: listItems(root, slug),
+    inbox: inboxItems,
     events: readEvents(root)
       .filter((event) => event.campaign === slug)
       .slice(-40)
@@ -193,6 +322,17 @@ export function campaignView(root, slug) {
         data: event.data || {},
       })),
     decisions: readDecisions(root, slug).slice(-50),
+    nextAction: deriveNextAction({
+      slug,
+      stage: state.stage,
+      tickets,
+      inbox: inboxItems,
+      planErrors: state.planErrors || [],
+      reason: state.reason,
+      unboundKinds: [...new Set(tickets.map((ticket) => ticket.kind))].filter(
+        (kind) => !(effectiveKinds[kind]?.models || []).length,
+      ),
+    }),
   };
 }
 

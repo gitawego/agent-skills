@@ -5,7 +5,7 @@ import { UserError, exists, pad2, readText } from "./util.mjs";
 import { splitFrontmatter } from "./yaml.mjs";
 import { sections } from "./config.mjs";
 
-const TICKET_FIELDS = new Set(["id", "kind", "blocked_by", "touches", "attachments"]);
+const TICKET_FIELDS = new Set(["id", "key", "kind", "blocked_by", "touches", "attachments"]);
 
 export function ticketsDir(root, slug) {
   return path.join(root, "orchestration", slug, "tickets");

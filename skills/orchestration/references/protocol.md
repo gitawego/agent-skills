@@ -25,6 +25,54 @@ A ticket that fails and then receives a human answer returns to `queued`, not to
 
 `draft` → `awaiting_approval` → `running` ⇄ `paused` → `delivered` → `archived`. `cancel` stops every live run and lands in `paused`; `archive` is only reachable from `delivered` or `paused`, and only when nothing is alive. `paused` stops dispatch; runs already alive finish, and their gates are evaluated, but nothing new starts. A budget exhaustion, a human pause, and a config error all use `paused`, with the reason on the campaign. A console-wide dispatch pause stops new claims in every campaign without changing any campaign's stage.
 
+## Context and the plan
+
+The agent owns the conversation; the plan files are its output. The supervisor never invents or rewrites a ticket.
+
+`orchestration/<campaign>/context.md` is raw, append-only human input. `context append <campaign> --from notes.md` writes a timestamped block:
+
+```markdown
+## 2026-11-10T21:04:00Z · human
+
+Use plain files. No database. Here is the interview note…
+```
+
+`campaign.md` holds the synthesized brief, criteria, constraints and reading list. `tickets/` holds the graph. The agent writes both with one command:
+
+```bash
+orchestrate plan import <campaign> --file plan.yml
+```
+
+```yaml
+version: 1
+goal: Make a perfect quick shell theme
+brief: |
+  Two paragraphs synthesized from the context.
+criteria:
+  - The shell starts in under 200 ms
+constraints: No new runtime dependency.
+reading:
+  - README.md
+tickets:
+  - key: store
+    title: Storage slice
+    kind: code
+    touches: [src/store/**]
+    what: Append and read entries.
+    accept: [A note survives a restart]
+  - key: cli
+    title: CLI slice
+    kind: code
+    blocked_by: [store]
+    touches: [src/cli/**]
+    what: Add and list commands.
+    accept: [add prints added]
+```
+
+`import` validates the whole plan first and writes nothing on error. It assigns ids in file order, resolves `blocked_by` by ticket `key` (or by a numeric id already in the plan), and records the `key` on each ticket. Always set `key`: it is the stable identity across re-imports, so a retitled ticket keeps its id and history. Re-import is idempotent by `key`: ids and filenames stay stable, only changed files are rewritten. `--prune` removes keyed tickets missing from the new plan, but refuses when a removed ticket has runs, because deleting history is not a plan edit.
+
+The plan is frozen at approval. Editing the brief or tickets while a campaign is running changes the shared worker prompt prefix and invalidates prompt-cache hits, so `plan import` and `bind` are refused under a live campaign unless a person pauses it first. Raw context is not injected into every worker prompt; the agent distills the relevant parts into the brief and each ticket's notes. That keeps the shared prefix small and stable.
+
 ## A run
 
 A **run** is one worker process executing one ticket. Nothing else is a run: not a gate, not a merge, not a tick.
@@ -115,7 +163,7 @@ Every queued row carries a machine-readable reason (`slots`, `kind-slots`, `lane
 
 ## The orchestrator's judgement
 
-When a report is `needs_answer` the supervisor does not file it immediately. It first asks the `plan` kind once, with fresh context and only the campaign form, the ticket, the standing decisions, and the question. That run is a **judge**: its report is `ready` with `next: cite: <source> § <section>` when a source answers, and `blocked` when none does:
+When a report is `needs_answer` the supervisor does not file it immediately. It first asks the `plan` kind once, with fresh context and only the campaign document, the ticket, the standing decisions, and the question. That run is a **judge**: its report is `ready` with `next: cite: <source> § <section>` when a source answers, and `blocked` when none does:
 
 - **Answered by a source.** The orchestrator answers, quoting the line it relied on, and the run resumes. The ledger records the question, the answer, and the citation. The item never reaches the inbox.
 - **Not answered.** One inbox item, with the question, the options, the default, and a one-paragraph brief of what the worker already tried.

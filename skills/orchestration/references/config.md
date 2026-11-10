@@ -49,7 +49,7 @@ Two files hold configuration. The **console** holds defaults for every project o
 }
 ```
 
-A kind that reports (every kind does) needs a tool that can write `report.json`: `bash` or `write`. A tool set without either is refused at validation, because a reviewer that cannot report can only fail.
+A kind that reports (every kind does) needs a tool that can write `report.json`: `bash` or `write`. A tool set without either is refused at validation, because a reviewer that cannot report can only fail. The `models` arrays above show the empty shape; `init` resolves them from the default ladders below as soon as the adapter catalog is readable.
 
 `runner.command` is the pi executable override; it stays `pi` unless a test or another harness needs to stand in. The adapter seam is `runner.adapter`: `pi`, `agy-acp` (Antigravity), or `opencode-acp`. A campaign may override the console's adapter in its frontmatter:
 
@@ -88,7 +88,7 @@ A quota window is a scheduling constraint, not a bill. Each entry names a provid
 - `source` is `manual`, `api` or `stale`. `stale` is always drawn as stale. Any entry older than `staleAfterMin` (default 1440) is also stale.
 - Stale entries are never enforced: they are shown with a dashed border and a warning, but dispatch proceeds. Only fresh, exhausted windows block.
 
-A campaign's `quotas` list is merged over the console's: the same `provider` + `adapter` + `window` replaces, a new key adds. `orchestrate quota set` writes the console entry; the panel's Settings and Campaign screens edit the same shape.
+A campaign's `quotas` list is merged over the console's: the same `provider` + `adapter` + `window` replaces, a new key adds. `orchestrate quota set` writes the console entry; the panel's Settings and Campaign → Configure screens edit the same shape.
 
 The console-wide dispatch switch lives outside any project at `~/.local/state/orchestration/dispatch.json`:
 
@@ -108,7 +108,17 @@ The `kinds` block is the role table. Worker roles and the roles that judge, revi
 
 A chain entry may override the campaign's adapter: `{ adapter: agy-acp, model: antigravity/gemini-4-argon, thinking: medium }`. That is how a campaign runs code on pi and design or review on Antigravity in the same plan. The campaign-level `runner.adapter` is the default for entries that omit it.
 
-The chains ship **empty**. This skill names no vendor and no model, because a default that is not installed on the machine is a setup failure wearing a config's clothes. Binding is a step, not a default.
+The chains ship **bound by family, not by version**. A new console resolves each kind against the live catalog and writes the newest stable release of the families below; an existing console is never rewritten by `init`, because a chain a person cleared should stay cleared. `orchestrate defaults --apply` fills only the empty chains (the panel's **Use defaults** does the same); `--force` replaces the bound ones after a model release.
+
+| Kind | First | Fallback |
+| --- | --- | --- |
+| `plan`, `code`, `design`, `visual` | DeepSeek Flash | Muse Spark Contributor |
+| `research`, `chores` | MiMo Flash | DeepSeek Flash |
+| `review` | Muse Spark Contributor | DeepSeek Flash |
+
+The reviewer starts on the one family the work kinds do not, because a cold gate on the same model is not a gate.
+
+A default is a **family ladder**, never a pinned id. Resolution takes the newest stable release (`4.1` beats `4`, `2.10` beats `2.9`), skips `-free`, `-exp`/`-preview`, `~...-latest` aliases and date-stamped snapshots such as `-1017`, and then applies the constraints the rest of the system already enforces: subscription-only skips rows the plan does not include, `code`/`design`/`visual`/`review` refuse free models, and `visual` needs image input. For `opencode-acp` the candidates are restricted to `opencode-go`; the OpenRouter rows OpenCode also lists are never a default, even when a reseller release is newer or cheaper. Work kinds may share a first model; only the reviewer must stay distinct. If a family is absent from the adapter's catalog, that kind stays unbound and approval refuses it with the usual bind hint — a missing family is visible, never silently replaced from another vendor. The resolved ids are pinned into the console or campaign at that moment, so a later model release does not move a running plan; re-resolve deliberately with `defaults --apply --force`.
 
 A **chain** is ordered. The first model starts the ticket; each next one is the fallback. A fallback is used only when the previous model is unusable: no credentials, a model missing from the catalog, a provider failure that survives the retries, or a per-model budget guard. The attempt that used it is recorded on the run.
 
@@ -123,13 +133,13 @@ Rules of thumb, not policy:
 - `visual` needs image support; `review` gains nothing from a model that cannot read images in a diff;
 - thinking levels are clamped by the model, so a model without thinking support simply ignores the level.
 
-Binding happens in one of three places, all writing the same value: the panel's chain picker on the Settings or Campaign screen (fed by the live catalog, so a model that is not installed cannot be chosen), `bind` on the CLI, or the file itself while the supervisor is stopped.
+Binding happens in one of three places, all writing the same value: the panel's chain picker on Settings or Campaign → Configure (fed by the live catalog, so a model that is not installed cannot be chosen), `bind` on the CLI, or the file itself while the supervisor is stopped.
 
 A binding may change at any time while nothing is running: stop the supervisor, or pause the campaign and let its live runs finish. A save while the campaign is `running` or one of its runs is live is refused, naming the run, because a chain that changes under a working ticket turns "which model produced this?" into a guess. Each run records the model it used regardless, so the ledger stays answerable after the change.
 
 ## The campaign
 
-`orchestration/<campaign>/campaign.md` is committed: the plan deserves diffs and history. Frontmatter holds config; the body holds the work.
+`orchestration/<campaign>/campaign.md` is committed: the plan deserves diffs and history. Frontmatter holds config; the body holds the work. `context.md` beside it is the raw, append-only human input (`orchestrate context append`); the brief is the agent's synthesis of that input, and `orchestrate plan import` writes both the body and the ticket graph in one validated pass.
 
 ```markdown
 ---
@@ -179,7 +189,7 @@ What must not change, what must stay compatible, house style, deadlines, frozen 
 Empty is allowed: the plan then decides what is worth reading.
 ```
 
-The campaign form mirrors the intake a human already fills for a new orchestration: goal first and required, then brief, acceptance criteria, and constraints, then what to read first, then budget and the per-kind model chains. Nothing else is asked at start.
+The campaign document is the intake: goal first and required, then brief, acceptance criteria, constraints and reading, then budget and the per-kind model chains in Configure. The agent writes the document from free-form context; the panel renders it read-only and configures the runtime.
 
 ### Fields
 

@@ -216,6 +216,58 @@ function parseSeq(rows, i, indent) {
   return [arr, i];
 }
 
+
+/* Literal and folded block scalars are the only YAML feature the line parser
+   cannot see, because it drops blank lines before parsing. Expand them into a
+   quoted scalar first so `brief: |` works in plan files and frontmatter. */
+function expandBlockScalars(text) {
+  const raw = String(text).replace(/\r\n/g, "\n").split("\n");
+  const out = [];
+  const header = /^(\s*(?:-\s+)?[A-Za-z0-9_.-]+):\s*([|>])([-+]?)\s*(?:#.*)?$/;
+  for (let i = 0; i < raw.length; i++) {
+    const line = raw[i];
+    const match = line.match(header);
+    if (!match) {
+      out.push(line);
+      continue;
+    }
+    const keyIndent = line.length - line.trimStart().length;
+    const block = [];
+    let j = i + 1;
+    while (j < raw.length) {
+      const next = raw[j];
+      if (!next.trim()) {
+        block.push("");
+        j++;
+        continue;
+      }
+      const indent = next.length - next.trimStart().length;
+      if (indent <= keyIndent) break;
+      block.push(next);
+      j++;
+    }
+    const first = block.find((entry) => entry.trim());
+    const contentIndent = first ? first.length - first.trimStart().length : keyIndent + 2;
+    const content = block.map((entry) => (entry.trim() ? entry.slice(contentIndent) : ""));
+    while (content.length && content[content.length - 1] === "") content.pop();
+    let value;
+    if (match[2] === "|") {
+      value = content.join("\n");
+    } else {
+      value = content.reduce((acc, entry) => {
+        if (entry === "") return `${acc}\n`;
+        if (!acc || acc.endsWith("\n")) return `${acc}${entry.trim()}`;
+        return `${acc} ${entry.trim()}`;
+      }, "");
+    }
+    if (match[3] !== "-" && value) value += "\n";
+    if (match[3] === "+" && value) value += "\n";
+    out.push(`${line.slice(0, line.indexOf(":"))}: ${JSON.stringify(value)}`);
+    i = j - 1;
+  }
+  return out.join("\n");
+}
+
 function parseNode(rows, i, indent) {
   if (!rows[i]) return [null, i];
   if (rows[i].text.startsWith("-")) return parseSeq(rows, i, indent);
@@ -223,7 +275,7 @@ function parseNode(rows, i, indent) {
 }
 
 export function parseYaml(text) {
-  const rows = lines(text);
+  const rows = lines(expandBlockScalars(text));
   if (!rows.length) return {};
   const [value, index] = parseNode(rows, 0, rows[0].indent);
   if (index < rows.length) fail("Could not parse the rest of the document", rows[index]);

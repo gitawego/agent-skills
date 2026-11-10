@@ -174,30 +174,16 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     assert.match(fleetPage.quotas, /none configured/);
     assert.equal(fleetPage.search, true, "the fleet has a search field");
 
-    const compose = await send("Runtime.evaluate", {
-      expression: `(async () => {
-        document.querySelector('[data-act="new-campaign"]').click();
-        await new Promise((resolve) => setTimeout(resolve, 60));
-        const goal = document.querySelector("#nc-goal");
-        goal.value = "Survives a background refresh";
-        goal.dispatchEvent(new Event("input", { bubbles: true }));
-        goal.blur();
-        await load({ quiet: true });
-        const result = {
-          form: Boolean(document.querySelector("#nc-goal")),
-          value: document.querySelector("#nc-goal")?.value || "",
-          crumb: document.querySelector("#crumbs")?.textContent || "",
-        };
-        document.querySelector('[data-act="close-compose"]')?.click();
-        return JSON.stringify(result);
-      })()`,
-      awaitPromise: true,
+    const authority = await send("Runtime.evaluate", {
+      expression: `JSON.stringify({
+        newCampaign: Boolean(document.querySelector('[data-act="new-campaign"]')),
+        decisionInputs: document.querySelectorAll('[data-answer], textarea[data-accept-note]').length,
+      })`,
       returnByValue: true,
     });
-    const composePage = JSON.parse(compose.result.result.value);
-    assert.equal(composePage.form, true, "the new-campaign form survives a background refresh");
-    assert.equal(composePage.value, "Survives a background refresh", "typed values are not dropped");
-    assert.match(composePage.crumb, /New campaign/);
+    const authoring = JSON.parse(authority.result.result.value);
+    assert.equal(authoring.newCampaign, false, "campaigns start in the agent");
+    assert.equal(authoring.decisionInputs, 0, "the panel does not host decisions");
 
     const filtered = await send("Runtime.evaluate", {
       expression: `(() => {
@@ -243,14 +229,16 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     const acceptView = await send("Runtime.evaluate", {
       expression: `JSON.stringify({
         cards: document.querySelectorAll(".acceptance-card").length,
-        bulk: document.querySelector('[data-act="approve-selected"]')?.disabled,
+        commands: document.querySelectorAll(".acceptance-card .command-row").length,
+        approve: Boolean(document.querySelector('[data-act="approve-acceptance"]')),
         title: document.body.innerText.includes("Acceptance"),
       })`,
       returnByValue: true,
     });
     const acceptPage = JSON.parse(acceptView.result.result.value);
     assert.equal(acceptPage.cards, 1, "the acceptance queue lists the delivery");
-    assert.equal(acceptPage.bulk, true, "bulk approval is disabled until a delivery is selected");
+    assert.ok(acceptPage.commands >= 2, "approve and send-back hand off to the agent");
+    assert.equal(acceptPage.approve, false, "acceptance does not decide in the browser");
     assert.equal(acceptPage.title, true);
 
     await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#settings` });
@@ -268,23 +256,124 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     assert.equal(quotaEditor.editor, true, "settings renders the quota editor");
     assert.equal(quotaEditor.after, quotaEditor.before + 1, "a quota window can be added");
 
-    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign` });
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo` });
     await sleep(900);
-    const campaignEdit = await send("Runtime.evaluate", {
+    const overview = await send("Runtime.evaluate", {
+      expression: `JSON.stringify({
+        h1: document.querySelector("h1")?.textContent || "",
+        tabs: [...document.querySelectorAll(".campaign-subnav button")].map((b) => b.textContent.trim()),
+        briefInput: document.querySelectorAll('textarea[name="brief"]').length,
+        chains: document.body.innerText.includes("Model chains"),
+        next: document.querySelector(".next-action")?.textContent || "",
+      })`,
+      returnByValue: true,
+    });
+    const overviewPage = JSON.parse(overview.result.result.value);
+    assert.equal(overviewPage.h1, "Panel.", "the goal is the page title");
+    assert.deepEqual(overviewPage.tabs.slice(0, 3), ["Overview", "Tickets 1", "Configure"], "the campaign has sections");
+    assert.equal(overviewPage.briefInput, 0, "the brief is read-only");
+    assert.equal(overviewPage.chains, false, "chains are not on the overview");
+    assert.match(overviewPage.next, /Approve the plan|delivery is waiting/, "the next action names the agent step");
+
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo/tickets` });
+    await sleep(600);
+    const tickets = await send("Runtime.evaluate", {
+      expression: `JSON.stringify({
+        rows: document.querySelectorAll(".ticket-table tbody tr[data-act]").length,
+        newTicket: Boolean(document.querySelector('[data-act="add-ticket"]')),
+        title: document.body.innerText.includes("Tickets"),
+      })`,
+      returnByValue: true,
+    });
+    const ticketsPage = JSON.parse(tickets.result.result.value);
+    assert.equal(ticketsPage.rows, 1, "the ticket manifest lists the ticket");
+    assert.equal(ticketsPage.newTicket, true, "the manual ticket form is available in the Tickets section");
+    assert.equal(ticketsPage.title, true);
+
+    const drawer = await send("Runtime.evaluate", {
+      expression: `(() => {
+        document.querySelector(".ticket-table tbody tr[data-act]")?.click();
+        return JSON.stringify({
+          open: !document.getElementById("drawer").hidden,
+          edit: Boolean(document.querySelector('[name="e_what"]')),
+          commands: document.querySelectorAll("#drawer .command-row").length,
+          title: document.querySelector("#drawer h1")?.textContent || "",
+        });
+      })()`,
+      returnByValue: true,
+    });
+    const drawerPage = JSON.parse(drawer.result.result.value);
+    assert.equal(drawerPage.open, true, "a ticket opens in the drawer");
+    assert.equal(drawerPage.edit, false, "the ticket is not editable in the panel");
+    assert.ok(drawerPage.commands >= 1, "the drawer hands edits back to the agent");
+    assert.match(drawerPage.title, /01/);
+
+    const board = await send("Runtime.evaluate", {
+      expression: `(() => {
+        document.querySelector('[data-act="close-drawer"]')?.click();
+        document.querySelector('[data-act="ticket-view"][data-view="board"]')?.click();
+        return JSON.stringify({ board: Boolean(document.querySelector(".ticket-board")), strips: document.querySelectorAll(".ticket-board .strip").length });
+      })()`,
+      returnByValue: true,
+    });
+    const boardPage = JSON.parse(board.result.result.value);
+    assert.equal(boardPage.board, true, "the ticket board renders");
+    assert.equal(boardPage.strips, 1, "the board has the ticket strip");
+
+    const ticketSearch = await send("Runtime.evaluate", {
+      expression: `(() => {
+        document.querySelector('[data-act="ticket-view"][data-view="list"]')?.click();
+        const input = document.querySelector('[data-role="ticket-search"]');
+        input.value = "no-such-ticket";
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        return document.getElementById("ticket-list")?.textContent || "";
+      })()`,
+      returnByValue: true,
+    });
+    assert.match(ticketSearch.result.result.value, /No tickets match/, "ticket search filters without a reload");
+
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#board` });
+    await sleep(700);
+    const legacyBoard = await send("Runtime.evaluate", {
+      expression: `JSON.stringify({ hash: location.hash, board: Boolean(document.querySelector(".ticket-board")) })`,
+      returnByValue: true,
+    });
+    const legacyPage = JSON.parse(legacyBoard.result.result.value);
+    assert.equal(legacyPage.board, true, "an old #board link lands on the ticket board");
+    assert.match(legacyPage.hash, /#campaign\/demo\/tickets/);
+
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign` });
+    await sleep(700);
+    const legacyCampaign = await send("Runtime.evaluate", {
+      expression: `JSON.stringify({ hash: location.hash, tabs: document.querySelectorAll(".campaign-subnav button").length })`,
+      returnByValue: true,
+    });
+    const legacyCampaignPage = JSON.parse(legacyCampaign.result.result.value);
+    assert.match(legacyCampaignPage.hash, /#campaign\/demo/);
+    assert.equal(legacyCampaignPage.tabs, 4, "an old #campaign link lands on the campaign overview");
+
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo/configure` });
+    await sleep(600);
+    const configure = await send("Runtime.evaluate", {
       expression: `(async () => {
-        const brief = document.querySelector('textarea[name="brief"]');
-        brief.value = "Unsaved brief survives";
-        brief.dispatchEvent(new Event("input", { bubbles: true }));
-        brief.blur();
+        const chains = document.body.innerText.includes("Model chains");
+        const autoship = document.querySelector('input[name="max_autoship_lines"]');
+        autoship.value = "321";
+        autoship.dispatchEvent(new Event("input", { bubbles: true }));
         await load({ quiet: true });
-        return JSON.stringify({ value: document.querySelector('textarea[name="brief"]')?.value || "", view: document.body.innerText.includes("Model chains") });
+        return JSON.stringify({
+          chains,
+          value: document.querySelector('input[name="max_autoship_lines"]')?.value || "",
+          save: Boolean(document.querySelector('[data-act="save-campaign"]')),
+        });
       })()`,
       awaitPromise: true,
       returnByValue: true,
     });
-    const campaignPage = JSON.parse(campaignEdit.result.result.value);
-    assert.equal(campaignPage.value, "Unsaved brief survives", "an unsaved campaign edit survives a background refresh");
-    assert.equal(campaignPage.view, true, "the campaign screen is still visible");
+    const configurePage = JSON.parse(configure.result.result.value);
+    assert.equal(configurePage.chains, true, "chains live in Configure");
+    assert.equal(configurePage.value, "321", "an unsaved config edit survives a background refresh");
+    assert.equal(configurePage.save, true, "configuration has one explicit save");
     ws.close();
   } finally {
     browser.kill("SIGKILL");

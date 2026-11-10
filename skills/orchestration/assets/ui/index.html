@@ -19,7 +19,7 @@
         <div class="wordmark">orchestration</div>
         <div class="rail-label">Campaigns</div>
         <nav class="campaign-list" id="campaigns" aria-label="Campaigns"></nav>
-        <button class="rail-new" data-act="new-campaign">New campaign</button>
+        <button class="rail-new" data-act="copy" data-command='orchestrate start "<goal>"' title="Campaigns start in your agent session">Start in your agent</button>
         <button class="rail-new" id="browse-repo" data-act="browse-repo">Open repository…</button>
         <div class="rail-foot">
           <span id="foot-state">local</span>
@@ -41,8 +41,6 @@
           <nav class="tabs" id="nav" aria-label="Views">
             <button data-view="fleet">Fleet</button>
             <button data-view="inbox">Inbox <b id="tab-count"></b></button>
-            <button data-view="board">Board</button>
-            <button data-view="campaign">Campaign</button>
             <button data-view="acceptance">Acceptance <b id="accept-count"></b></button>
             <button data-view="settings">Settings</button>
           </nav>
