@@ -60,8 +60,10 @@ try {
       : {};
 
   let session;
+  let sessionMode = "new";
   try {
     if (spec.sessionId && caps.loadSession) {
+      sessionMode = "load";
       session = await client.request("session/load", {
         sessionId: spec.sessionId,
         cwd: spec.cwd,
@@ -71,6 +73,7 @@ try {
       session = { ...session, sessionId: spec.sessionId };
       record({ type: "acp.session", mode: "load", sessionId: spec.sessionId });
     } else if (spec.sessionId && caps.sessionCapabilities?.resume) {
+      sessionMode = "resume";
       session = await client.request("session/resume", {
         sessionId: spec.sessionId,
         cwd: spec.cwd,
@@ -80,6 +83,7 @@ try {
       session = { ...session, sessionId: spec.sessionId };
       record({ type: "acp.session", mode: "resume", sessionId: spec.sessionId });
     } else {
+      sessionMode = "new";
       session = await client.request("session/new", { cwd: spec.cwd, mcpServers: [], ...systemParam });
       record({ type: "acp.session", mode: "new", sessionId: session.sessionId });
     }
@@ -87,6 +91,7 @@ try {
     /* A changed adapter or an expired server-side session must not dead-end
        the ticket; start fresh and record why. */
     record({ type: "acp.session.fallback", message: err.message });
+    sessionMode = "new";
     session = await client.request("session/new", { cwd: spec.cwd, mcpServers: [], ...systemParam });
     record({ type: "acp.session", mode: "new-after-fallback", sessionId: session.sessionId });
   }
@@ -124,11 +129,14 @@ try {
       : spec.prompt;
 
   permissionNote(`auto-approve adapter=${spec.adapter} nonce=${spec.nonce}`);
+  /* A loaded session already holds the images; resending them only burns
+     tokens. A fresh/fallback session needs them again. */
+  const outgoing = sessionMode === "load" || sessionMode === "resume" ? [] : images;
   const content = [
     { type: "text", text: prompt },
-    ...images.map((image) => ({ type: "image", data: image.data, mimeType: image.mimeType })),
+    ...outgoing.map((image) => ({ type: "image", data: image.data, mimeType: image.mimeType })),
   ];
-  if (images.length) record({ type: "acp.images", files: images.map((image) => image.path) });
+  if (outgoing.length) record({ type: "acp.images", files: outgoing.map((image) => image.path) });
   const result = await client.request(
     "session/prompt",
     { sessionId: session.sessionId, prompt: content },

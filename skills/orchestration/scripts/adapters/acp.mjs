@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { profile, modelConfigValue } from "../lib/acp-profiles.mjs";
 import { readText, writeJson } from "../lib/util.mjs";
+import { prepareForPrompt } from "../lib/attachments.mjs";
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const CATALOG = path.join(HERE, "..", "acp-catalog.mjs");
@@ -62,7 +63,10 @@ export function createAcpAdapter(adapterId) {
         systemPrompt: systemText,
         promptMode: p.systemPrompt,
         prompt,
-        images: attachments.map((item) => ({ path: item.path, mimeType: item.mimeType, data: item.data })),
+        images: attachments.map((item) => {
+          const prepared = prepareForPrompt(item);
+          return { path: prepared.path, mimeType: prepared.mimeType, data: prepared.data };
+        }),
         sessionId: run.sessionId || null,
         logFile: path.join(runDir, "log.jsonl"),
         sessionFile: path.join(runDir, "session.json"),
