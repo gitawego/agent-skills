@@ -34,7 +34,7 @@ A **strip** is one ticket: a perforated number stub, the title, the kind, and te
 | **Inbox** (default) | Every open item across projects, oldest first: questions, deliveries, failures | Answer, approve, send back, open the ticket |
 | **Board** | Stage bands with their strips, the slot meter, spend, the ledger | Pause, resume, take a delivery, open a ticket |
 | **Campaign** | The brief as a document (goal, brief, criteria, constraints, reading) beside the operational settings, then the model chains, the ticket list, the decisions and a new-ticket form | Edit and save, approve, pause, resume, cancel all, deliver, archive, add a ticket, add or remove a model in a chain, share a decision |
-| **Settings** | Console limits and the ticket kinds, each with its chain as removable chips and a picker built from the selected adapter's catalog; the runner adapter and spend mode | Edit and save, discover or refresh adapter models |
+| **Settings** | Console limits and the ticket kinds, each with its chain as removable chips and a picker built from the selected adapter's catalog; the runner adapter, spend mode and sandbox | Edit and save, discover or refresh adapter models |
 | **Drawer** | One ticket in a pinned head and foot: what to build, criteria, findings, the last answer, its runs with model and cost, and the run log streaming | Only what applies: stop while it runs, retry when it failed or was sent back, answer when it waits, a note when it has landed; plus **edit** (title, kind, paths, blockers, body, criteria) and **remove** |
 
 Views have addresses: `#inbox`, `#board`, `#campaign`, `#campaign/<slug>`, `#settings`, and `#ticket/03` for the drawer, so a link or a screenshot points at the same thing next time.
@@ -46,6 +46,8 @@ Dark is the default. `?theme=light` / `?theme=dark`, or the toggle at the foot o
 ## Creating
 
 **New campaign** from the rail: a goal in one sentence, a project, autonomy, landing and base. It writes `campaign.md` in `draft`, so planning continues in the Campaign screen or in a session.
+
+**Open another repository** from the rail: type an absolute path; the server validates it, adds it to the live project list and writes it to the console registry, so its campaigns and orchestration records appear immediately and on the next start.
 
 **Cancel all** stops every live run and pauses the campaign, leaving branches for inspection. **Archive** closes a delivered or paused campaign: it leaves the board, the branches stay.
 
@@ -73,6 +75,7 @@ Both have CLI equivalents: `orchestrate start "<goal>"` and `orchestrate ticket 
 - **`GET /api/events`** is `text/event-stream`. Each message carries the ledger event and its sequence id; on connect the stream replays what it still holds after `lastId`. The page refetches `/api/state` on each event, coalesced, so a gap costs a redraw and nothing else.
 - **`GET /api/log?project=&campaign=&run=&offset=`** returns the next bytes of a run log with the new offset, so the drawer keeps streaming across reconnects.
 - **`POST /api/commands`** takes `{ root, type, ... }` and returns the queued command. The supervisor picks it up within one tick (2 s by default).
+- **`POST /api/projects`** takes `{ root }`, validates the directory, adds it to the live project list and the console registry.
 - **`POST /api/attachments`** takes `{ root, campaign, name, data }` (base64 image or PDF) and writes it under `orchestration/<campaign>/attachments/`, returning the project-relative path. Used by the new/edit ticket attachment field; 5 MB per image, 20 MB per PDF, png/jpeg/webp/gif/pdf only.
 
 Commands: `answer`, `review.approve`, `review.reject`, `retry`, `stop`, `pause`, `resume`, `approve`, `deliver`, `campaign.create`, `campaign.save`, `ticket.add`, `settings.save`, `catalog.refresh`.

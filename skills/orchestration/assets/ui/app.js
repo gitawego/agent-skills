@@ -294,6 +294,19 @@ function spendSelect(scope) {
   </select>`;
 }
 
+function sandboxFor(scope) {
+  return (scope === "console" ? state?.console?.runner?.sandbox : current()?.runner?.sandbox) || "auto";
+}
+
+function sandboxSelect(scope) {
+  const chosen = sandboxFor(scope);
+  return `<select name="sandbox" aria-label="${scope} sandbox">
+    <option value="auto" ${chosen === "auto" ? "selected" : ""}>auto (bwrap when available)</option>
+    <option value="bwrap" ${chosen === "bwrap" ? "selected" : ""}>bwrap</option>
+    <option value="none" ${chosen === "none" ? "selected" : ""}>none</option>
+  </select>`;
+}
+
 function isFree(row) {
   return Boolean(row.price) && (row.price.input || 0) === 0 && (row.price.output || 0) === 0;
 }
@@ -653,6 +666,7 @@ function viewCampaign() {
           <div class="field"><label for="base">Base</label><input id="base" name="base" type="text" value="${esc(c.base)}" /></div>
           <div class="field"><label>Adapter</label><div class="stack">${adapterSelect("campaign")}<span class="sub">models, tools and billing of this campaign</span></div></div>
           <div class="field"><label>Spend</label><div class="stack">${spendSelect("campaign")}<span class="sub">subscription-only hides metered models</span></div></div>
+          <div class="field"><label>Sandbox</label><div class="stack">${sandboxSelect("campaign")}<span class="sub">bwrap isolates writes on Linux</span></div></div>
           <div class="field"><label for="autoship">Autoship</label><div class="stack">
             <input id="autoship" name="max_autoship_lines" type="number" min="0" value="${c.maxAutoshipLines}" />
             <span class="sub">changed lines above this never ship without you.</span>
@@ -795,6 +809,7 @@ function viewSettings() {
     <div class="limit-grid">
       <label class="num-field"><span>Adapter</span>${adapterSelect("console")}</label>
       <label class="num-field"><span>Spend</span>${spendSelect("console")}</label>
+      <label class="num-field"><span>Sandbox</span>${sandboxSelect("console")}</label>
     </div>
     <p class="note" style="margin:8px 0 0">Subscription-only hides metered models; metered-ok shows every discovered model with its price. Changing the adapter changes which catalog the chains below can pick from.</p>
   </section>
@@ -912,7 +927,7 @@ function saveCampaign(root, slug) {
     plan_gate: value("plan_gate"),
     landing: value("landing"),
     base: value("base"),
-    runner: { adapter: value("adapter") || adapterFor("campaign"), spend: value("spend") || "metered-ok" },
+    runner: { adapter: value("adapter") || adapterFor("campaign"), spend: value("spend") || "metered-ok", sandbox: value("sandbox") || "auto" },
     checks,
     allow_paths: value("allow_paths")
       .split(",")
@@ -951,6 +966,7 @@ function saveSettings() {
       runner: {
         adapter: value("adapter") || adapterFor("console"),
         spend: value("spend") || "metered-ok",
+        sandbox: value("sandbox") || "auto",
       },
     },
   });
@@ -1215,6 +1231,35 @@ async function uploadAttachments(input) {
   input.value = "";
   toast("image attached");
 }
+
+document.addEventListener("submit", async (event) => {
+  if (event.target.id !== "open-repo") return;
+  event.preventDefault();
+  const root = String(new FormData(event.target).get("root") || "").trim();
+  if (!root) return;
+  try {
+    const res = await fetch("/api/projects", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-orch-token": token },
+      body: JSON.stringify({ root }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || "could not open the repository");
+    event.target.reset();
+    toast("repository opened");
+    await load();
+    const project = state.projects.find((item) => item.root === body.root);
+    const campaign = project?.campaigns?.[0];
+    if (campaign) {
+      selected = { root: campaign.root, campaign: campaign.slug };
+      view = "campaign";
+      history.replaceState(null, "", `#campaign/${encodeURIComponent(campaign.slug)}`);
+      render();
+    }
+  } catch (err) {
+    toast(err.message);
+  }
+});
 
 document.addEventListener("change", (event) => {
   const files = event.target.closest("input[data-role='attach-files']");

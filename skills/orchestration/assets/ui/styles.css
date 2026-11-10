@@ -160,6 +160,31 @@ a:hover { text-decoration-color: var(--ink); }
   cursor: pointer;
 }
 .rail-new:hover { border-style: solid; border-color: var(--ink); color: var(--ink); }
+.rail-open {
+  margin-top: 0.42rem;
+  display: flex;
+  gap: 0.25rem;
+}
+.rail-open input {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--rule);
+  background: var(--bg-2);
+  color: var(--ink);
+  border-radius: 3px;
+  padding: 0.35rem 0.4rem;
+  font: 0.68rem/1.2 var(--mono);
+}
+.rail-open button {
+  border: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink-2);
+  border-radius: 3px;
+  padding: 0 0.45rem;
+  font: 0.7rem/1 var(--mono);
+  cursor: pointer;
+}
+.rail-open button:hover { border-color: var(--ink); color: var(--ink); }
 .rail-foot {
   margin-top: auto;
   font: 0.7rem/1.5 var(--mono);

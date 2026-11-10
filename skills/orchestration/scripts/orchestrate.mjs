@@ -26,6 +26,7 @@ import {
 import { catalog, ensureConsole, listCampaigns, loadConsole, readCampaign, resolveModel, runnerConfig, saveConsole } from "./lib/config.mjs";
 import { refreshCatalog, rowsFor, adaptersView } from "./lib/catalogs.mjs";
 import { ADAPTER_IDS, SPEND_MODES } from "./lib/adapter-ids.mjs";
+import { bwrapAvailable } from "./lib/sandbox.mjs";
 import { asArray, loadPlan, ticketTitle } from "./lib/plan.mjs";
 import { decisionsFor, promoteDecision, readDecisions, summaryLine } from "./lib/memory.mjs";
 import { readEvents } from "./lib/ledger.mjs";
@@ -259,6 +260,7 @@ const commands = {
       const state = !row.adapterVersion ? "missing" : !row.models ? "no catalog" : row.stale ? "stale" : "ok";
       console.log(`${row.id.padEnd(16)} ${state.padEnd(11)} ${row.adapterVersion || "?"} ${row.models || 0} models`);
     }
+    console.log(`sandbox          ${bwrapAvailable() ? "bwrap available" : "path guard only (bwrap unavailable)"}`);
     if (problems.length) {
       for (const problem of problems) console.error(`- ${problem}`);
       process.exitCode = 1;

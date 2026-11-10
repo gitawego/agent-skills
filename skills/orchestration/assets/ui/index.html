@@ -20,6 +20,10 @@
         <div class="rail-label">Campaigns</div>
         <nav class="campaign-list" id="campaigns" aria-label="Campaigns"></nav>
         <button class="rail-new" data-act="new-campaign">New campaign</button>
+        <form class="rail-open" id="open-repo">
+          <input name="root" type="text" placeholder="/path/to/another/repo" aria-label="Open another repository" spellcheck="false" />
+          <button type="submit">Open</button>
+        </form>
         <div class="rail-foot">
           <span id="foot-state">local</span>
           <span class="themetoggle" title="Theme">

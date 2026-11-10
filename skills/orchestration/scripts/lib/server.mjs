@@ -3,7 +3,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { SKILL_DIR, consoleStateDir, ensureDir, globalPanelFile, projectStateDir } from "./util.mjs";
+import { SKILL_DIR, consoleStateDir, ensureDir, globalPanelFile, nowIso, projectStateDir, readJson, registryFile, writeJson } from "./util.mjs";
 import { projectView, consoleView } from "./view.mjs";
 import { adaptersView, allModels, catalogsForRoot } from "./catalogs.mjs";
 import { enqueue } from "./commands.mjs";
@@ -54,7 +54,8 @@ function readBody(req, limit = 2_000_000) {
 
 export function startServer({ roots = [], getRoots = null, port = 4173, bind = "127.0.0.1", token, onCommand, log = () => {} }) {
   /* the registry can grow while the panel runs, so read it per request */
-  const currentRoots = () => (getRoots ? getRoots() : roots);
+  const extraRoots = new Set();
+  const currentRoots = () => [...new Set([...(getRoots ? getRoots() : roots), ...extraRoots])];
   const secret = token || randomBytes(12).toString("hex");
   const clients = new Set();
   const recent = [];
@@ -226,6 +227,24 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
       const start = Math.min(offset, text.length);
       const chunk = text.slice(start, start + 200_000);
       json(res, 200, { text: chunk, offset: start + chunk.length, size: text.length });
+      return;
+    }
+
+    if (route === "/api/projects" && req.method === "POST") {
+      try {
+        const body = await readBody(req);
+        const root = path.resolve(String(body.root || "").trim());
+        if (!root || !fs.statSync(root).isDirectory()) throw new Error("path is not a directory");
+        extraRoots.add(root);
+        const file = registryFile();
+        const registry = readJson(file, { version: 1, projects: [] });
+        const projects = (registry.projects || []).filter((project) => project.path !== root);
+        projects.push({ path: root, name: path.basename(root), registeredAt: nowIso() });
+        writeJson(file, { version: 1, projects });
+        json(res, 200, { ok: true, root });
+      } catch (err) {
+        json(res, 400, { error: err.message });
+      }
       return;
     }
 

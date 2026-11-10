@@ -1,10 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { sandbox, project, writeConsole, writeCampaign, writeTicket } from "./helpers.mjs";
 import { loadPlan } from "../scripts/lib/plan.mjs";
 import { validateCampaign, runnerConfig, readCampaign } from "../scripts/lib/config.mjs";
 import { allModels, adaptersView, rowsFor, writeCatalogCache } from "../scripts/lib/catalogs.mjs";
+import opencode from "../scripts/adapters/opencode-acp.mjs";
 
 const BODY = `## Goal
 
@@ -144,6 +147,33 @@ test("a dollar budget over a subscription adapter needs an acknowledgment", () =
     catalogRows: { "agy-acp": rows },
   });
   assert.deepEqual(accepted.errors, []);
+});
+
+test("an ACP launch spec separates image and document attachments", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orch-acp-spec-"));
+  try {
+    const specFile = opencode.buildLaunch({
+      run: { id: "r1", campaign: "demo", ticket: "01", role: "work", sessionId: null },
+      modelEntry: { provider: "opencode-go", model: "gemini-4-argon" },
+      thinking: "medium",
+      prompt: "hello",
+      systemPrompts: [],
+      attachments: [
+        { path: "refs/a.png", mimeType: "image/png", kind: "image", data: "aW1n", bytes: 3, sha256: "x" },
+        { path: "refs/a.pdf", mimeType: "application/pdf", kind: "document", data: "cGRm", bytes: 3, sha256: "y" },
+      ],
+      runDir: dir,
+      workdir: dir,
+      sandbox: "none",
+    });
+    const spec = JSON.parse(fs.readFileSync(specFile.argv[1], "utf8"));
+    assert.equal(spec.images.length, 1);
+    assert.equal(spec.documents.length, 1);
+    assert.equal(spec.documents[0].mimeType, "application/pdf");
+    assert.equal(spec.sandbox, "none");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("the adapter catalog is visible to the panel and model resolution", () => {

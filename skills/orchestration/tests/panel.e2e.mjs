@@ -89,13 +89,15 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#settings` });
     await sleep(2500);
     const result = await send("Runtime.evaluate", {
-      expression: `JSON.stringify({ adapters: document.querySelectorAll('[data-role="adapter"]').length, spend: document.querySelector('[name="spend"]')?.value, title: document.body.innerText.includes("Settings") })`,
+      expression: `JSON.stringify({ adapters: document.querySelectorAll('[data-role="adapter"]').length, spend: document.querySelector('[name="spend"]')?.value, sandbox: document.querySelector('[name="sandbox"]')?.value, openRepo: Boolean(document.getElementById("open-repo")), title: document.body.innerText.includes("Settings") })`,
       returnByValue: true,
     });
     const page = JSON.parse(result.result.result.value);
     assert.ok(page.adapters >= 1, "an adapter selector is rendered");
     assert.equal(page.title, true, "the settings screen is visible");
+    assert.equal(page.openRepo, true, "the open-repository form is rendered");
     assert.match(page.spend, /metered-ok|subscription-only/);
+    assert.match(page.sandbox, /auto|bwrap|none/);
     ws.close();
   } finally {
     browser.kill("SIGKILL");

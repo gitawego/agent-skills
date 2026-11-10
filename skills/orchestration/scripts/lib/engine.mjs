@@ -1350,6 +1350,8 @@ export function applyCommand(root, command, consoleConfig) {
         throw new UserError(`unknown adapter "${patch.runner.adapter}"`);
       if (patch.runner.spend && !SPEND_MODES.includes(patch.runner.spend))
         throw new UserError(`unknown spend mode "${patch.runner.spend}"`);
+      if (patch.runner.sandbox && !["auto", "bwrap", "none"].includes(patch.runner.sandbox))
+        throw new UserError(`unknown sandbox mode "${patch.runner.sandbox}"`);
       config.runner = { ...config.runner, ...patch.runner };
     }
     if (patch.limits) {

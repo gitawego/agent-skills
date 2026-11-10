@@ -135,8 +135,8 @@ export function catalogsForRoot(root) {
       }
       continue;
     }
-    const global = readCatalogCache(id);
-    if (global?.models?.length) out[id] = global.models;
+    /* Do not fall back to another project's snapshot: show an empty catalog
+       until this project is refreshed. */
   }
   return out;
 }

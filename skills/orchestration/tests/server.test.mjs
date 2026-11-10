@@ -112,6 +112,32 @@ test("the panel accepts an image upload and keeps it inside the campaign", async
   const body = await res.json();
   assert.equal(body.path, "orchestration/demo/attachments/ref.png");
   assert.ok(fs.existsSync(path.join(root, body.path)));
+
+  const pdf = Buffer.from("%PDF-1.4\n%%EOF\n").toString("base64");
+  const pdfRes = await fetch(`http://127.0.0.1:${panel.port}/api/attachments?token=${panel.token}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ root, campaign: "demo", name: "spec.pdf", data: pdf }),
+  });
+  assert.equal(pdfRes.status, 200);
+  const pdfBody = await pdfRes.json();
+  assert.equal(pdfBody.mimeType, "application/pdf");
+  panel.close();
+});
+
+test("the panel can open another repository", async () => {
+  const root = fixture();
+  const box = path.dirname(root);
+  const other = project(path.join(box, "other-repo"));
+  const panel = await startServer({ roots: [root], port: 0 });
+  const post = await fetch(`http://127.0.0.1:${panel.port}/api/projects?token=${panel.token}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ root: other }),
+  });
+  assert.equal(post.status, 200);
+  const state = await (await fetch(`http://127.0.0.1:${panel.port}/api/state?token=${panel.token}`)).json();
+  assert.ok(state.projects.some((project) => project.root === other), "the new repository is served");
   panel.close();
 });
 
