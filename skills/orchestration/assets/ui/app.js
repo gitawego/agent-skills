@@ -99,12 +99,18 @@ function toast(text) {
   el._t = setTimeout(() => el.classList.remove("on"), 2400);
 }
 
+function formBusy() {
+  if (document.querySelector(".model-suggest:not([hidden])")) return true;
+  const active = document.activeElement;
+  if (!active || !active.closest?.("#app")) return false;
+  if (active.closest(".model-picker")) return true;
+  return ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName);
+}
+
 async function load({ quiet = false } = {}) {
   try {
     const next = await api("/api/state");
     state = next;
-    /* a command the engine refused must not look queued forever; history is
-       read silently on the first load so an old refusal is not replayed */
     const errors = [];
     for (const project of next.projects) {
       for (const campaign of project.campaigns || []) {
@@ -127,6 +133,9 @@ async function load({ quiet = false } = {}) {
     }
     connEl.className = "dot live";
     connText.textContent = "live";
+    /* A background poll or SSE event must not rebuild the page under a form
+       control: that would close the model suggestions and drop typed text. */
+    if (formBusy()) return;
     render();
     if (!quiet) {
       /* keep the caret where the person left it */

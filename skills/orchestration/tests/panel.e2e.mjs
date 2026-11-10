@@ -127,6 +127,14 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
       returnByValue: true,
     });
     assert.match(search.result.result.value, /gemini/i, "search filters the model list");
+    await sleep(16000);
+    const stillOpen = await send("Runtime.evaluate", {
+      expression: `JSON.stringify({ open: !document.querySelector(".model-suggest").hidden, text: document.querySelector(".model-suggest").textContent })`,
+      returnByValue: true,
+    });
+    const suggestion = JSON.parse(stillOpen.result.result.value);
+    assert.equal(suggestion.open, true, "the suggestion list survives the 15s refresh");
+    assert.match(suggestion.text, /gemini/i);
     ws.close();
   } finally {
     browser.kill("SIGKILL");
