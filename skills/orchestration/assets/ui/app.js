@@ -61,6 +61,8 @@ let fresh = new Set();
 let clock = null;
 const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 let drafts = {};
+let compose = null;
+let dirtyViews = new Set();
 let clearAfterLoad = new Set();
 let lastErrorTs = null;
 
@@ -123,6 +125,21 @@ function formBusy() {
   return ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName);
 }
 
+/* The surface is what the person is actually editing, not just the nav tab. */
+function surface() {
+  return compose || view;
+}
+
+/* A background poll may update chrome, but it must never replace a form,
+   a typed value, an open ticket form or an acceptance selection. */
+function pageBusy() {
+  if (compose) return true;
+  if (formBusy()) return true;
+  if (dirtyViews.has(surface())) return true;
+  if (document.querySelector("#app details[open]")) return true;
+  return false;
+}
+
 async function load({ quiet = false } = {}) {
   try {
     const next = await api("/api/state");
@@ -150,9 +167,13 @@ async function load({ quiet = false } = {}) {
     connEl.className = "dot live";
     connText.textContent = "live";
     /* A background poll or SSE event must not rebuild the page under a form
-       control: that would close the model suggestions and drop typed text. */
-    if (formBusy()) return;
-    render();
+       control, a typed value or an open compose screen. Update the chrome
+       (counts, rail, dispatch pill) and leave the working surface alone. */
+    if (pageBusy()) {
+      renderChrome();
+      return;
+    }
+    render({ preserveScroll: true });
     if (!quiet) {
       /* keep the caret where the person left it */
     }
@@ -785,8 +806,9 @@ function viewAcceptance(items) {
 
 /* --- render --------------------------------------------------------------- */
 
-function render() {
+function renderChrome() {
   ensureSelection();
+  for (const key of [...dirtyViews]) if (key !== surface()) dirtyViews.delete(key);
   const items = openItems();
   const acceptance = acceptanceItems();
   tabCount.textContent = items.length ? String(items.length) : "";
@@ -802,23 +824,34 @@ function render() {
     b.setAttribute("aria-pressed", String(Number(b.dataset.size) === size));
   });
   renderDispatch();
-
   renderRail();
   renderCrumbs();
   renderTabs();
+}
 
+function render({ preserveScroll = false } = {}) {
+  const scroll = preserveScroll ? window.scrollY : 0;
+  const fleetScroll = preserveScroll ? document.querySelector(".fleet-wrap")?.scrollLeft || 0 : 0;
+  renderChrome();
   if (!state) return;
-  if (view === "fleet") {
+  if (compose === "new-campaign") {
+    app.innerHTML = newCampaignForm();
+  } else if (view === "fleet") {
     app.innerHTML = viewFleet();
     paintFleet();
-  } else if (view === "inbox") app.innerHTML = viewInbox(items);
+  } else if (view === "inbox") app.innerHTML = viewInbox(openItems());
   else if (view === "board") app.innerHTML = viewBoard();
   else if (view === "campaign") app.innerHTML = viewCampaign();
-  else if (view === "acceptance") app.innerHTML = viewAcceptance(acceptance);
+  else if (view === "acceptance") app.innerHTML = viewAcceptance(acceptanceItems());
   else if (view === "settings") app.innerHTML = viewSettings();
 
   autoSize();
   markFresh();
+  if (preserveScroll) {
+    window.scrollTo(0, scroll);
+    const wrap = document.querySelector(".fleet-wrap");
+    if (wrap) wrap.scrollLeft = fleetScroll;
+  }
 }
 
 function renderDispatch() {
@@ -851,6 +884,10 @@ function renderRail() {
 }
 
 function renderCrumbs() {
+  if (compose === "new-campaign") {
+    crumbsEl.innerHTML = `<b>New campaign</b><span>·</span>not dispatched yet`;
+    return;
+  }
   if (view === "fleet") {
     crumbsEl.innerHTML = `<b>Fleet</b><span>·</span>${campaigns().length} campaign${campaigns().length === 1 ? "" : "s"}<span>·</span>${fleetRows().length} rows`;
     return;
@@ -1356,7 +1393,7 @@ function newCampaignForm() {
         <div class="field"><label for="nc-autonomy">Autonomy</label><select id="nc-autonomy" name="nc_autonomy"><option>supervised</option><option selected>trusted</option><option>unattended</option></select></div>
         <div class="field"><label for="nc-landing">Landing</label><select id="nc-landing" name="nc_landing"><option selected>branch</option><option>directory</option></select></div>
         <div class="field"><label for="nc-base">Base</label><input id="nc-base" name="nc_base" type="text" value="main" /></div>
-        <div class="actions"><button class="btn primary" data-act="create-campaign">Create campaign</button><button class="btn ghost" data-act="go" data-view="board">Cancel</button></div>
+        <div class="actions"><button class="btn primary" data-act="create-campaign">Create campaign</button><button class="btn ghost" data-act="close-compose">Cancel</button></div>
       </div>
     </div>`;
 }
@@ -1375,11 +1412,15 @@ async function command(root, body) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ token, root, ...body }),
     });
+    dirtyViews.delete(surface());
     toast(`${body.type.replace(/\./g, " ")} queued`);
     setTimeout(() => load(), body.type === "catalog.refresh" ? 3500 : 350);
     setTimeout(() => load({ quiet: true }), 2600);
+    return true;
   } catch (err) {
+    dirtyViews.add(surface());
     toast(err.message);
+    return false;
   }
 }
 
@@ -1507,12 +1548,12 @@ function addTicket(root, slug) {
   });
 }
 
-function createCampaign() {
+async function createCampaign() {
   const goal = value("nc_goal").trim();
   if (!goal) return toast("Give the campaign a goal");
   const root = value("nc_root");
   if (!root) return toast("Pick a project");
-  return command(root, {
+  const ok = await command(root, {
     type: "campaign.create",
     goal,
     slug: value("nc_slug").trim() || undefined,
@@ -1520,6 +1561,10 @@ function createCampaign() {
     landing: value("nc_landing"),
     base: value("nc_base") || "main",
   });
+  if (ok) {
+    compose = null;
+    dirtyViews.delete("compose");
+  }
 }
 
 function autoSize() {
@@ -1715,6 +1760,10 @@ function routeFromHash() {
     return;
   }
   if (VIEWS.includes(name)) {
+    if (compose) {
+      compose = null;
+      dirtyViews.clear();
+    }
     const nextStatus = FLEET_STATUS.includes(params.get("status")) ? params.get("status") : "all";
     const changed =
       name !== view ||
@@ -1964,12 +2013,16 @@ document.addEventListener("change", (event) => {
     render();
     return syncFleetUrl();
   }
-  if (event.target.closest("[data-accept-select]")) return updateBulkBar();
+  if (event.target.closest("[data-accept-select]")) {
+    dirtyViews.add(surface());
+    return updateBulkBar();
+  }
   const files = event.target.closest("input[data-role='attach-files']");
   if (files) {
     uploadAttachments(files);
     return;
   }
+  if (event.target.closest("#app")) dirtyViews.add(surface());
   const spend = event.target.closest("select[name='spend']");
   if (spend) {
     spendChoice[view === "campaign" ? "campaign" : "console"] = spend.value;
@@ -1991,6 +2044,8 @@ document.addEventListener("click", (event) => {
   const text = item ? document.querySelector(`[data-answer="${item}"]`)?.value || "" : "";
   switch (act) {
     case "go":
+      compose = null;
+      dirtyViews.clear();
       view = target.dataset.view;
       history.replaceState(null, "", `#${view}`);
       return render();
@@ -2003,11 +2058,15 @@ document.addEventListener("click", (event) => {
       fleetLimit += 200;
       return paintFleet();
     case "open-acceptance":
+      compose = null;
+      dirtyViews.clear();
       view = "acceptance";
       closeDrawer();
       history.replaceState(null, "", "#acceptance");
       return render();
     case "open-campaign": {
+      compose = null;
+      dirtyViews.clear();
       const found = campaignOf(root, campaign);
       if (found) selected = { root: found.root, campaign: found.slug };
       view = "campaign";
@@ -2068,6 +2127,8 @@ document.addEventListener("click", (event) => {
       clearDrafts("campaign");
       adapterChoice.campaign = null;
       spendChoice.campaign = null;
+      compose = null;
+      dirtyViews.clear();
       selected = { root, campaign };
       if (view === "campaign") history.replaceState(null, "", `#campaign/${encodeURIComponent(campaign)}`);
       return render();
@@ -2195,8 +2256,15 @@ document.addEventListener("click", (event) => {
       document.getElementById("folder-picker").hidden = true;
       return;
     case "new-campaign":
-      app.innerHTML = newCampaignForm();
+      compose = "new-campaign";
+      dirtyViews.delete("compose");
+      render();
       return autoSize();
+    case "close-compose":
+      compose = null;
+      dirtyViews.delete("compose");
+      render();
+      return;
     case "create-campaign":
       return createCampaign();
   }
@@ -2205,6 +2273,8 @@ document.addEventListener("click", (event) => {
 tabsEl.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-view]");
   if (!button) return;
+  compose = null;
+  dirtyViews.clear();
   view = button.dataset.view;
   closeDrawer();
   render();
@@ -2240,6 +2310,7 @@ document.addEventListener("input", (event) => {
     paintFleet();
     return;
   }
+  if (event.target.closest("#app")) dirtyViews.add(surface());
   if (event.target.matches("textarea.doc")) {
     event.target.style.height = "auto";
     event.target.style.height = `${event.target.scrollHeight + 2}px`;

@@ -174,6 +174,31 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     assert.match(fleetPage.quotas, /none configured/);
     assert.equal(fleetPage.search, true, "the fleet has a search field");
 
+    const compose = await send("Runtime.evaluate", {
+      expression: `(async () => {
+        document.querySelector('[data-act="new-campaign"]').click();
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        const goal = document.querySelector("#nc-goal");
+        goal.value = "Survives a background refresh";
+        goal.dispatchEvent(new Event("input", { bubbles: true }));
+        goal.blur();
+        await load({ quiet: true });
+        const result = {
+          form: Boolean(document.querySelector("#nc-goal")),
+          value: document.querySelector("#nc-goal")?.value || "",
+          crumb: document.querySelector("#crumbs")?.textContent || "",
+        };
+        document.querySelector('[data-act="close-compose"]')?.click();
+        return JSON.stringify(result);
+      })()`,
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    const composePage = JSON.parse(compose.result.result.value);
+    assert.equal(composePage.form, true, "the new-campaign form survives a background refresh");
+    assert.equal(composePage.value, "Survives a background refresh", "typed values are not dropped");
+    assert.match(composePage.crumb, /New campaign/);
+
     const filtered = await send("Runtime.evaluate", {
       expression: `(() => {
         const input = document.querySelector('[data-role="fleet-search"]');
@@ -242,6 +267,24 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     const quotaEditor = JSON.parse(quota.result.result.value);
     assert.equal(quotaEditor.editor, true, "settings renders the quota editor");
     assert.equal(quotaEditor.after, quotaEditor.before + 1, "a quota window can be added");
+
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign` });
+    await sleep(900);
+    const campaignEdit = await send("Runtime.evaluate", {
+      expression: `(async () => {
+        const brief = document.querySelector('textarea[name="brief"]');
+        brief.value = "Unsaved brief survives";
+        brief.dispatchEvent(new Event("input", { bubbles: true }));
+        brief.blur();
+        await load({ quiet: true });
+        return JSON.stringify({ value: document.querySelector('textarea[name="brief"]')?.value || "", view: document.body.innerText.includes("Model chains") });
+      })()`,
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    const campaignPage = JSON.parse(campaignEdit.result.result.value);
+    assert.equal(campaignPage.value, "Unsaved brief survives", "an unsaved campaign edit survives a background refresh");
+    assert.equal(campaignPage.view, true, "the campaign screen is still visible");
     ws.close();
   } finally {
     browser.kill("SIGKILL");
