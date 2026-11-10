@@ -273,7 +273,7 @@ function adapterSelect(scope) {
     ${adapters
       .map(
         (a) =>
-          `<option value="${esc(a.id)}" ${a.id === chosen ? "selected" : ""}>${esc(a.label || a.id)}${a.models ? ` · ${a.models} models` : ""}${a.fetchedAt ? "" : a.id === "pi" ? "" : " · not discovered"}</option>`,
+          `<option value="${esc(a.id)}" ${a.id === chosen ? "selected" : ""} title="${esc(a.sourceRoot || "")}">${esc(a.label || a.id)}${a.models ? ` · ${a.models} models` : ""}${a.id === "pi" ? "" : a.fetchedAt ? (a.stale ? " · stale" : "") : " · not discovered"}</option>`,
       )
       .join("")}
   </select>`;
@@ -313,6 +313,7 @@ function chainEditor(scope, kind, models) {
           ${THINKING.map((t) => `<option ${t === "high" ? "selected" : ""}>${t}</option>`).join("")}
         </select>
         <button class="btn" data-act="chain-add" data-scope="${scope}" data-kind="${esc(kind)}">Add</button>
+        <button class="btn ghost" data-act="chain-cheapest" data-scope="${scope}" data-kind="${esc(kind)}">Cheapest</button>
       </div>
     </div>`;
 }
@@ -1294,6 +1295,19 @@ document.addEventListener("click", (event) => {
     case "chain-remove": {
       const list = draft(target.dataset.scope, target.dataset.kind, []);
       list.splice(Number(target.dataset.index), 1);
+      render();
+      return;
+    }
+    case "chain-cheapest": {
+      const scope = target.dataset.scope;
+      const kind = target.dataset.kind;
+      const select = document.querySelector(`select[data-role="model"][data-scope="${scope}"][data-kind="${kind}"]`);
+      const first = [...(select?.options || [])].find((option) => option.value);
+      if (!first) return toast("No model catalog for this adapter");
+      const list = draft(scope, kind, []);
+      if (list.some((entry) => entry.model === first.value)) return toast("Already in the chain");
+      const thinking = document.querySelector(`select[data-role="thinking"][data-scope="${scope}"][data-kind="${kind}"]`)?.value || "medium";
+      list.push({ model: first.value, thinking });
       render();
       return;
     }

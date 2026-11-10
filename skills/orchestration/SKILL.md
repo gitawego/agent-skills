@@ -100,6 +100,7 @@ The script is the source of truth; the skill's slash commands are conveniences o
 | `desktop [remove]` | Add or remove a desktop menu launcher that runs `orchestrate up` |
 | `catalog` | Print the catalog for an adapter: provider, model, context, thinking, images, price. `--adapter <id> [--refresh]` |
 | `adapters` | List adapters, versions and catalog status |
+| `doctor` | Check harness versions and catalog freshness |
 | `adapter <id> [--spend mode]` | Set the console adapter and spend mode |
 
 Every panel action has a CLI equivalent and vice versa; both write the same command queue, and the supervisor is the only writer of state.

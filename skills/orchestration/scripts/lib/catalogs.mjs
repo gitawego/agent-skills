@@ -2,6 +2,7 @@
 //
 // The panel and validation read snapshots; `refreshCatalog` is the only writer
 // and is called from an explicit refresh/bind/approve, never from /api/state.
+import crypto from "node:crypto";
 import path from "node:path";
 import { ensureDir, nowIso, readJson, stateHome, writeJson } from "./util.mjs";
 import * as pi from "../adapters/pi.mjs";
@@ -34,39 +35,53 @@ export function adapterLabel(id) {
   return getAdapter(id).label || id;
 }
 
-export function cacheFile(id) {
-  return path.join(stateHome(), "orchestration", "catalogs", `${id}.json`);
+export function cacheFile(id, root = null) {
+  const dir = path.join(stateHome(), "orchestration", "catalogs");
+  if (!root) return path.join(dir, `${id}.json`);
+  const key = crypto.createHash("sha1").update(String(root)).digest("hex").slice(0, 10);
+  return path.join(dir, `${id}-${key}.json`);
 }
 
-export function readCatalogCache(id) {
-  return readJson(cacheFile(id), null);
+export function readCatalogCache(id, root = null) {
+  return readJson(cacheFile(id, root), null);
 }
 
 export function writeCatalogCache(id, models, extra = {}) {
-  const file = cacheFile(id);
-  ensureDir(path.dirname(file));
-  writeJson(file, {
+  const fetchedAt = nowIso();
+  const record = {
     version: 1,
     adapter: id,
     label: adapterLabel(id),
     adapterVersion: extra.adapterVersion ?? null,
-    fetchedAt: nowIso(),
+    fetchedAt,
+    sourceRoot: extra.cwd || null,
     models,
-  });
-  return file;
+  };
+  /* A project-specific snapshot keeps OpenCode's project-dependent model list
+     honest; the adapter-level file is the panel's last-known projection. */
+  if (extra.cwd) {
+    const file = cacheFile(id, extra.cwd);
+    ensureDir(path.dirname(file));
+    writeJson(file, record);
+  }
+  const global = cacheFile(id);
+  ensureDir(path.dirname(global));
+  writeJson(global, record);
+  return global;
 }
 
 export function refreshCatalog(id, { cwd } = {}) {
   const adapter = getAdapter(id);
   const models = adapter.listModels({ refresh: true, cwd });
-  return writeCatalogCache(id, models, { adapterVersion: safeVersion(adapter) });
+  return writeCatalogCache(id, models, { adapterVersion: safeVersion(adapter), cwd });
 }
 
-/* Live rows for pi; cached rows for ACP adapters. Never spawns an ACP server. */
-export function rowsFor(id) {
+/* A project-specific row set wins over the panel's last-known snapshot. */
+export function rowsFor(id, cwd = null) {
   const adapter = getAdapter(id);
   if (id === "pi") return adapter.listModels();
-  return readCatalogCache(id)?.models || [];
+  const scoped = cwd ? readCatalogCache(id, cwd) : null;
+  return scoped?.models || readCatalogCache(id)?.models || [];
 }
 
 /* Every known row, tagged with its adapter, for model resolution. */
@@ -86,12 +101,15 @@ export function adaptersView() {
   return adapterIds().map((id) => {
     const adapter = getAdapter(id);
     const cached = readCatalogCache(id);
+    const ageMs = cached?.fetchedAt ? Date.now() - Date.parse(cached.fetchedAt) : null;
     return {
       id,
       label: adapter.label || id,
       capabilities: safeCapabilities(adapter),
       adapterVersion: cached?.adapterVersion ?? safeVersion(adapter),
       fetchedAt: cached?.fetchedAt ?? null,
+      sourceRoot: cached?.sourceRoot ?? null,
+      stale: ageMs == null ? false : ageMs > 60 * 60 * 1000,
       models: cached?.models?.length ?? (id === "pi" ? safeCount(() => rowsFor(id).length) : 0),
     };
   });

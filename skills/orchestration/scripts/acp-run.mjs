@@ -6,7 +6,10 @@ import path from "node:path";
 import { connect, initialize } from "./lib/acp-client.mjs";
 import { profile } from "./lib/acp-profiles.mjs";
 
-const spec = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const specPath = process.argv[2];
+const spec = JSON.parse(fs.readFileSync(specPath, "utf8"));
+/* The spec carries base64 image payloads; keep it out of the run directory. */
+fs.rmSync(specPath, { force: true });
 const p = profile(spec.adapter);
 const log = fs.createWriteStream(spec.logFile, { flags: "a" });
 

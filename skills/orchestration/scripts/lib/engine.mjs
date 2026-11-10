@@ -43,7 +43,7 @@ import {
   saveConsole,
   validateCampaign,
 } from "./config.mjs";
-import { getAdapter, refreshCatalog, rowsFor } from "./catalogs.mjs";
+import { getAdapter, readCatalogCache, refreshCatalog, rowsFor } from "./catalogs.mjs";
 import { ADAPTER_IDS, SPEND_MODES } from "./adapter-ids.mjs";
 import { joinFrontmatter, splitFrontmatter, updateFrontmatter } from "./yaml.mjs";
 import {
@@ -134,7 +134,7 @@ export function tickCampaign(root, slug, consoleConfig) {
   const runner = runnerConfig(consoleConfig, data);
   let rows = [];
   try {
-    rows = rowsFor(runner.adapter);
+    rows = rowsFor(runner.adapter, root);
   } catch {
     rows = [];
   }
@@ -270,6 +270,15 @@ function processAlive(pid) {
 
 function firstLine(text) {
   return String(text || "").split("\n")[0].slice(0, 140);
+}
+
+function adapterAudit(adapter) {
+  const caps = adapter.capabilities ? adapter.capabilities() : {};
+  return {
+    adapterVersion: adapter.version ? adapter.version() : null,
+    systemPromptMode: caps.systemPrompt || null,
+    toolsMode: caps.tools || null,
+  };
 }
 
 function nextChainIndex(run) {
@@ -604,7 +613,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
   const runner = runnerConfig(consoleConfig, data);
   let rows = [];
   try {
-    rows = rowsFor(runner.adapter);
+    rows = rowsFor(runner.adapter, root);
   } catch {
     rows = [];
   }
@@ -616,8 +625,8 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
       return null;
     }
   }
-  const modelEntry = resolveModel(kind.models[chainIndex].model, rows);
-  const thinking = kind.models[chainIndex].thinking || "medium";
+  let modelEntry = resolveModel(kind.models[chainIndex].model, rows);
+  let thinking = kind.models[chainIndex].thinking || "medium";
 
   const landing = data.landing || "branch";
   let workdir = root;
@@ -671,6 +680,25 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
     }
     return null;
   }
+  if (attached.items.length && modelEntry.images !== true) {
+    const alt = kind.models.findIndex((entry) => resolveModel(entry.model, rows)?.images === true);
+    if (alt < 0) {
+      const reason = `kind "${ticket.data.kind}" has image attachments, but its models cannot read images`;
+      setStage(root, slug, state, id, "failed", { reason });
+      if (!openItemForTicket(root, slug, id, "failure")) {
+        createItem(root, slug, {
+          kind: "failure",
+          ticket: id,
+          title: `${id}: no vision model bound`,
+          brief: reason,
+        });
+      }
+      return null;
+    }
+    chainIndex = alt;
+    modelEntry = resolveModel(kind.models[alt].model, rows);
+    thinking = kind.models[alt].thinking || "medium";
+  }
   const campaign = readCampaign(root, slug);
   const prompt = resume
     ? resumePrompt({
@@ -703,6 +731,10 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
     role: "work",
     kind: ticket.data.kind,
     adapter: runner.adapter,
+    ...adapterAudit(getAdapter(runner.adapter)),
+    price: modelEntry.price || null,
+    billing: modelEntry.billing || null,
+    catalogFetchedAt: readCatalogCache(runner.adapter)?.fetchedAt || null,
     model: modelKey(modelEntry),
     chain: kind.models.map((m) => m.model),
     chainIndex,
@@ -761,13 +793,13 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
   const runner = runnerConfig(consoleConfig, campaign.data);
   let rows = [];
   try {
-    rows = rowsFor(runner.adapter);
+    rows = rowsFor(runner.adapter, root);
   } catch {
     rows = [];
   }
   const kind = kinds.review || kinds[ticket.data.kind];
-  const index = 0;
-  const modelEntry = resolveModel(kind.models[index]?.model || "", rows);
+  let index = 0;
+  let modelEntry = resolveModel(kind.models[index]?.model || "", rows);
   if (!modelEntry) {
     return failedRun({
       root,
@@ -795,6 +827,23 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
       kinds,
     });
   }
+  if (attached.items.length && modelEntry.images !== true) {
+    const alt = kind.models.findIndex((entry) => resolveModel(entry.model, rows)?.images === true);
+    if (alt < 0) {
+      return failedRun({
+        root,
+        slug,
+        state,
+        plan,
+        run,
+        summary: { errors: ["the ticket has image attachments, but the review chain has no vision model"], logTail: "", report: null },
+        consoleConfig,
+        kinds,
+      });
+    }
+    index = alt;
+    modelEntry = resolveModel(kind.models[alt].model, rows);
+  }
   const prompt = reviewPrompt({
     campaign: slug,
     ticket: id,
@@ -816,6 +865,7 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
     role: "review",
     kind: "review",
     adapter: runner.adapter,
+    ...adapterAudit(getAdapter(runner.adapter)),
     model: modelKey(modelEntry),
     chain: kind.models.map((m) => m.model),
     chainIndex: index,
@@ -868,7 +918,7 @@ function startJudge({ root, slug, state, plan, ticket, run, report, kinds, conso
   const runner = runnerConfig(consoleConfig, campaign.data);
   let rows = [];
   try {
-    rows = rowsFor(runner.adapter);
+    rows = rowsFor(runner.adapter, root);
   } catch {
     rows = [];
   }
@@ -909,6 +959,7 @@ function startJudge({ root, slug, state, plan, ticket, run, report, kinds, conso
     role: "judge",
     kind: "plan",
     adapter: runner.adapter,
+    ...adapterAudit(getAdapter(runner.adapter)),
     model: modelKey(modelEntry),
     chain: kind.models.map((m) => m.model),
     chainIndex: 0,
@@ -951,7 +1002,7 @@ function startMerge({ root, slug, state, ticketId, run, conflict, kinds, console
   const runner = runnerConfig(consoleConfig, campaign.data);
   let rows = [];
   try {
-    rows = rowsFor(runner.adapter);
+    rows = rowsFor(runner.adapter, root);
   } catch {
     rows = [];
   }
@@ -984,6 +1035,7 @@ function startMerge({ root, slug, state, ticketId, run, conflict, kinds, console
     role: "merge",
     kind: "chores",
     adapter: runner.adapter,
+    ...adapterAudit(getAdapter(runner.adapter)),
     model: modelKey(modelEntry),
     chain: kind.models.map((m) => m.model),
     chainIndex: 0,
@@ -1205,7 +1257,7 @@ export function approveCampaign(root, slug, consoleConfig, { automatic = false, 
   let rows = [];
   try {
     if (runner.adapter !== "pi") refreshCatalog(runner.adapter, { cwd: root });
-    rows = rowsFor(runner.adapter);
+    rows = rowsFor(runner.adapter, root);
   } catch (err) {
     throw new UserError(`Cannot approve "${slug}"`, [
       `adapter "${runner.adapter}" could not discover models: ${err.message}`,
@@ -1260,7 +1312,7 @@ export function applyCommand(root, command, consoleConfig) {
       const current = config.kinds[id];
       if (!current) throw new UserError(`unknown ticket kind "${id}"`);
       if (change.models) {
-        const rows = rowsFor(config.runner?.adapter || "pi");
+        const rows = rowsFor(config.runner?.adapter || "pi", root);
         for (const entry of change.models) {
           const resolved = resolveModel(entry.model, rows);
           if (!resolved) throw new UserError(`model "${entry.model}" is not in the ${config.runner?.adapter || "pi"} catalog`);

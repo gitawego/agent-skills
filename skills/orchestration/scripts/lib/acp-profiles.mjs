@@ -23,7 +23,7 @@ export const PROFILES = {
     args: ["acp"],
     provider: null, // provider/model comes from the model id
     billing: "metered",
-    includedProviders: ["opencode-go", "opencode"],
+    includedProviders: ["opencode-go"],
     systemPrompt: "prefix", // OpenCode accepts the field but ignores it
     modelConfig: "model",
     thinkingConfig: "effort",

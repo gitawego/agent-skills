@@ -197,7 +197,7 @@ const commands = {
         ]);
       }
     }
-    const rows = adapter === "pi" ? catalog() : rowsFor(adapter);
+    const rows = adapter === "pi" ? catalog() : rowsFor(adapter, root);
     if (!rows.length) {
       throw new UserError(`no catalog for adapter "${adapter}"`, [
         `Run \`orchestrate catalog --adapter ${adapter} --refresh\` once.`,
@@ -224,6 +224,26 @@ const commands = {
     console.log(`${pad("adapter", 16)} ${pad("version", 12)} ${pad("models", 8)} fetched`);
     for (const row of rows) {
       console.log(`${pad(row.id, 16)} ${pad(row.adapterVersion || "?", 12)} ${pad(String(row.models), 8)} ${row.fetchedAt || "not discovered"}`);
+    }
+  },
+
+  doctor({ flags }) {
+    const rows = adaptersView();
+    const problems = [];
+    for (const row of rows) {
+      if (!row.adapterVersion) problems.push(`${row.id}: harness not found`);
+      if (!row.models) problems.push(`${row.id}: no catalog; run \`orchestrate catalog --adapter ${row.id} --refresh\``);
+      else if (row.stale) problems.push(`${row.id}: catalog is stale; refresh it`);
+    }
+    for (const row of rows) {
+      const state = !row.adapterVersion ? "missing" : !row.models ? "no catalog" : row.stale ? "stale" : "ok";
+      console.log(`${row.id.padEnd(16)} ${state.padEnd(11)} ${row.adapterVersion || "?"} ${row.models || 0} models`);
+    }
+    if (problems.length) {
+      for (const problem of problems) console.error(`- ${problem}`);
+      process.exitCode = 1;
+    } else {
+      console.log("all adapters ready");
     }
   },
 
@@ -422,7 +442,7 @@ const commands = {
         err.hint || "Check that the harness is installed and signed in.",
       ]);
     }
-    const rows = rowsFor(runner.adapter);
+    const rows = rowsFor(runner.adapter, root);
     const parse = (value) => {
       const [model, thinking] = String(value).split(":");
       const resolved = resolveModel(model, rows);
@@ -779,6 +799,7 @@ const commands = {
   archive [campaign]                    close a delivered campaign
   catalog [search]                       the live model catalog; --adapter <id> [--refresh]
   adapters                               adapters, versions and catalog status
+  doctor                                 check harness versions and catalog freshness
   adapter <id> [--spend mode]            set the console adapter and spend mode
   bind <campaign> <kind> <model>[:t]    set a kind's chain; --fallback for the next entry
   approve <campaign>                    approve plan and bindings, then dispatch
