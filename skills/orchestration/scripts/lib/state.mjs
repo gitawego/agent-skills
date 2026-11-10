@@ -178,6 +178,7 @@ export function campaignStage(root, slug, state, stage, reason = null) {
 export function addSpend(state, { model, tokens, dollars, unmetered }) {
   state.spend.tokens += tokens || 0;
   state.spend.dollars += dollars || 0;
+  if (unmetered) state.spend.unmetered = (state.spend.unmetered || 0) + 1;
   if (model) {
     const entry = state.spend.byModel[model] || { tokens: 0, dollars: 0, unmetered: 0 };
     entry.tokens += tokens || 0;

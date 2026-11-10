@@ -39,7 +39,7 @@ test("init, start, catalog, bind, plan and approve work from the CLI", () => {
 
   const init = cli(dir, ["init"]);
   assert.equal(init.status, 0, init.stderr);
-  assert.match(init.stdout, /catalog +\d+ models/);
+  assert.match(init.stdout, /adapters .*models/);
   assert.ok(fs.existsSync(path.join(dir, ".orchestration")));
 
   const start = cli(dir, ["start", "make the thing work"]);

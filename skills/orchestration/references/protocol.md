@@ -31,7 +31,7 @@ A **run** is one worker process executing one ticket. Nothing else is a run: not
 
 1. **Claim.** The supervisor picks a ticket from the frontier, writes `runs/<run-id>/run.json` with the binding it will use, and moves the ticket to `working`. The claim is the state write; there is no lock file. The binding is read once, at claim, so a config edit can never reach a run that is already alive.
 2. **Materialize.** It builds the worktree (branch-landing) or the workspace (directory-landing), writes `prompt.md` from [worker-prompt.md](worker-prompt.md) with the ticket and campaign interpolated, and records the model chain it will try, in order.
-3. **Dispatch.** It spawns `pi` with the run's working directory, an isolated session directory, a stable `--session-id`, the kind's model and thinking level, the kind's tool set, and two `--append-system-prompt` files: the standing [contract](contract.md) and the role file for the kind ([roles/](roles/)). Stdout is `--mode json`, teed into `log.jsonl`.
+3. **Dispatch.** It hands the run to its adapter. The pi adapter spawns `pi` with the run's working directory, an isolated session directory, a stable `--session-id`, the kind's model and thinking level, the kind's tool set, and two `--append-system-prompt` files: the standing [contract](contract.md) and the role file for the kind ([roles/](roles/)). The ACP adapters spawn a small JSON-RPC helper that opens `session/new` (or `session/load` on a resume), applies the model/thinking/mode config, and sends the prompt with the system prompt either as ACP metadata (Antigravity) or a prefix (OpenCode). Stdout and ACP updates are written to `log.jsonl`.
 4. **Observe.** While the process lives the run is `working`. The supervisor tails the log for liveness and spend. No new output for `stuck_after_min` counts as stuck.
 5. **Collect.** It reads `report.json`. Missing, unparsable, or schema-invalid counts as `failed` with the log tail attached.
 6. **Release.** The slot is freed, spend is recorded, the stage is set from the report (and from the gates, if the report says `ready`), and the next frontier ticket may be dispatched.
@@ -47,6 +47,8 @@ The answer is delivered as a single turn: the decision, then one line naming wha
 ## Reports
 
 `report.json`, written by the worker through `scripts/report.mjs`, validated against this schema.
+
+ACP harnesses report token usage on the prompt response and no dollar cost. The adapter stores it in `session.json`; the supervisor counts tokens and marks the run unmetered rather than pretending it cost zero. A dollar budget therefore cannot cap a subscription adapter, and the panel says so.
 
 ```json
 {

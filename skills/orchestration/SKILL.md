@@ -44,7 +44,7 @@ Grill the human first, one capped round of at most seven questions on the fronti
 
 ### 3. Bind and approve
 
-Read the catalog (`node scripts/orchestrate.mjs catalog`) and propose a chain for every kind the plan uses: a first model that matches the kind's work, a fallback from another provider where one exists, and a thinking level. One line of reasoning per kind, so the human can disagree with the choice rather than re-derive it. Nothing is pre-bound and no vendor name ships with this skill, so this step is never empty.
+Read the catalog for the campaign's adapter (`node scripts/orchestrate.mjs catalog --adapter <id>`) and propose a chain for every kind the plan uses: a first model that matches the kind's work, a fallback from another provider where one exists, and a thinking level. One line of reasoning per kind, so the human can disagree with the choice rather than re-derive it. Nothing is pre-bound and no vendor name ships with this skill, so this step is never empty. The picker is ordered cheapest first; the human still chooses.
 
 Show the plan and the table together. The human confirms once, in chat or in the panel. A binding can change at any time while the campaign is not running; while it is, the supervisor refuses the change rather than let a live run's model be rewritten.
 
@@ -98,7 +98,9 @@ The script is the source of truth; the skill's slash commands are conveniences o
 | `panel` | Print the panel URL |
 | `link` | Put an `orchestrate` command in `~/.local/bin` |
 | `desktop [remove]` | Add or remove a desktop menu launcher that runs `orchestrate up` |
-| `catalog` | Print the live catalog: provider, model, context, thinking, images |
+| `catalog` | Print the catalog for an adapter: provider, model, context, thinking, images, price. `--adapter <id> [--refresh]` |
+| `adapters` | List adapters, versions and catalog status |
+| `adapter <id> [--spend mode]` | Set the console adapter and spend mode |
 
 Every panel action has a CLI equivalent and vice versa; both write the same command queue, and the supervisor is the only writer of state.
 
@@ -143,6 +145,6 @@ Then, from any project, `orchestrate up` starts the panel if it is not running, 
 
 ## Dependencies
 
-Node 20 or newer, `git`, and the `pi` CLI on `PATH`. No `npm install`, no lockfile, no `node_modules`; the runtime uses the Node standard library only. State is written to the user's project and to the console directory, never inside this skill folder.
+Node 20 or newer, `git`, and either the `pi` CLI or an ACP harness such as `agy` (Antigravity) or `opencode`. No `npm install`, no lockfile, no `node_modules`; the runtime uses the Node standard library only. State is written to the user's project and to the console directory, never inside this skill folder.
 
-If a command fails on `pi --list-models`, the catalog is unreadable and binding is refused; fix credentials before approving a campaign. `init` binds nothing: reading the catalog and choosing a chain per kind is step 3 of the loop, and a campaign cannot leave `awaiting_approval` without one.
+The adapter catalog lives in `~/.local/state/orchestration/catalogs/<adapter>.json`. `bind` and `approve` refresh it from the harness; the panel reads the snapshot. If discovery fails, the campaign cannot leave `awaiting_approval`; fix the harness's credentials and run `orchestrate catalog --adapter <id> --refresh`. `init` binds nothing: reading the catalog and choosing a chain per kind is step 3 of the loop.

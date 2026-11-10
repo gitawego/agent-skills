@@ -5,7 +5,7 @@ import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { SKILL_DIR, consoleStateDir, ensureDir, globalPanelFile, projectStateDir } from "./util.mjs";
 import { projectView, consoleView } from "./view.mjs";
-import { catalog } from "./config.mjs";
+import { adaptersView, allModels } from "./catalogs.mjs";
 import { enqueue } from "./commands.mjs";
 
 const UI = path.join(SKILL_DIR, "assets", "ui");
@@ -171,7 +171,7 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
       });
       let models = [];
       try {
-        models = catalog().map((row) => ({ ...row }));
+        models = allModels().map((row) => ({ ...row }));
       } catch {
         models = [];
       }
@@ -180,6 +180,7 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
         now: new Date().toISOString(),
         projects,
         console: consoleView().config,
+        adapters: adaptersView(),
         catalog: models,
       });
       return;

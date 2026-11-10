@@ -47,6 +47,17 @@ export function readLogTail(root, slug, runId, lines = 40) {
 }
 
 export function usageFromLog(root, slug, runId) {
+  const session = readJson(path.join(runDir(root, slug, runId), "session.json"), null);
+  if (session?.usage) {
+    const usage = session.usage;
+    return {
+      tokens: usage.totalTokens || (usage.inputTokens || 0) + (usage.outputTokens || 0),
+      dollars: 0,
+      unmetered: true,
+      inputTokens: usage.inputTokens || 0,
+      outputTokens: usage.outputTokens || 0,
+    };
+  }
   const file = path.join(runDir(root, slug, runId), "log.jsonl");
   const text = readText(file, "");
   if (!text) return { tokens: 0, dollars: 0, unmetered: true };

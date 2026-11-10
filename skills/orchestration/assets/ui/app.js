@@ -205,8 +205,24 @@ function ensureSelection() {
   if (!found) selected = { root: all[0].root, campaign: all[0].slug };
 }
 
+function priceScore(row) {
+  if (!row.price) return Number.POSITIVE_INFINITY;
+  return (row.price.input || 0) * 4 + (row.price.output || 0);
+}
+
+function priceLabel(row) {
+  if (row.plan === "subscription" || row.billing === "subscription") {
+    return row.price ? `included · $${row.price.input || 0}/$${row.price.output || 0} per 1M` : "included";
+  }
+  if (!row.price) return "price unknown";
+  const input = row.price.input || 0;
+  const output = row.price.output || 0;
+  if (input === 0 && output === 0) return "free";
+  return `$${input}/$${output} per 1M`;
+}
+
 function catalog() {
-  return state?.catalog || [];
+  return [...(state?.catalog || [])].sort((a, b) => priceScore(a) - priceScore(b));
 }
 
 function modelKey(entry) {
@@ -223,9 +239,62 @@ function draft(scope, kind, models) {
   return drafts[key];
 }
 
+const adapterChoice = { console: null, campaign: null };
+const spendChoice = { console: null, campaign: null };
+
+function adapterFor(scope) {
+  if (adapterChoice[scope]) return adapterChoice[scope];
+  if (scope === "console") return state?.console?.runner?.adapter || "pi";
+  return current()?.runner?.adapter || state?.console?.runner?.adapter || "pi";
+}
+
+function spendFor(scope) {
+  if (spendChoice[scope]) return spendChoice[scope];
+  const explicit = scope === "console" ? state?.console?.runner?.spend : current()?.runner?.spend;
+  if (explicit) return explicit;
+  const adapter = adapterFor(scope);
+  return adapter === "opencode-acp" || adapter === "agy-acp" ? "subscription-only" : "metered-ok";
+}
+
+function catalogFor(scope) {
+  const id = adapterFor(scope);
+  const spend = spendFor(scope);
+  return catalog().filter(
+    (row) => (row.adapter || "pi") === id && (spend !== "subscription-only" || row.included !== false),
+  );
+}
+
+function adapterSelect(scope) {
+  const chosen = adapterFor(scope);
+  const adapters = state?.adapters?.length
+    ? state.adapters
+    : [{ id: "pi", label: "pi", models: catalog().length }];
+  return `<select name="adapter" data-role="adapter" data-scope="${scope}" aria-label="${scope} adapter">
+    ${adapters
+      .map(
+        (a) =>
+          `<option value="${esc(a.id)}" ${a.id === chosen ? "selected" : ""}>${esc(a.label || a.id)}${a.models ? ` · ${a.models} models` : ""}${a.fetchedAt ? "" : a.id === "pi" ? "" : " · not discovered"}</option>`,
+      )
+      .join("")}
+  </select>`;
+}
+
+function spendSelect(scope) {
+  const chosen = spendFor(scope);
+  return `<select name="spend" aria-label="${scope} spend mode">
+    <option value="subscription-only" ${chosen === "subscription-only" ? "selected" : ""}>subscription only</option>
+    <option value="metered-ok" ${chosen === "metered-ok" ? "selected" : ""}>metered allowed</option>
+  </select>`;
+}
+
+function isFree(row) {
+  return Boolean(row.price) && (row.price.input || 0) === 0 && (row.price.output || 0) === 0;
+}
+
 function chainEditor(scope, kind, models) {
   const selected = draft(scope, kind, models);
-  const options = catalog();
+  const freeAllowed = ["research", "chores", "plan"].includes(kind);
+  const options = catalogFor(scope).filter((row) => freeAllowed || !isFree(row));
   const chips = selected.length
     ? selected
         .map(
@@ -238,7 +307,7 @@ function chainEditor(scope, kind, models) {
       <div class="chain-add">
         <select data-role="model" data-scope="${scope}" data-kind="${esc(kind)}" aria-label="${esc(kind)} model">
           <option value="">choose a model…</option>
-          ${options.map((row) => `<option value="${esc(modelKey(row))}">${esc(modelKey(row))} · ${esc(row.context)}${row.images ? " · images" : ""}</option>`).join("")}
+          ${options.map((row) => `<option value="${esc(modelKey(row))}">${esc(modelKey(row))} · ${esc(row.context || "?")}${row.images ? " · images" : ""} · ${esc(priceLabel(row))}</option>`).join("")}
         </select>
         <select data-role="thinking" data-scope="${scope}" data-kind="${esc(kind)}" aria-label="${esc(kind)} thinking">
           ${THINKING.map((t) => `<option ${t === "high" ? "selected" : ""}>${t}</option>`).join("")}
@@ -415,7 +484,7 @@ function campaignHead(c, slots) {
       <span class="meter" title="${slots} of ${cap} slots busy">${meter}<b>${slots}/${cap}</b> slots</span>
       <span>${esc(c.autonomy)}</span>
       <span>${esc(c.landing)}${c.landing === "branch" ? ` → ${esc(c.base)}` : ""}</span>
-      <span>${num(c.spend.tokens)} tok · ${usd(c.spend.dollars)}</span>
+      <span>${num(c.spend.tokens)} tok · ${usd(c.spend.dollars)}${c.spend.unmetered ? ` · ${c.spend.unmetered} unmetered` : ""}</span>
       <span class="spacer"></span>
       ${c.stage === "running" ? `<button class="btn" data-act="pause" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Pause</button>` : ""}
       ${c.stage === "paused" ? `<button class="btn" data-act="resume" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Resume</button>` : ""}
@@ -557,6 +626,8 @@ function viewCampaign() {
             <select id="landing" name="landing">${["branch", "directory"].map((v) => `<option ${c.landing === v ? "selected" : ""}>${v}</option>`).join("")}</select>
           </div></div>
           <div class="field"><label for="base">Base</label><input id="base" name="base" type="text" value="${esc(c.base)}" /></div>
+          <div class="field"><label>Adapter</label><div class="stack">${adapterSelect("campaign")}<span class="sub">models, tools and billing of this campaign</span></div></div>
+          <div class="field"><label>Spend</label><div class="stack">${spendSelect("campaign")}<span class="sub">subscription-only hides metered models</span></div></div>
           <div class="field"><label for="autoship">Autoship</label><div class="stack">
             <input id="autoship" name="max_autoship_lines" type="number" min="0" value="${c.maxAutoshipLines}" />
             <span class="sub">changed lines above this never ship without you.</span>
@@ -566,7 +637,7 @@ function viewCampaign() {
               <input id="bt" name="budget_tokens" type="number" min="0" placeholder="tokens" value="${c.budget?.tokens ?? ""}" />
               <input name="budget_dollars" type="number" min="0" step="0.01" placeholder="dollars" value="${c.budget?.dollars ?? ""}" />
             </div>
-            <span class="sub">empty: no ceiling.</span>
+            <span class="sub">${c.runner?.adapter && c.runner.adapter !== "pi" && c.budget?.dollars ? "A dollar budget cannot cap a subscription adapter; tokens still apply." : "empty: no ceiling."}</span>
           </div></div>
         </div>
 
@@ -587,7 +658,7 @@ function viewCampaign() {
     </div>
 
     <section class="chains">
-      <header><h2 class="page">Model chains</h2><span class="hint">first model starts the ticket; each next one is the fallback</span></header>
+      <header><h2 class="page">Model chains</h2><span class="hint">first model starts the ticket; each next one is the fallback</span><button class="btn" data-act="refresh-catalog" data-scope="campaign">Refresh models</button></header>
       <div class="chain-grid">
         ${kinds
           .map(
@@ -670,13 +741,22 @@ function viewSettings() {
     </div>
     <div class="actions">
       <button class="btn primary" data-act="save-settings">Save settings</button>
-      <button class="btn" data-act="refresh-catalog">Refresh catalog</button>
+      <button class="btn" data-act="refresh-catalog" data-scope="console">Refresh catalog</button>
     </div>
   </section>
 
   <section class="settings-block">
+    <header><h2 class="page">Runner</h2><span class="hint">one agent tool per campaign</span></header>
+    <div class="limit-grid">
+      <label class="num-field"><span>Adapter</span>${adapterSelect("console")}</label>
+      <label class="num-field"><span>Spend</span>${spendSelect("console")}</label>
+    </div>
+    <p class="note" style="margin:8px 0 0">Subscription-only hides metered models; metered-ok shows every discovered model with its price. Changing the adapter changes which catalog the chains below can pick from.</p>
+  </section>
+
+  <section class="settings-block">
     <header><h2 class="page">Ticket kinds</h2><span class="hint">first model starts the ticket; each next one is the fallback</span></header>
-    <p class="note" style="margin:-4px 0 12px">Models come from <span class="mono">pi --list-models</span>: ${catalog().length} available right now. ${catalog().length ? "" : "Run <span class=\"mono\">orchestrate catalog</span> once credentials are set."}</p>
+    <p class="note" style="margin:-4px 0 12px">Models come from the selected adapter's catalog, enriched with price and modalities; cheapest capable first. ${catalog().length} available right now. ${catalog().length ? "" : "Run <span class=\"mono\">orchestrate catalog --refresh</span> once credentials are set."}</p>
     <div class="kind-grid">
       ${Object.entries(cfg.kinds || {})
         .map(
@@ -689,7 +769,7 @@ function viewSettings() {
         )
         .join("")}
     </div>
-    <div class="actions"><button class="btn primary" data-act="save-settings">Save settings</button><button class="btn" data-act="refresh-catalog">Refresh catalog</button></div>
+    <div class="actions"><button class="btn primary" data-act="save-settings">Save settings</button><button class="btn" data-act="refresh-catalog" data-scope="console">Refresh catalog</button></div>
   </section>`;
 }
 
@@ -736,7 +816,7 @@ async function command(root, body) {
       body: JSON.stringify({ token, root, ...body }),
     });
     toast(`${body.type.replace(/\./g, " ")} queued`);
-    setTimeout(() => load(), 350);
+    setTimeout(() => load(), body.type === "catalog.refresh" ? 3500 : 350);
   } catch (err) {
     toast(err.message);
   }
@@ -787,6 +867,7 @@ function saveCampaign(root, slug) {
     plan_gate: value("plan_gate"),
     landing: value("landing"),
     base: value("base"),
+    runner: { adapter: value("adapter") || adapterFor("campaign"), spend: value("spend") || "metered-ok" },
     checks,
     allow_paths: value("allow_paths")
       .split(",")
@@ -821,6 +902,10 @@ function saveSettings() {
         max_attempts: Number(value("limit_attempts")),
       },
       kinds,
+      runner: {
+        adapter: value("adapter") || adapterFor("console"),
+        spend: value("spend") || "metered-ok",
+      },
     },
   });
 }
@@ -1041,6 +1126,23 @@ function routeFromHash() {
 
 /* --- events --------------------------------------------------------------- */
 
+document.addEventListener("change", (event) => {
+  const spend = event.target.closest("select[name='spend']");
+  if (spend) {
+    spendChoice[view === "campaign" ? "campaign" : "console"] = spend.value;
+    render();
+    return;
+  }
+  const select = event.target.closest("select[data-role='adapter']");
+  if (!select) return;
+  const scope = select.dataset.scope;
+  adapterChoice[scope] = select.value;
+  spendChoice[scope] = null;
+  const kinds = scope === "console" ? state?.console?.kinds : current()?.effectiveKinds;
+  for (const id of Object.keys(kinds || {})) drafts[`${scope}:${id}`] = [];
+  render();
+});
+
 document.addEventListener("click", (event) => {
   const target = event.target.closest("[data-act]");
   if (!target) return;
@@ -1053,6 +1155,8 @@ document.addEventListener("click", (event) => {
       return render();
     case "select-campaign":
       clearDrafts("campaign");
+      adapterChoice.campaign = null;
+      spendChoice.campaign = null;
       selected = { root, campaign };
       if (view === "campaign") history.replaceState(null, "", `#campaign/${encodeURIComponent(campaign)}`);
       return render();
@@ -1115,8 +1219,12 @@ document.addEventListener("click", (event) => {
       return saveCampaign(root, campaign);
     case "save-settings":
       return saveSettings();
-    case "refresh-catalog":
-      return command(campaigns()[0].root, { type: "catalog.refresh" });
+    case "refresh-catalog": {
+      const root = campaigns()[0]?.root;
+      if (!root) return toast("No project registered yet");
+      const scope = target.dataset.scope || (view === "campaign" ? "campaign" : "console");
+      return command(root, { type: "catalog.refresh", adapter: adapterFor(scope) });
+    }
     case "add-ticket":
       return addTicket(root, campaign);
     case "chain-add": {

@@ -34,7 +34,7 @@ A **strip** is one ticket: a perforated number stub, the title, the kind, and te
 | **Inbox** (default) | Every open item across projects, oldest first: questions, deliveries, failures | Answer, approve, send back, open the ticket |
 | **Board** | Stage bands with their strips, the slot meter, spend, the ledger | Pause, resume, take a delivery, open a ticket |
 | **Campaign** | The brief as a document (goal, brief, criteria, constraints, reading) beside the operational settings, then the model chains, the ticket list, the decisions and a new-ticket form | Edit and save, approve, pause, resume, cancel all, deliver, archive, add a ticket, add or remove a model in a chain, share a decision |
-| **Settings** | Console limits and the ticket kinds, each with its chain as removable chips and a picker built from the live catalog | Edit and save, refresh the model catalog |
+| **Settings** | Console limits and the ticket kinds, each with its chain as removable chips and a picker built from the selected adapter's catalog; the runner adapter and spend mode | Edit and save, discover or refresh adapter models |
 | **Drawer** | One ticket in a pinned head and foot: what to build, criteria, findings, the last answer, its runs with model and cost, and the run log streaming | Only what applies: stop while it runs, retry when it failed or was sent back, answer when it waits, a note when it has landed; plus **edit** (title, kind, paths, blockers, body, criteria) and **remove** |
 
 Views have addresses: `#inbox`, `#board`, `#campaign`, `#campaign/<slug>`, `#settings`, and `#ticket/03` for the drawer, so a link or a screenshot points at the same thing next time.
@@ -53,7 +53,7 @@ Dark is the default. `?theme=light` / `?theme=dark`, or the toggle at the foot o
 
 Both have CLI equivalents: `orchestrate start "<goal>"` and `orchestrate ticket add`.
 
-**Chains are picked, never typed.** Each kind shows its models as chips (`provider/model` and thinking level), with a picker listing everything `pi --list-models` reports — provider, model, context window and whether it reads images. The first chip starts the ticket; each one after it is a fallback. Removing a chip removes that entry; adding one appends. The panel refuses a save whose chain is empty for a kind the plan uses.
+**Chains are picked, never typed.** Each kind shows its models as chips (`provider/model` and thinking level), with a picker listing everything the selected adapter's catalog reports — provider, model, context window, whether it reads images, and the price per 1M tokens when the adapter knows it. Options are sorted by a blended list price (input weighted 4:1 over output), free first and unknown last; for code, design, visual and review, free/promo models are hidden by default. Subscription-only hides models outside the plan, and the adapter selector shows which catalog, tools and billing apply. The panel refuses a save that binds a model from another adapter. The first chip starts the ticket; each one after it is a fallback. Removing a chip removes that entry; adding one appends.
 
 ## Rules
 

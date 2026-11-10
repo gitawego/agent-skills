@@ -4,7 +4,7 @@ The design record for `skills/orchestration/`. What was decided, why, and what i
 
 ## The shape in one paragraph
 
-A campaign is one paragraph of intent plus a set of tickets with blocking edges. A supervisor process reads the plan, dispatches each ready ticket as a headless `pi` worker in its own worktree on a bound model, collects a structured report, runs deterministic checks and a cold review, and lands what passes. Anything that genuinely needs a person becomes one inbox item in a local panel; answering it resumes the same worker session. The skill is content plus a zero-dependency Node runtime; the plan is committed, the machine state is not.
+A campaign is one paragraph of intent plus a set of tickets with blocking edges. A supervisor process reads the plan, dispatches each ready ticket as a headless worker through its adapter (`pi`, Antigravity ACP, or OpenCode ACP) in its own worktree on a bound model, collects a structured report, runs deterministic checks and a cold review, and lands what passes. Anything that genuinely needs a person becomes one inbox item in a local panel; answering it resumes the same worker session. The skill is content plus a zero-dependency Node runtime; the plan is committed, the machine state is not.
 
 ## Decisions
 
@@ -12,7 +12,7 @@ A campaign is one paragraph of intent plus a set of tickets with blocking edges.
 | --- | --- | --- |
 | 1 | Skill plus a zero-dep Node runtime, tick-based | Real-time, restarts, and slots need durable state and a loop; a convention-only skill cannot answer "in flight while I sleep", and a full daemon is a product, not a skill |
 | 2 | Funnel from idea to merge, planning half thin | Otherwise the skill is `implement-spec` with a dashboard; a complex task arrives as a paragraph |
-| 3 | Workers are headless `pi` processes, pi-only, with an adapter seam | Per-run model, live log, slot freed on exit, orchestrator restart does not kill work |
+| 3 | Workers are headless processes behind an adapter: `pi` CLI or ACP (`agy`, `opencode`) | Per-run model, live log, slot freed on exit, orchestrator restart does not kill work |
 | 4 | Push right; autonomy per campaign; inbox holds only question, review, failure | Attention is the scarce resource; progress reports are noise by construction |
 | 5 | Panel is full control | Every panel action has a CLI equivalent, because a control surface that cannot act is a dashboard |
 | 6 | State per project plus a console registry | Cross-project inbox is the daily-use feature; cross-machine sync is not |
@@ -119,7 +119,7 @@ Proof added in this pass: a second real campaign in a **different project** with
 
 ## Out of scope for v1
 
-Non-`pi` harnesses (Codex, Antigravity), cross-machine sync, external sources (GitHub, Feishu, mail), webhooks from outside, per-model quota beyond spend display, auto-merge to a protected base without a human, and a mobile view.
+Harnesses beyond the built-in `pi`, `agy-acp` and `opencode-acp` adapters, cross-machine sync, external sources (GitHub, Feishu, mail), webhooks from outside, per-model quota beyond spend display, auto-merge to a protected base without a human, and a mobile view.
 
 ## Open questions for review
 

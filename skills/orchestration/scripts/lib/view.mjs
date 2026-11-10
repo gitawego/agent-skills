@@ -8,7 +8,7 @@ import {
   readJsonl,
   readText,
 } from "./util.mjs";
-import { listCampaigns, loadConsole, readCampaign, resolveKinds } from "./config.mjs";
+import { listCampaigns, loadConsole, readCampaign, resolveKinds, runnerConfig } from "./config.mjs";
 import { loadPlan, ticketTitle, asArray } from "./plan.mjs";
 import { loadState } from "./state.mjs";
 import { readEvents } from "./ledger.mjs";
@@ -82,6 +82,7 @@ export function campaignView(root, slug) {
     planGate: campaign.data.plan_gate || "human",
     landing: campaign.data.landing || "branch",
     base: campaign.data.base || "main",
+    runner: runnerConfig(loadConsole(), campaign.data),
     budget: campaign.data.budget || null,
     maxAutoshipLines: campaign.data.max_autoship_lines ?? 200,
     checks: (campaign.data.checks || []).map((c) => ({ name: c.name, cmd: c.cmd })),

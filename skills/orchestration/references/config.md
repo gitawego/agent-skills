@@ -46,7 +46,17 @@ Two files hold configuration. The **console** holds defaults for every project o
 
 A kind that reports (every kind does) needs a tool that can write `report.json`: `bash` or `write`. A tool set without either is refused at validation, because a reviewer that cannot report can only fail.
 
-`runner.command` is the worker program. It stays `pi` unless a test or another harness needs to stand in, which is the adapter seam; everything else in the contract is unchanged.
+`runner.command` is the pi executable override; it stays `pi` unless a test or another harness needs to stand in. The adapter seam is `runner.adapter`: `pi`, `agy-acp` (Antigravity), or `opencode-acp`. A campaign may override the console's adapter in its frontmatter:
+
+```yaml
+runner:
+  adapter: opencode-acp
+  spend: subscription-only
+```
+
+`spend` is `subscription-only` or `metered-ok`. Subscription-only hides models the plan does not include and refuses a binding to them; metered-ok shows every discovered model with its price. Antigravity and OpenCode Go default to subscription-only; pi defaults to metered-ok. The campaign's adapter is fixed while it runs, for the same reason a chain is.
+
+Every adapter writes a snapshot to `~/.local/state/orchestration/catalogs/<adapter>.json`; the panel reads it and `bind`/`approve` refresh it. ACP discovery creates and closes one session, so it costs seconds, not tokens.
 
 The `kinds` block is the role table. Worker roles and the roles that judge, review, and merge are all ticket kinds, one axis, so "which model ran this?" has exactly one answer. Each kind also has a role contract under `references/roles/`, appended to that run's system prompt after the standing `contract.md`; a custom kind with no file of its own gets `roles/general.md`.
 
@@ -56,7 +66,7 @@ A **chain** is ordered. The first model starts the ticket; each next one is the 
 
 ## Binding
 
-`node scripts/orchestrate.mjs catalog` prints the live catalog: provider, model, context window, max output, whether it thinks, whether it sees images. There is no price and no quality ranking in it, so binding is a judgement, not a lookup: read the table, match the model to the kind of work, and say why in one line.
+`node scripts/orchestrate.mjs catalog` prints the live catalog: provider, model, context window, max output, whether it thinks, whether it sees images, and the price per 1M tokens when the adapter's model store knows it. There is no quality ranking in it, so binding is a judgement, not a lookup: read the table, match the model to the kind of work, and say why in one line. Rows are ordered by a blended list price (input weighted 4:1 over output), free first and unknown price last; that is an ordering, not an automatic choice.
 
 Rules of thumb, not policy:
 
@@ -144,7 +154,7 @@ The console is the default; the campaign may tighten. Concurrency, timeout, and 
 
 Binding is refused, with the offending value named, when:
 
-- a model in a chain is absent from `pi --list-models` (offer `catalog` to refresh);
+- a model in a chain is absent from the campaign adapter's catalog (offer `catalog --refresh`);
 - a chain is empty, for any kind the plan uses;
 - the write lands while the campaign is `running` or a run is live;
 - a cap exceeds the console's cap;

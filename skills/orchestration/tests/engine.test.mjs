@@ -6,8 +6,8 @@ import { sandbox, project, writeConsole, writeCampaign, writeTicket, commitAll, 
 import { tick, applyCommand } from "../scripts/lib/engine.mjs";
 import { campaignView } from "../scripts/lib/view.mjs";
 import { loadState } from "../scripts/lib/state.mjs";
-import { loadConsole } from "../scripts/lib/config.mjs";
-import { listItems } from "../scripts/lib/inbox.mjs";
+import { loadConsole, readCampaign } from "../scripts/lib/config.mjs";
+import { listItems, createItem } from "../scripts/lib/inbox.mjs";
 
 const BODY = `## Goal
 
@@ -276,6 +276,30 @@ test("a failed model falls back to the next entry in the chain", async () => {
   assert.deepEqual(models, [MODELS.strong, MODELS.backup, MODELS.backup]);
 });
 
+test("the runner adapter and spend persist through campaign.save", () => {
+  const { dir, slug } = setup({ tickets: 1 });
+  applyCommand(
+    dir,
+    { type: "campaign.save", campaign: slug, patch: { runner: { adapter: "agy-acp", spend: "subscription-only" } } },
+    loadConsole(),
+  );
+  const data = readCampaign(dir, slug).data;
+  assert.equal(data.runner.adapter, "agy-acp");
+  assert.equal(data.runner.spend, "subscription-only");
+});
+
+test("the console adapter and spend persist through settings.save", () => {
+  const { dir } = setup({ tickets: 1 });
+  applyCommand(
+    dir,
+    { type: "settings.save", patch: { runner: { adapter: "opencode-acp", spend: "subscription-only" } } },
+    loadConsole(),
+  );
+  const runner = loadConsole().runner;
+  assert.equal(runner.adapter, "opencode-acp");
+  assert.equal(runner.spend, "subscription-only");
+});
+
 test("stop and retry refuse a ticket that has nothing to act on", async () => {
   const { dir, slug } = setup({ tickets: 1 });
   scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
@@ -366,6 +390,20 @@ test("a campaign-level rejection does not merge the branch", async () => {
   assert.ok(!fs.existsSync(path.join(dir, "work-01.txt")), "nothing merged into main");
   assert.equal(gitOut(dir, ["rev-parse", "HEAD"]), head, "no merge commit was made");
   assert.ok(fs.existsSync(path.join(dir, "orchestration", slug, "campaign.md")));
+});
+
+test("resume dismisses a budget pause item once the ceiling is raised", () => {
+  const { dir, slug } = setup({ tickets: 1 });
+  createItem(dir, slug, {
+    kind: "failure",
+    title: "Campaign paused: 100 tokens budget spent",
+    brief: "Spend reached 100 tokens.",
+  });
+  applyCommand(dir, { type: "resume", campaign: slug }, loadConsole());
+  const open = listItems(dir, slug, { status: "open" }).filter((i) => /budget/.test(i.title || ""));
+  assert.equal(open.length, 0);
+  const item = listItems(dir, slug).find((i) => /budget/.test(i.title || ""));
+  assert.equal(item.status, "dismissed");
 });
 
 test("cancel stops every live run and pauses, keeping the tickets queued", async () => {

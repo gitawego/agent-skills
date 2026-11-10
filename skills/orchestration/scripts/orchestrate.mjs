@@ -23,11 +23,14 @@ import {
   panelToken,
   pidAlive,
 } from "./lib/util.mjs";
-import { catalog, ensureConsole, listCampaigns, loadConsole, readCampaign, resolveModel } from "./lib/config.mjs";
+import { catalog, ensureConsole, listCampaigns, loadConsole, readCampaign, resolveModel, runnerConfig, saveConsole } from "./lib/config.mjs";
+import { refreshCatalog, rowsFor, adaptersView } from "./lib/catalogs.mjs";
+import { ADAPTER_IDS, SPEND_MODES } from "./lib/adapter-ids.mjs";
 import { asArray, loadPlan, ticketTitle } from "./lib/plan.mjs";
 import { decisionsFor, promoteDecision, readDecisions, summaryLine } from "./lib/memory.mjs";
 import { readEvents } from "./lib/ledger.mjs";
 import { diffStats, integrationBranch } from "./lib/landing.mjs";
+import { priceLabel } from "./lib/pricing.mjs";
 import { approveCampaign, tick } from "./lib/engine.mjs";
 import { enqueue } from "./lib/commands.mjs";
 import { listItems } from "./lib/inbox.mjs";
@@ -162,14 +165,44 @@ const commands = {
     console.log(`project   ${root}`);
     console.log(`state     ${path.join(root, ".orchestration")}`);
     console.log(`console   ${consoleFile()}${created ? " (created)" : ""}`);
-    const rows = catalog();
-    console.log(`catalog   ${rows.length} models, ${new Set(rows.map((r) => r.provider)).size} providers`);
+    const adapters = adaptersView();
+    const total = adapters.reduce((n, a) => n + (a.models || 0), 0);
+    console.log(`adapters  ${adapters.map((a) => `${a.id}${a.models ? ` (${a.models})` : ""}`).join(", ")} — ${total} models`);
+    console.log(`catalog   set the adapter with \`orchestrate adapter <id>\`, then refresh it in the panel`);
     console.log("");
     console.log('Next: orchestrate start "<goal>"');
   },
 
+  adapter({ flags, positional }) {
+    const id = positional[0];
+    if (!ADAPTER_IDS.includes(id)) throw new UserError(`unknown adapter "${id}"`, [`one of ${ADAPTER_IDS.join(", ")}`]);
+    const spend = flags.spend;
+    if (spend && !SPEND_MODES.includes(spend)) throw new UserError(`unknown spend mode "${spend}"`);
+    const config = loadConsole();
+    config.runner = { ...config.runner, adapter: id, ...(spend ? { spend } : {}) };
+    saveConsole(config);
+    console.log(`console adapter: ${id}${spend ? ` (${spend})` : ""}`);
+  },
+
   catalog({ flags, positional }) {
-    const rows = catalog();
+    const root = rootDir(flags);
+    const adapter = flags.adapter || loadConsole().runner?.adapter || "pi";
+    if (flags.refresh) {
+      try {
+        refreshCatalog(adapter, { cwd: root });
+      } catch (err) {
+        throw new UserError(`adapter "${adapter}" could not discover models`, [
+          err.message,
+          err.hint || "Check that the harness is installed and signed in.",
+        ]);
+      }
+    }
+    const rows = adapter === "pi" ? catalog() : rowsFor(adapter);
+    if (!rows.length) {
+      throw new UserError(`no catalog for adapter "${adapter}"`, [
+        `Run \`orchestrate catalog --adapter ${adapter} --refresh\` once.`,
+      ]);
+    }
     const search = (positional[0] || "").toLowerCase();
     const list = rows.filter((r) => !search || `${r.provider}/${r.model}`.toLowerCase().includes(search));
     if (flags.json) {
@@ -177,11 +210,20 @@ const commands = {
       return;
     }
     const pad = (s, n) => String(s).padEnd(n);
-    console.log(`${pad("model", 44)} ${pad("context", 10)} ${pad("out", 8)} think  images`);
+    console.log(`${pad("model", 44)} ${pad("context", 10)} ${pad("out", 8)} think  images  price`);
     for (const row of list) {
       console.log(
-        `${pad(`${row.provider}/${row.model}`, 44)} ${pad(row.context, 10)} ${pad(row.maxOut, 8)} ${row.thinking ? "yes" : "no "}    ${row.images ? "yes" : "no"}`,
+        `${pad(`${row.provider}/${row.model}`, 44)} ${pad(row.context || "?", 10)} ${pad(row.maxOut || "?", 8)} ${row.thinking ? "yes" : "no "}    ${row.images == null ? "?" : row.images ? "yes" : "no"}     ${priceLabel(row)}`,
       );
+    }
+  },
+
+  adapters({ flags }) {
+    const rows = adaptersView();
+    const pad = (s, n) => String(s).padEnd(n);
+    console.log(`${pad("adapter", 16)} ${pad("version", 12)} ${pad("models", 8)} fetched`);
+    for (const row of rows) {
+      console.log(`${pad(row.id, 16)} ${pad(row.adapterVersion || "?", 12)} ${pad(String(row.models), 8)} ${row.fetchedAt || "not discovered"}`);
     }
   },
 
@@ -367,19 +409,40 @@ const commands = {
     if (!kindId || !modelArg) {
       throw new UserError("Usage: orchestrate bind <campaign> <kind> <model>[:thinking] [--fallback <model>[:thinking]]");
     }
-    const rows = catalog();
+    const slug = resolveCampaign(root, campaignArg);
+    const campaign = readCampaign(root, slug);
+    const runner = runnerConfig(loadConsole(), campaign.data);
+    try {
+      if (runner.adapter !== "pi") refreshCatalog(runner.adapter, { cwd: root });
+    } catch (err) {
+      throw new UserError(`adapter "${runner.adapter}" could not discover models`, [
+        err.message,
+        err.hint || "Check that the harness is installed and signed in.",
+      ]);
+    }
+    const rows = rowsFor(runner.adapter);
     const parse = (value) => {
       const [model, thinking] = String(value).split(":");
       const resolved = resolveModel(model, rows);
-      if (!resolved) throw new UserError(`"${model}" is not in the catalog`, ["Run `orchestrate catalog` and pick a model id."]);
+      if (!resolved) {
+        throw new UserError(`"${model}" is not in the catalog for adapter "${runner.adapter}"`, [
+          `Run \`orchestrate catalog --adapter ${runner.adapter}\` and pick a model id.`,
+        ]);
+      }
+      if (resolved.adapter && resolved.adapter !== runner.adapter) {
+        throw new UserError(`"${model}" belongs to adapter "${resolved.adapter}", not "${runner.adapter}"`);
+      }
+      if (runner.spend === "subscription-only" && resolved.included === false) {
+        throw new UserError(`"${model}" is not included in the ${runner.adapter} subscription`, [
+          "Set runner.spend: metered-ok on the campaign to allow metered models.",
+        ]);
+      }
       return { model: `${resolved.provider}/${resolved.model}`, thinking: thinking || "medium" };
     };
     const chain = [parse(modelArg)];
     const fallbacks = flags.fallback ? (Array.isArray(flags.fallback) ? flags.fallback : [flags.fallback]) : [];
     for (const value of fallbacks) chain.push(parse(value));
 
-    const slug = resolveCampaign(root, campaignArg);
-    const campaign = readCampaign(root, slug);
     const state = loadState(root, slug);
     const live = Object.values(state.runs).some((run) => run.status === "live");
     if ((state.stage === "running" || campaign.data.stage === "running" || live) && !flags.force) {
@@ -712,7 +775,9 @@ const commands = {
   ticket add|edit|remove ...            change the plan: add, edit a ticket, remove one
   cancel [campaign]                     stop every live run and pause
   archive [campaign]                    close a delivered campaign
-  catalog [search]                      the live model catalog
+  catalog [search]                       the live model catalog; --adapter <id> [--refresh]
+  adapters                               adapters, versions and catalog status
+  adapter <id> [--spend mode]            set the console adapter and spend mode
   bind <campaign> <kind> <model>[:t]    set a kind's chain; --fallback for the next entry
   approve <campaign>                    approve plan and bindings, then dispatch
   up                                    start the panel if needed, open it, print the URL

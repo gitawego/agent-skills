@@ -11,6 +11,7 @@ import {
   ensureDir,
   git,
   nowIso,
+  readJson,
   readJsonl,
   readText,
 } from "./util.mjs";
@@ -21,6 +22,7 @@ import {
   ensureTickets,
   liveRuns,
   loadState,
+  runDir,
   saveRunRecord,
   saveState,
   setStage,
@@ -36,12 +38,15 @@ import {
   readCampaign,
   resolveKinds,
   resolveModel,
+  resetCatalog,
+  runnerConfig,
   saveConsole,
   validateCampaign,
 } from "./config.mjs";
+import { getAdapter, refreshCatalog, rowsFor } from "./catalogs.mjs";
+import { ADAPTER_IDS, SPEND_MODES } from "./adapter-ids.mjs";
 import { joinFrontmatter, splitFrontmatter, updateFrontmatter } from "./yaml.mjs";
 import {
-  buildWorkerArgv,
   killRun,
   newRunId,
   runStuck,
@@ -125,7 +130,14 @@ export function tickCampaign(root, slug, consoleConfig) {
   if (firstLoad && data.stage) state.stage = data.stage;
   ensureTickets(state, plan);
 
-  const validation = validateCampaign({ root, consoleConfig, data, tickets: plan.ordered });
+  const runner = runnerConfig(consoleConfig, data);
+  let rows = [];
+  try {
+    rows = rowsFor(runner.adapter);
+  } catch {
+    rows = [];
+  }
+  const validation = validateCampaign({ root, consoleConfig, data, tickets: plan.ordered, catalogRows: rows });
   state.planErrors = [...plan.errors, ...validation.errors];
   const kinds = validation.kinds || resolveKinds(consoleConfig, data);
 
@@ -207,6 +219,8 @@ function collectRuns(root, slug, state, plan, kinds, consoleConfig, data) {
       }
     }
     const summary = summarizeRun(root, slug, runId);
+    const session = readJson(path.join(runDir(root, slug, runId), "session.json"), null);
+    if (session?.sessionId) run.sessionId = session.sessionId;
     run.usage = summary.usage;
     addSpend(state, { model: run.model, ...summary.usage });
     appendEvent(root, {
@@ -586,15 +600,22 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
   const id = ticket.data.id;
   const entry = ticketState(state, id);
   const kind = kinds[ticket.data.kind];
+  const runner = runnerConfig(consoleConfig, data);
+  let rows = [];
+  try {
+    rows = rowsFor(runner.adapter);
+  } catch {
+    rows = [];
+  }
   let chainIndex = entry.chainIndex || 0;
-  if (!kind.models[chainIndex] || !resolveModel(kind.models[chainIndex].model)) {
-    chainIndex = kind.models.findIndex((m) => resolveModel(m.model));
+  if (!kind.models[chainIndex] || !resolveModel(kind.models[chainIndex].model, rows)) {
+    chainIndex = kind.models.findIndex((m) => resolveModel(m.model, rows));
     if (chainIndex < 0) {
-      setStage(root, slug, state, id, "failed", { reason: `no usable model for kind "${ticket.data.kind}"` });
+      setStage(root, slug, state, id, "failed", { reason: `no usable model for kind "${ticket.data.kind}" on adapter "${runner.adapter}"` });
       return null;
     }
   }
-  const modelEntry = resolveModel(kind.models[chainIndex].model);
+  const modelEntry = resolveModel(kind.models[chainIndex].model, rows);
   const thinking = kind.models[chainIndex].thinking || "medium";
 
   const landing = data.landing || "branch";
@@ -628,7 +649,14 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
 
   const attempt = (entry.attempts || 0) + 1;
   const runId = newRunId(id, "work", attempt);
-  const sessionId = resume ? sessionIdFor(slug, id, "work") : sessionIdFor(slug, id, attempt > 1 ? `work-a${attempt}` : "work");
+  const sessionId =
+    runner.adapter === "pi"
+      ? resume
+        ? sessionIdFor(slug, id, "work")
+        : sessionIdFor(slug, id, attempt > 1 ? `work-a${attempt}` : "work")
+      : resume
+        ? entry.sessionId || null
+        : null;
   const campaign = readCampaign(root, slug);
   const prompt = resume
     ? resumePrompt({
@@ -658,6 +686,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
     ticket: id,
     role: "work",
     kind: ticket.data.kind,
+    adapter: runner.adapter,
     model: modelKey(modelEntry),
     chain: kind.models.map((m) => m.model),
     chainIndex,
@@ -669,7 +698,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
     systemPromptHash: systemPromptDigest(systemPrompts),
     promptHash: promptDigest(prompt),
   };
-  const argv = buildWorkerArgv({
+  const launch = getAdapter(runner.adapter).buildLaunch({
     run,
     modelEntry,
     thinking,
@@ -677,13 +706,17 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
     prompt,
     sessionsDir: campaignSessionsDir(root, slug),
     systemPrompts,
+    runDir: runDir(root, slug, runId),
+    workdir,
+    command: consoleConfig.runner?.command || "pi",
   });
   const record = startRun({
     root,
     slug,
     run,
-    argv,
-    command: consoleConfig.runner?.command || "pi",
+    argv: launch.argv,
+    command: launch.command,
+    env: launch.env || {},
     workdir,
   });
   state.runs[runId] = record;
@@ -706,9 +739,17 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
 function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfig }) {
   const id = ticket.data.id;
   const entry = ticketState(state, id);
+  const campaign = readCampaign(root, slug);
+  const runner = runnerConfig(consoleConfig, campaign.data);
+  let rows = [];
+  try {
+    rows = rowsFor(runner.adapter);
+  } catch {
+    rows = [];
+  }
   const kind = kinds.review || kinds[ticket.data.kind];
   const index = 0;
-  const modelEntry = resolveModel(kind.models[index]?.model || "");
+  const modelEntry = resolveModel(kind.models[index]?.model || "", rows);
   if (!modelEntry) {
     return failedRun({
       root,
@@ -721,9 +762,8 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
       kinds,
     });
   }
-  const campaign = readCampaign(root, slug);
   const runId = newRunId(id, "review", (entry.gateCycles || 0) + 1);
-  const sessionId = sessionIdFor(slug, id, `review${(entry.gateCycles || 0) + 1}`);
+  const sessionId = runner.adapter === "pi" ? sessionIdFor(slug, id, `review${(entry.gateCycles || 0) + 1}`) : null;
   const prompt = reviewPrompt({
     campaign: slug,
     ticket: id,
@@ -743,6 +783,7 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
     ticket: id,
     role: "review",
     kind: "review",
+    adapter: runner.adapter,
     model: modelKey(modelEntry),
     chain: kind.models.map((m) => m.model),
     chainIndex: index,
@@ -752,7 +793,7 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
     systemPromptHash: systemPromptDigest(systemPrompts),
     promptHash: promptDigest(prompt),
   };
-  const argv = buildWorkerArgv({
+  const launch = getAdapter(runner.adapter).buildLaunch({
     run: gateRun,
     modelEntry,
     thinking: kind.models[index]?.thinking || "high",
@@ -760,13 +801,17 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
     prompt,
     sessionsDir: campaignSessionsDir(root, slug),
     systemPrompts,
+    runDir: runDir(root, slug, runId),
+    workdir: run.workdir,
+    command: campaign.data.runner?.command || consoleConfig.runner?.command || "pi",
   });
   const record = startRun({
     root,
     slug,
     run: gateRun,
-    argv,
-    command: consoleConfig.runner?.command || "pi",
+    argv: launch.argv,
+    command: launch.command,
+    env: launch.env || {},
     workdir: run.workdir,
   });
   state.runs[runId] = record;
@@ -785,8 +830,16 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
 function startJudge({ root, slug, state, plan, ticket, run, report, kinds, consoleConfig }) {
   const id = ticket.data.id;
   const entry = ticketState(state, id);
+  const campaign = readCampaign(root, slug);
+  const runner = runnerConfig(consoleConfig, campaign.data);
+  let rows = [];
+  try {
+    rows = rowsFor(runner.adapter);
+  } catch {
+    rows = [];
+  }
   const kind = kinds.plan;
-  const modelEntry = resolveModel(kind.models[0]?.model || "");
+  const modelEntry = resolveModel(kind.models[0]?.model || "", rows);
   if (!modelEntry) {
     if (!openItemForTicket(root, slug, id, "question")) {
       createItem(root, slug, {
@@ -801,9 +854,8 @@ function startJudge({ root, slug, state, plan, ticket, run, report, kinds, conso
     setStage(root, slug, state, id, "needs_answer");
     return null;
   }
-  const campaign = readCampaign(root, slug);
   const runId = newRunId(id, "judge", 1);
-  const sessionId = sessionIdFor(slug, id, `judge${runId.slice(-6)}`);
+  const sessionId = runner.adapter === "pi" ? sessionIdFor(slug, id, `judge${runId.slice(-6)}`) : null;
   const prompt = judgePrompt({
     campaign: slug,
     ticket: id,
@@ -822,6 +874,7 @@ function startJudge({ root, slug, state, plan, ticket, run, report, kinds, conso
     ticket: id,
     role: "judge",
     kind: "plan",
+    adapter: runner.adapter,
     model: modelKey(modelEntry),
     chain: kind.models.map((m) => m.model),
     chainIndex: 0,
@@ -832,7 +885,7 @@ function startJudge({ root, slug, state, plan, ticket, run, report, kinds, conso
     systemPromptHash: systemPromptDigest(systemPrompts),
     promptHash: promptDigest(prompt),
   };
-  const argv = buildWorkerArgv({
+  const launch = getAdapter(runner.adapter).buildLaunch({
     run: judgeRun,
     modelEntry,
     thinking: kind.models[0]?.thinking || "high",
@@ -840,13 +893,17 @@ function startJudge({ root, slug, state, plan, ticket, run, report, kinds, conso
     prompt,
     sessionsDir: campaignSessionsDir(root, slug),
     systemPrompts,
+    runDir: runDir(root, slug, runId),
+    workdir: root,
+    command: consoleConfig.runner?.command || "pi",
   });
   const record = startRun({
     root,
     slug,
     run: judgeRun,
-    argv,
-    command: consoleConfig.runner?.command || "pi",
+    argv: launch.argv,
+    command: launch.command,
+    env: launch.env || {},
     workdir: root,
   });
   state.runs[runId] = record;
@@ -856,8 +913,16 @@ function startJudge({ root, slug, state, plan, ticket, run, report, kinds, conso
 }
 
 function startMerge({ root, slug, state, ticketId, run, conflict, kinds, consoleConfig }) {
+  const campaign = readCampaign(root, slug);
+  const runner = runnerConfig(consoleConfig, campaign.data);
+  let rows = [];
+  try {
+    rows = rowsFor(runner.adapter);
+  } catch {
+    rows = [];
+  }
   const kind = kinds.chores || kinds.code;
-  const modelEntry = resolveModel(kind.models[0]?.model || "");
+  const modelEntry = resolveModel(kind.models[0]?.model || "", rows);
   if (!modelEntry) {
     setStage(root, slug, state, ticketId, "needs_answer", { reason: "conflict, and no model to merge with" });
     if (!openItemForTicket(root, slug, ticketId, "question")) {
@@ -872,10 +937,9 @@ function startMerge({ root, slug, state, ticketId, run, conflict, kinds, console
     }
     return null;
   }
-  const campaign = readCampaign(root, slug);
   const { dir } = ensureIntegration(root, slug, campaign.data.base || "main");
   const runId = newRunId(ticketId, "merge", 1);
-  const sessionId = sessionIdFor(slug, ticketId, `merge${runId.slice(-6)}`);
+  const sessionId = runner.adapter === "pi" ? sessionIdFor(slug, ticketId, `merge${runId.slice(-6)}`) : null;
   const prompt = mergePrompt({ root: dir, slug, ticket: ticketId, conflict });
   writePrompt(root, slug, runId, prompt);
   const systemPrompts = systemPromptFiles("merge");
@@ -885,6 +949,7 @@ function startMerge({ root, slug, state, ticketId, run, conflict, kinds, console
     ticket: ticketId,
     role: "merge",
     kind: "chores",
+    adapter: runner.adapter,
     model: modelKey(modelEntry),
     chain: kind.models.map((m) => m.model),
     chainIndex: 0,
@@ -895,7 +960,7 @@ function startMerge({ root, slug, state, ticketId, run, conflict, kinds, console
     systemPromptHash: systemPromptDigest(systemPrompts),
     promptHash: promptDigest(prompt),
   };
-  const argv = buildWorkerArgv({
+  const launch = getAdapter(runner.adapter).buildLaunch({
     run: mergeRun,
     modelEntry,
     thinking: kind.models[0]?.thinking || "low",
@@ -903,13 +968,17 @@ function startMerge({ root, slug, state, ticketId, run, conflict, kinds, console
     prompt,
     sessionsDir: campaignSessionsDir(root, slug),
     systemPrompts,
+    runDir: runDir(root, slug, runId),
+    workdir: dir,
+    command: consoleConfig.runner?.command || "pi",
   });
   const record = startRun({
     root,
     slug,
     run: mergeRun,
-    argv,
-    command: consoleConfig.runner?.command || "pi",
+    argv: launch.argv,
+    command: launch.command,
+    env: launch.env || {},
     workdir: dir,
   });
   state.runs[runId] = record;
@@ -1098,11 +1167,23 @@ function writeClose(root, slug, state, plan, data) {
 export function approveCampaign(root, slug, consoleConfig, { automatic = false, state: given = null } = {}) {
   const campaign = readCampaign(root, slug);
   const plan = loadPlan(root, slug);
+  const runner = runnerConfig(consoleConfig, campaign.data);
+  let rows = [];
+  try {
+    if (runner.adapter !== "pi") refreshCatalog(runner.adapter, { cwd: root });
+    rows = rowsFor(runner.adapter);
+  } catch (err) {
+    throw new UserError(`Cannot approve "${slug}"`, [
+      `adapter "${runner.adapter}" could not discover models: ${err.message}`,
+      err.hint || "Check that the harness is installed and signed in.",
+    ]);
+  }
   const { errors } = validateCampaign({
     root,
     consoleConfig,
     data: campaign.data,
     tickets: plan.ordered,
+    catalogRows: rows,
   });
   const all = [...plan.errors, ...errors];
   if (all.length) throw new UserError(`Cannot approve "${slug}"`, all);
@@ -1119,10 +1200,22 @@ export function approveCampaign(root, slug, consoleConfig, { automatic = false, 
 export function applyCommand(root, command, consoleConfig) {
   const slug = command.campaign;
   const type = command.type;
-  if (type === "catalog.refresh") return { ok: true, refreshed: true };
+  if (type === "catalog.refresh") {
+    const adapter = command.adapter || loadConsole().runner?.adapter || "pi";
+    refreshCatalog(adapter, { cwd: root });
+    resetCatalog();
+    return { ok: true, refreshed: true, adapter };
+  }
   if (type === "settings.save") {
     const config = loadConsole();
     const patch = command.patch || {};
+    if (patch.runner) {
+      if (patch.runner.adapter && !ADAPTER_IDS.includes(patch.runner.adapter))
+        throw new UserError(`unknown adapter "${patch.runner.adapter}"`);
+      if (patch.runner.spend && !SPEND_MODES.includes(patch.runner.spend))
+        throw new UserError(`unknown spend mode "${patch.runner.spend}"`);
+      config.runner = { ...config.runner, ...patch.runner };
+    }
     if (patch.limits) {
       for (const [key, value] of Object.entries(patch.limits)) {
         if (!Number.isInteger(value) || value < 0) throw new UserError(`limits.${key} must be a positive integer`);
@@ -1133,8 +1226,12 @@ export function applyCommand(root, command, consoleConfig) {
       const current = config.kinds[id];
       if (!current) throw new UserError(`unknown ticket kind "${id}"`);
       if (change.models) {
+        const rows = rowsFor(config.runner?.adapter || "pi");
         for (const entry of change.models) {
-          if (!resolveModel(entry.model)) throw new UserError(`model "${entry.model}" is not in the catalog`);
+          const resolved = resolveModel(entry.model, rows);
+          if (!resolved) throw new UserError(`model "${entry.model}" is not in the ${config.runner?.adapter || "pi"} catalog`);
+          if (config.runner?.spend === "subscription-only" && resolved.included === false)
+            throw new UserError(`model "${entry.model}" is not included in the subscription`);
         }
         current.models = change.models;
       }
@@ -1167,6 +1264,15 @@ export function applyCommand(root, command, consoleConfig) {
     campaignStage(root, slug, state, next, command.reason || null);
     saveState(root, slug, state);
     writeStageToPlan(root, slug, next);
+    if (next === "running") {
+      /* A budget pause leaves a failure item; resuming after raising the
+         ceiling should not leave it sitting in the inbox. */
+      for (const item of listItems(root, slug, { status: "open" })) {
+        if (item.kind === "failure" && /^Campaign paused: .*budget/.test(item.title || "")) {
+          updateItem(root, slug, item.id, { status: "dismissed" });
+        }
+      }
+    }
     return { ok: true };
   }
   if (type === "stop") {

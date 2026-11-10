@@ -1,7 +1,6 @@
 // Console defaults, campaign config, the model catalog, and validation.
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import {
   UserError,
   consoleFile,
@@ -14,6 +13,8 @@ import {
   git,
 } from "./util.mjs";
 import { splitFrontmatter } from "./yaml.mjs";
+import { listPiModels, resetPiCatalog } from "./pi-catalog.mjs";
+import { ADAPTER_IDS, DEFAULT_ADAPTER, DEFAULT_SPEND, SPEND_MODES } from "./adapter-ids.mjs";
 
 export const DEFAULT_KINDS = {
   plan: {
@@ -86,7 +87,7 @@ export function defaultConsole() {
       human_slot_extra: 1,
     },
     kinds: structuredClone(DEFAULT_KINDS),
-    runner: { command: "pi" },
+    runner: { command: "pi", adapter: DEFAULT_ADAPTER },
   };
 }
 
@@ -127,40 +128,27 @@ export function saveConsole(config) {
   writeJson(consoleFile(), config);
 }
 
+/* Campaign overrides console; absent spend falls back to the adapter default. */
+export function runnerConfig(consoleConfig, data = {}) {
+  const adapter = data.runner?.adapter || consoleConfig.runner?.adapter || DEFAULT_ADAPTER;
+  const spend = data.runner?.spend || consoleConfig.runner?.spend || DEFAULT_SPEND[adapter] || "metered-ok";
+  return { adapter, spend, command: consoleConfig.runner?.command || "pi" };
+}
+
 // --- catalog ---------------------------------------------------------------
 
-let catalogCache = null;
-
 export function resetCatalog() {
-  catalogCache = null;
+  resetPiCatalog();
 }
 
 export function catalog({ refresh = false } = {}) {
-  if (catalogCache && !refresh) return catalogCache;
-  const command = process.env.PI_BIN || "pi";
-  const res = spawnSync(command, ["--list-models"], { encoding: "utf8", timeout: 60_000 });
-  if (res.status !== 0) {
-    throw new UserError(`\`${command} --list-models\` failed`, [
-      (res.stderr || res.stdout || "no output").trim(),
-      "Fix provider credentials before binding, or set PI_BIN.",
+  try {
+    return listPiModels({ refresh });
+  } catch (err) {
+    throw new UserError(err.message, [
+      err.hint || "Fix provider credentials before binding, or set PI_BIN.",
     ]);
   }
-  const rows = [];
-  for (const line of (res.stdout || "").split("\n")) {
-    if (!line.trim() || /^provider\s/.test(line)) continue;
-    const cells = line.split(/\s{2,}/).map((c) => c.trim());
-    if (cells.length < 4) continue;
-    rows.push({
-      provider: cells[0],
-      model: cells[1],
-      context: cells[2],
-      maxOut: cells[3],
-      thinking: cells[4] === "yes",
-      images: cells[5] === "yes",
-    });
-  }
-  catalogCache = rows;
-  return rows;
 }
 
 export function modelKey(entry) {
@@ -195,6 +183,7 @@ const CAMPAIGN_FIELDS = new Set([
   "budget",
   "max_autoship_lines",
   "kinds",
+  "runner",
 ]);
 
 const STAGES = new Set(["draft", "awaiting_approval", "running", "paused", "delivered", "archived"]);
@@ -263,8 +252,18 @@ export function resolveKinds(consoleConfig, campaignData) {
 
 export function validateCampaign({ root, consoleConfig, data, tickets = [], catalogRows = null }) {
   const errors = [];
-  const rows = catalogRows || catalog();
+  const runner = runnerConfig(consoleConfig, data);
+  if (!ADAPTER_IDS.includes(runner.adapter))
+    errors.push(`unknown runner.adapter "${runner.adapter}"; one of ${ADAPTER_IDS.join(", ")}`);
+  if (!SPEND_MODES.includes(runner.spend))
+    errors.push(`runner.spend must be one of ${SPEND_MODES.join(", ")}`);
+  const rows = catalogRows || (runner.adapter === "pi" ? catalog() : []);
+  if (runner.adapter !== "pi" && !rows.length)
+    errors.push(`adapter "${runner.adapter}" has no catalog; run \`orchestrate catalog --adapter ${runner.adapter} --refresh\``);
 
+  if (data.runner != null && (typeof data.runner !== "object" || Array.isArray(data.runner))) {
+    errors.push("runner must be an object with adapter and spend");
+  }
   for (const key of Object.keys(data)) {
     if (!CAMPAIGN_FIELDS.has(key)) errors.push(`unknown campaign field "${key}"`);
   }
@@ -332,8 +331,16 @@ export function validateCampaign({ root, consoleConfig, data, tickets = [], cata
     }
     for (const entry of kind.models) {
       if (!entry.model) errors.push(`kind "${id}" has a chain entry without a model`);
-      else if (!resolveModel(entry.model, rows))
-        errors.push(`model "${entry.model}" in kind "${id}" is not in the catalog; run \`orchestrate catalog\``);
+      else {
+        const resolved = resolveModel(entry.model, rows);
+        if (!resolved) {
+          errors.push(`model "${entry.model}" in kind "${id}" is not in the catalog for adapter "${runner.adapter}"; run \`orchestrate catalog --adapter ${runner.adapter}\``);
+        } else if (resolved.adapter && resolved.adapter !== runner.adapter) {
+          errors.push(`model "${entry.model}" belongs to adapter "${resolved.adapter}", but this campaign runs on "${runner.adapter}"`);
+        } else if (runner.spend === "subscription-only" && resolved.included === false) {
+          errors.push(`model "${entry.model}" is not included in the ${runner.adapter} subscription; set runner.spend: metered-ok to allow it`);
+        }
+      }
     }
   }
 
@@ -358,5 +365,5 @@ export function validateCampaign({ root, consoleConfig, data, tickets = [], cata
       errors.push(`budget ${unit} ${budget[unit]} exceeds the console ceiling ${consoleBudget[unit]}`);
   }
 
-  return { errors, kinds };
+  return { errors, kinds, runner, rows };
 }
