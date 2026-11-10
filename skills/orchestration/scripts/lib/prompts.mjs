@@ -53,7 +53,7 @@ export function renderDecisions(decisions) {
 
 export function renderAttachments(paths) {
   if (!paths.length) return "None attached.";
-  return paths.map((file) => `- \`${file}\` (attached to this turn as an image)`).join("\n");
+  return paths.map((file) => `- \`${file}\` (attached to this turn)`).join("\n");
 }
 
 const QUESTION_RULE = [

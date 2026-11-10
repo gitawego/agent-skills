@@ -146,6 +146,6 @@ Then, from any project, `orchestrate up` starts the panel if it is not running, 
 
 ## Dependencies
 
-Node 20 or newer, `git`, and either the `pi` CLI or an ACP harness such as `agy` (Antigravity) or `opencode`. No `npm install`, no lockfile, no `node_modules`; the runtime uses the Node standard library only. State is written to the user's project and to the console directory, never inside this skill folder.
+Node 20 or newer, `git`, and either the `pi` CLI or an ACP harness such as `agy` (Antigravity) or `opencode`. No `npm install`, no lockfile, no `node_modules`; the runtime uses the Node standard library only. State is written to the user's project and to the console directory, never inside this skill folder. On Linux, `bwrap` is optional and enables the OS-level worker sandbox (`runner.sandbox: auto`). ImageMagick is optional and enables downscaling large images.
 
 The adapter catalog lives in `~/.local/state/orchestration/catalogs/<adapter>.json`. `bind` and `approve` refresh it from the harness; the panel reads the snapshot. If discovery fails, the campaign cannot leave `awaiting_approval`; fix the harness's credentials and run `orchestrate catalog --adapter <id> --refresh`. `init` binds nothing: reading the catalog and choosing a chain per kind is step 3 of the loop.

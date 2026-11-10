@@ -702,7 +702,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
     }
     return null;
   }
-  if (attached.items.length && modelEntry.images !== true) {
+  if (attached.items.some((item) => item.kind === "image") && modelEntry.images !== true) {
     const alt = kind.models.findIndex((_, index) => entryInfo(index).model?.images === true);
     if (alt < 0) {
       const reason = `kind "${ticket.data.kind}" has image attachments, but its models cannot read images`;
@@ -758,6 +758,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
     ...adapterAudit(getAdapter(adapterId)),
     price: modelEntry.price || null,
     billing: modelEntry.billing || null,
+    sandbox: runner.sandbox,
     catalogFetchedAt: readCatalogCache(adapterId)?.fetchedAt || null,
     model: modelKey(modelEntry),
     chain: kind.models.map((m) => m.model),
@@ -782,6 +783,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
     systemPrompts,
     runDir: runDir(root, slug, runId),
     workdir,
+    sandbox: runner.sandbox,
     command: consoleConfig.runner?.command || "pi",
   });
   const record = startRun({
@@ -862,7 +864,7 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
       kinds,
     });
   }
-  if (attached.items.length && modelEntry.images !== true) {
+  if (attached.items.some((item) => item.kind === "image") && modelEntry.images !== true) {
     const alt = kind.models.findIndex((_, i) => reviewInfo(i).model?.images === true);
     if (alt < 0) {
       return failedRun({
@@ -908,6 +910,7 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
     sessionId,
     touches: [],
     attachments: attachmentAudit(attached.items),
+    sandbox: runner.sandbox,
     systemPrompts,
     systemPromptHash: systemPromptDigest(systemPrompts),
     promptHash: promptDigest(prompt),
@@ -923,6 +926,7 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
     systemPrompts,
     runDir: runDir(root, slug, runId),
     workdir: run.workdir,
+    sandbox: runner.sandbox,
     command: campaign.data.runner?.command || consoleConfig.runner?.command || "pi",
   });
   const record = startRun({
@@ -1004,6 +1008,7 @@ function startJudge({ root, slug, state, plan, ticket, run, report, kinds, conso
     sessionId,
     touches: [],
     question: report.question,
+    sandbox: runner.sandbox,
     systemPrompts,
     systemPromptHash: systemPromptDigest(systemPrompts),
     promptHash: promptDigest(prompt),
@@ -1018,6 +1023,7 @@ function startJudge({ root, slug, state, plan, ticket, run, report, kinds, conso
     systemPrompts,
     runDir: runDir(root, slug, runId),
     workdir: root,
+    sandbox: runner.sandbox,
     command: consoleConfig.runner?.command || "pi",
   });
   const record = startRun({
@@ -1082,6 +1088,7 @@ function startMerge({ root, slug, state, ticketId, run, conflict, kinds, console
     sessionId,
     touches: [],
     conflict,
+    sandbox: runner.sandbox,
     systemPrompts,
     systemPromptHash: systemPromptDigest(systemPrompts),
     promptHash: promptDigest(prompt),
@@ -1096,6 +1103,7 @@ function startMerge({ root, slug, state, ticketId, run, conflict, kinds, console
     systemPrompts,
     runDir: runDir(root, slug, runId),
     workdir: dir,
+    sandbox: runner.sandbox,
     command: consoleConfig.runner?.command || "pi",
   });
   const record = startRun({

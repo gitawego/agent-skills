@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { connect, initialize } from "./lib/acp-client.mjs";
 import { profile } from "./lib/acp-profiles.mjs";
+import { wrapCommand } from "./lib/sandbox.mjs";
 
 const specPath = process.argv[2];
 const spec = JSON.parse(fs.readFileSync(specPath, "utf8"));
@@ -39,9 +40,16 @@ function clampThinking(values, wanted) {
 }
 
 let replaying = false;
-const client = connect({
+const wrapped = wrapCommand({
   command: p.command,
   args: p.args,
+  cwd: spec.cwd,
+  rwPaths: [path.dirname(spec.logFile)],
+  mode: spec.sandbox || "auto",
+});
+const client = connect({
+  command: wrapped.command,
+  args: wrapped.args,
   cwd: spec.cwd,
   env: extraEnv,
   onStderr: (text) => record({ type: "acp.stderr", text: text.trim().slice(0, 2000) }),
@@ -97,8 +105,12 @@ try {
   const init = await initialize(client, { name: "orchestration", version: "1" });
   const caps = init.agentCapabilities || {};
   const images = Array.isArray(spec.images) ? spec.images : [];
+  const documents = Array.isArray(spec.documents) ? spec.documents : [];
   if (images.length && !caps.promptCapabilities?.image) {
     throw new Error(`adapter "${spec.adapter}" does not support image prompts`);
+  }
+  if (documents.length && !caps.promptCapabilities?.embeddedContext) {
+    throw new Error(`adapter "${spec.adapter}" does not support embedded documents`);
   }
   const systemParam =
     spec.promptMode === "meta" && spec.systemPrompt
@@ -188,12 +200,24 @@ try {
   permissionNote(`auto-approve adapter=${spec.adapter} nonce=${spec.nonce}`);
   /* A loaded session already holds the images; resending them only burns
      tokens. A fresh/fallback session needs them again. */
-  const outgoing = sessionMode === "load" || sessionMode === "resume" ? [] : images;
+  const resend = sessionMode !== "load" && sessionMode !== "resume";
+  const outgoing = resend ? images : [];
+  const outgoingDocs = resend ? documents : [];
   const content = [
     { type: "text", text: prompt },
     ...outgoing.map((image) => ({ type: "image", data: image.data, mimeType: image.mimeType })),
+    ...outgoingDocs.map((document) => ({
+      type: "resource",
+      resource: {
+        uri: `attachment://${encodeURIComponent(document.path)}`,
+        mimeType: document.mimeType,
+        blob: document.data,
+      },
+    })),
   ];
-  if (outgoing.length) record({ type: "acp.images", files: outgoing.map((image) => image.path) });
+  if (outgoing.length || outgoingDocs.length) {
+    record({ type: "acp.attachments", files: [...outgoing, ...outgoingDocs].map((item) => item.path) });
+  }
   const result = await client.request(
     "session/prompt",
     { sessionId: session.sessionId, prompt: content },

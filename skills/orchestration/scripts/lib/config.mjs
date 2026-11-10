@@ -87,7 +87,7 @@ export function defaultConsole() {
       human_slot_extra: 1,
     },
     kinds: structuredClone(DEFAULT_KINDS),
-    runner: { command: "pi", adapter: DEFAULT_ADAPTER },
+    runner: { command: "pi", adapter: DEFAULT_ADAPTER, sandbox: "auto" },
   };
 }
 
@@ -132,7 +132,8 @@ export function saveConsole(config) {
 export function runnerConfig(consoleConfig, data = {}) {
   const adapter = data.runner?.adapter || consoleConfig.runner?.adapter || DEFAULT_ADAPTER;
   const spend = data.runner?.spend || consoleConfig.runner?.spend || DEFAULT_SPEND[adapter] || "metered-ok";
-  return { adapter, spend, command: consoleConfig.runner?.command || "pi" };
+  const sandbox = data.runner?.sandbox || consoleConfig.runner?.sandbox || "auto";
+  return { adapter, spend, sandbox, command: consoleConfig.runner?.command || "pi" };
 }
 
 /* A chain entry may override the campaign adapter; otherwise it inherits. */
@@ -262,6 +263,8 @@ export function validateCampaign({ root, consoleConfig, data, tickets = [], cata
     errors.push(`unknown runner.adapter "${runner.adapter}"; one of ${ADAPTER_IDS.join(", ")}`);
   if (!SPEND_MODES.includes(runner.spend))
     errors.push(`runner.spend must be one of ${SPEND_MODES.join(", ")}`);
+  if (!["auto", "bwrap", "none"].includes(runner.sandbox))
+    errors.push('runner.sandbox must be "auto", "bwrap" or "none"');
   const rowsForAdapter = (adapterId) => {
     if (Array.isArray(catalogRows)) return adapterId === runner.adapter ? catalogRows : adapterId === "pi" ? catalog() : [];
     if (catalogRows && typeof catalogRows === "object") return catalogRows[adapterId] || (adapterId === "pi" ? catalog() : []);

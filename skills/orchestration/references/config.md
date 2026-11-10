@@ -52,11 +52,14 @@ A kind that reports (every kind does) needs a tool that can write `report.json`:
 runner:
   adapter: opencode-acp
   spend: subscription-only
+  sandbox: auto
 ```
 
 `spend` is `subscription-only` or `metered-ok`. Subscription-only hides models the plan does not include and refuses a binding to them; metered-ok shows every discovered model with its price. Antigravity and OpenCode Go default to subscription-only; pi defaults to metered-ok. The campaign's adapter is fixed while it runs, for the same reason a chain is.
 
-ACP permission requests are mediated by the client: a tool call naming a path outside the worktree or the system temp directory is denied, and the decision is written to `permissions.jsonl`. Commands are checked for absolute-path escapes, but this is a guard, not an OS sandbox.
+`sandbox` is `auto`, `bwrap` or `none`. On Linux, auto wraps the worker in `bwrap` when available: `/` is read-only, and only the worktree, run directory, temp directory and harness state directories are writable. Network stays shared because the worker must reach its model API. Other platforms fall back to the path-based permission guard.
+
+ACP permission requests are mediated by the client: a tool call naming a path outside the worktree or the system temp directory is denied, and the decision is written to `permissions.jsonl`. Commands are checked for absolute-path escapes; the bwrap sandbox above is the enforcement layer, while this remains a second guard.
 
 Every adapter writes a snapshot to `~/.local/state/orchestration/catalogs/<adapter>.json`; `bind`/`approve` also write a project-scoped snapshot, because OpenCode's model list depends on the project. The panel reads the latest projection and marks it stale after an hour; `bind`/`approve` always refresh live. `orchestrate doctor` reports missing harnesses, empty catalogs and stale snapshots. ACP discovery creates and closes one session, so it costs seconds, not tokens.
 
@@ -204,7 +207,7 @@ Rules:
 - **Blockers are real edges.** A ticket with no blockers can start immediately. A cycle is a planning error and fails validation.
 - **`touches` is a promise about blast radius.** Globs that the ticket will modify. The scheduler refuses to run two tickets whose `touches` can overlap, so parallelism never manufactures a merge conflict. Over-declaring costs throughput; under-declaring costs a parked ticket.
 - **`kind` picks the model chain.** The planner sets it; a human may override it in the panel before approval.
-- **`attachments` carries images.** Paths are relative to the project, must be png/jpeg/webp/gif and inside the project. The supervisor sends them as ACP image blocks (and as `@file` context to pi); the run records their hashes, never the payload. A model that cannot read images is refused at dispatch (the next vision model in the chain is tried first). Images above 512 KB are downscaled to a 1600 px long edge and WebP when ImageMagick is available.
+- **`attachments` carries images and PDFs.** Paths are relative to the project, must be png/jpeg/webp/gif/pdf and inside the project. The supervisor sends images as ACP image blocks and PDFs as embedded resource blocks (and both as `@file` context to pi); the run records their hashes, never the payload. A model that cannot read the attachment kind is refused at dispatch (the next capable model in the chain is tried first). Images above 512 KB are downscaled to a 1600 px long edge and WebP when ImageMagick is available.
 - **Editing keeps the file.** `ticket edit` rewrites the heading, frontmatter and body in place: the filename is the ticket's address, and renaming it would churn history for no gain. A ticket can be removed once nothing is blocked by it.
 
 ## Spend

@@ -2,6 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { listPiModels, resetPiCatalog } from "../lib/pi-catalog.mjs";
 import { buildWorkerArgv } from "../lib/runs.mjs";
+import { wrapCommand } from "../lib/sandbox.mjs";
 
 export const id = "pi";
 export const label = "pi";
@@ -35,10 +36,14 @@ export function listModels({ refresh = false } = {}) {
   return listPiModels({ refresh });
 }
 
-export function buildLaunch({ run, modelEntry, thinking, tools, prompt, sessionsDir, systemPrompts, attachments = [], command }) {
-  return {
+export function buildLaunch({ run, modelEntry, thinking, tools, prompt, sessionsDir, systemPrompts, attachments = [], runDir, workdir, sandbox, command }) {
+  const base = buildWorkerArgv({ run, modelEntry, thinking, tools, prompt, sessionsDir, systemPrompts, attachments });
+  const wrapped = wrapCommand({
     command: command || process.env.PI_BIN || "pi",
-    argv: buildWorkerArgv({ run, modelEntry, thinking, tools, prompt, sessionsDir, systemPrompts, attachments }),
-    env: {},
-  };
+    args: base,
+    cwd: workdir,
+    rwPaths: [sessionsDir, runDir],
+    mode: sandbox || "auto",
+  });
+  return { command: wrapped.command, argv: wrapped.args, env: {} };
 }

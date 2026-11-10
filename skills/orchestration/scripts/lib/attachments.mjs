@@ -6,7 +6,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-export const MAX_TOTAL_BYTES = 10 * 1024 * 1024;
+export const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
+export const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
 
 const TYPES = {
   ".png": "image/png",
@@ -14,10 +15,15 @@ const TYPES = {
   ".jpeg": "image/jpeg",
   ".webp": "image/webp",
   ".gif": "image/gif",
+  ".pdf": "application/pdf",
 };
 
 export function imageMime(file) {
   return TYPES[path.extname(String(file)).toLowerCase()] || null;
+}
+
+export function attachmentKind(mimeType) {
+  return mimeType === "application/pdf" ? "document" : "image";
 }
 
 export function imageDimensions(bytes, mimeType) {
@@ -76,9 +82,11 @@ export function loadAttachments(root, paths) {
     }
     const mimeType = imageMime(abs);
     if (!mimeType) {
-      errors.push(`attachment "${rel}" is not a supported image (png, jpeg, webp, gif)`);
+      errors.push(`attachment "${rel}" is not a supported file (png, jpeg, webp, gif, pdf)`);
       continue;
     }
+    const kind = attachmentKind(mimeType);
+    const maxBytes = kind === "document" ? MAX_DOCUMENT_BYTES : MAX_IMAGE_BYTES;
     let stat;
     try {
       stat = fs.statSync(abs);
@@ -90,8 +98,8 @@ export function loadAttachments(root, paths) {
       errors.push(`attachment "${rel}" is not a file`);
       continue;
     }
-    if (stat.size > MAX_IMAGE_BYTES) {
-      errors.push(`attachment "${rel}" is larger than ${Math.floor(MAX_IMAGE_BYTES / 1024 / 1024)} MB`);
+    if (stat.size > maxBytes) {
+      errors.push(`attachment "${rel}" is larger than ${Math.floor(maxBytes / 1024 / 1024)} MB`);
       continue;
     }
     total += stat.size;
@@ -100,11 +108,12 @@ export function loadAttachments(root, paths) {
       break;
     }
     const bytes = fs.readFileSync(abs);
-    const { width, height } = imageDimensions(bytes, mimeType);
+    const { width, height } = kind === "image" ? imageDimensions(bytes, mimeType) : { width: null, height: null };
     items.push({
       path: inside.split(path.sep).join("/"),
       absPath: abs,
       mimeType,
+      kind,
       bytes: bytes.length,
       width,
       height,
@@ -116,9 +125,10 @@ export function loadAttachments(root, paths) {
 }
 
 export function attachmentAudit(items) {
-  return items.map(({ path: file, mimeType, bytes, width, height, sha256 }) => ({
+  return items.map(({ path: file, mimeType, kind, bytes, width, height, sha256 }) => ({
     path: file,
     mimeType,
+    kind,
     bytes,
     width,
     height,
@@ -144,7 +154,7 @@ export function hasImageMagick() {
 /* Large screenshots are downscaled to a bounded long edge before they cross
    the JSON-RPC pipe. This is best-effort: no ImageMagick means send original. */
 export function prepareForPrompt(item, { maxEdge = 1600, maxBytes = 512 * 1024 } = {}) {
-  if (item.bytes <= maxBytes) return item;
+  if (item.kind === "document" || item.bytes <= maxBytes) return item;
   const command = hasImageMagick();
   if (!command) return item;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orch-image-"));

@@ -50,7 +50,7 @@ export function createAcpAdapter(adapterId) {
       if (!Array.isArray(rows) || !rows.length) throw new Error(`adapter "${adapterId}" advertised no models`);
       return rows;
     },
-    buildLaunch({ run, modelEntry, thinking, prompt, systemPrompts, attachments = [], runDir, workdir }) {
+    buildLaunch({ run, modelEntry, thinking, prompt, systemPrompts, attachments = [], runDir, workdir, sandbox }) {
       const systemText = systemPrompts.map((file) => readText(file, "")).join("\n\n");
       const spec = {
         adapter: adapterId,
@@ -63,10 +63,16 @@ export function createAcpAdapter(adapterId) {
         systemPrompt: systemText,
         promptMode: p.systemPrompt,
         prompt,
-        images: attachments.map((item) => {
-          const prepared = prepareForPrompt(item);
-          return { path: prepared.path, mimeType: prepared.mimeType, data: prepared.data };
-        }),
+        images: attachments
+          .filter((item) => item.kind === "image")
+          .map((item) => {
+            const prepared = prepareForPrompt(item);
+            return { path: prepared.path, mimeType: prepared.mimeType, data: prepared.data };
+          }),
+        documents: attachments
+          .filter((item) => item.kind === "document")
+          .map((item) => ({ path: item.path, mimeType: item.mimeType, data: item.data })),
+        sandbox: sandbox || "auto",
         sessionId: run.sessionId || null,
         logFile: path.join(runDir, "log.jsonl"),
         sessionFile: path.join(runDir, "session.json"),

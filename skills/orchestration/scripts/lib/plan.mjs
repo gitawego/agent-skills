@@ -86,8 +86,8 @@ export function validateTickets(tickets) {
       const file = String(attachment);
       if (path.isAbsolute(file) || file.split(/[\\/]/).includes(".."))
         errors.push(`${id}: attachment "${file}" must be a path inside the project`);
-      else if (!/\.(png|jpe?g|webp|gif)$/i.test(file))
-        errors.push(`${id}: attachment "${file}" is not a supported image`);
+      else if (!/\.(png|jpe?g|webp|gif|pdf)$/i.test(file))
+        errors.push(`${id}: attachment "${file}" is not a supported file (png, jpeg, webp, gif, pdf)`);
     }
   }
 

@@ -22,7 +22,7 @@ Base: {{BASE}}
 
 {{ACCEPTANCE}}
 
-### Attached images
+### Attached files
 
 {{ATTACHMENTS}}
 

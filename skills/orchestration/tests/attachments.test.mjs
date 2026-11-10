@@ -15,6 +15,7 @@ function fixture() {
   const dir = project(path.join(box, "repo"));
   fs.mkdirSync(path.join(dir, "refs"), { recursive: true });
   fs.writeFileSync(path.join(dir, "refs", "red.png"), PNG);
+  fs.writeFileSync(path.join(dir, "refs", "spec.pdf"), Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n"));
   return dir;
 }
 
@@ -29,8 +30,18 @@ test("an image is read, typed and hashed", () => {
   assert.match(items[0].sha256, /^[a-f0-9]{64}$/);
   assert.equal(Buffer.from(items[0].data, "base64").length, PNG.length);
   assert.deepEqual(attachmentAudit(items), [
-    { path: "refs/red.png", mimeType: "image/png", bytes: PNG.length, width: 1, height: 1, sha256: items[0].sha256 },
+    { path: "refs/red.png", mimeType: "image/png", kind: "image", bytes: PNG.length, width: 1, height: 1, sha256: items[0].sha256 },
   ]);
+});
+
+test("a PDF is a document attachment, not an image", () => {
+  const dir = fixture();
+  const { items, errors } = loadAttachments(dir, ["refs/spec.pdf"]);
+  assert.deepEqual(errors, []);
+  assert.equal(items[0].mimeType, "application/pdf");
+  assert.equal(items[0].kind, "document");
+  assert.equal(items[0].width, null);
+  assert.equal(attachmentAudit(items)[0].kind, "document");
 });
 
 test("missing, outside and unsupported attachments are refused", () => {
@@ -39,7 +50,7 @@ test("missing, outside and unsupported attachments are refused", () => {
   const { errors } = loadAttachments(dir, ["refs/nope.png", "../escape.png", "notes.txt"]);
   assert.ok(errors.some((e) => /does not exist/.test(e)));
   assert.ok(errors.some((e) => /outside the project/.test(e)));
-  assert.ok(errors.some((e) => /not a supported image/.test(e)));
+  assert.ok(errors.some((e) => /not a supported file/.test(e)));
 });
 
 test("attachmentPaths accepts a string or a list", () => {

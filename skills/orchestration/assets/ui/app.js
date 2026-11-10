@@ -742,8 +742,8 @@ function viewCampaign() {
         </div>
         <div class="field" style="grid-template-columns:88px 1fr"><label for="t-blocked">Blocked by</label><input id="t-blocked" name="t_blocked" type="text" placeholder="01, 03" /></div>
         <div class="field" style="grid-template-columns:88px 1fr"><label for="t-touches">Touches</label><input id="t-touches" name="t_touches" type="text" placeholder="src/api/**, docs/**" /></div>
-        <div class="field" style="grid-template-columns:88px 1fr"><label for="t-attachments">Images</label><input id="t-attachments" name="t_attachments" type="text" placeholder="orchestration/<campaign>/attachments/ref.png" /></div>
-        <div class="field" style="grid-template-columns:88px 1fr"><label for="t-files">Upload</label><input id="t-files" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple data-role="attach-files" data-target="t_attachments" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" /></div>
+        <div class="field" style="grid-template-columns:88px 1fr"><label for="t-attachments">Files</label><input id="t-attachments" name="t_attachments" type="text" placeholder="orchestration/<campaign>/attachments/ref.png or spec.pdf" /></div>
+        <div class="field" style="grid-template-columns:88px 1fr"><label for="t-files">Upload</label><input id="t-files" type="file" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf" multiple data-role="attach-files" data-target="t_attachments" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" /></div>
       </div>
       <div class="field" style="grid-template-columns:88px 1fr"><label for="t-what">What to build</label><textarea id="t-what" name="t_what" rows="3" placeholder="The end-to-end behaviour, from the user's side."></textarea></div>
       <div class="field" style="grid-template-columns:88px 1fr"><label for="t-accept">Acceptance</label><textarea id="t-accept" name="t_accept" rows="3" placeholder="One checkable outcome per line."></textarea></div>
@@ -1056,7 +1056,7 @@ function drawerHtml(c, t) {
     ${t.waitingOn ? `<p class="meta">Waiting for a free lane on ${esc(t.waitingOn)}</p>` : ""}
     <h2>What to build</h2><div class="doc">${esc(t.body || "")}</div>
     <h2>Acceptance</h2><div class="doc">${(t.accepted || []).map((a) => `· ${esc(a.text)}`).join("\n") || "none declared"}</div>
-    ${(t.attachments || []).length ? `<h2>Attached images</h2><div class="doc">${(t.attachments || []).map((p) => `· ${esc(p)}`).join("\n")}</div>` : ""}
+    ${(t.attachments || []).length ? `<h2>Attached files</h2><div class="doc">${(t.attachments || []).map((p) => `· ${esc(p)}`).join("\n")}</div>` : ""}
     ${t.answer ? `<h2>Last answer</h2><div class="doc">${esc(t.answer.text)}${t.answer.citation ? `\n${esc(t.answer.citation)}` : ""}</div>` : ""}
     ${t.findings ? `<h2>Findings</h2><pre class="log">${esc(t.findings)}</pre>` : ""}
     <h2>Runs</h2>
@@ -1083,8 +1083,8 @@ function editBlock(c, t) {
       <select name="e_kind">${Object.keys(c.effectiveKinds || {}).map((k) => `<option ${k === t.kind ? "selected" : ""}>${esc(k)}</option>`).join("")}</select>
     </div>
     <div class="field" style="grid-template-columns:5.5rem 1fr"><label>Paths</label><input name="e_touches" type="text" value="${esc((t.touches || []).join(", "))}" /></div>
-    <div class="field" style="grid-template-columns:5.5rem 1fr"><label>Images</label><input name="e_attachments" type="text" value="${esc((t.attachments || []).join(", "))}" /></div>
-    <div class="field" style="grid-template-columns:5.5rem 1fr"><label>Upload</label><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple data-role="attach-files" data-target="e_attachments" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" /></div>
+    <div class="field" style="grid-template-columns:5.5rem 1fr"><label>Files</label><input name="e_attachments" type="text" value="${esc((t.attachments || []).join(", "))}" /></div>
+    <div class="field" style="grid-template-columns:5.5rem 1fr"><label>Upload</label><input type="file" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf" multiple data-role="attach-files" data-target="e_attachments" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" /></div>
     <div class="field" style="grid-template-columns:5.5rem 1fr"><label>Blocked by</label><input name="e_blocked" type="text" value="${esc((t.blockedBy || []).join(", "))}" /></div>
     <div class="field" style="grid-template-columns:5.5rem 1fr"><label>What to build</label><textarea name="e_what" rows="4">${esc(t.body || "")}</textarea></div>
     <div class="field" style="grid-template-columns:5.5rem 1fr"><label>Acceptance</label><textarea name="e_accept" rows="4">${esc((t.accepted || []).map((a) => a.text).join("\n"))}</textarea></div>
