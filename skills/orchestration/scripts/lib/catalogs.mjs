@@ -135,8 +135,13 @@ export function catalogsForRoot(root) {
       }
       continue;
     }
-    /* Do not fall back to another project's snapshot: show an empty catalog
-       until this project is refreshed. */
+    /* A project without its own snapshot still sees the last-known adapter
+       catalog, so Gemini does not silently disappear after switching repos.
+       Bind/approve refresh this project and replace the fallback. */
+    const global = readCatalogCache(id);
+    if (global?.models?.length) {
+      out[id] = global.models.map((row) => ({ ...row, catalogSourceRoot: global.sourceRoot || null }));
+    }
   }
   return out;
 }

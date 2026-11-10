@@ -44,7 +44,7 @@ import {
   saveConsole,
   validateCampaign,
 } from "./config.mjs";
-import { getAdapter, readCatalogCache, refreshCatalog, rowsFor } from "./catalogs.mjs";
+import { adapterIds, getAdapter, readCatalogCache, refreshCatalog, rowsFor } from "./catalogs.mjs";
 import { ADAPTER_IDS, SPEND_MODES } from "./adapter-ids.mjs";
 import { joinFrontmatter, splitFrontmatter, updateFrontmatter } from "./yaml.mjs";
 import {
@@ -1337,10 +1337,18 @@ export function applyCommand(root, command, consoleConfig) {
   const slug = command.campaign;
   const type = command.type;
   if (type === "catalog.refresh") {
-    const adapter = command.adapter || loadConsole().runner?.adapter || "pi";
-    refreshCatalog(adapter, { cwd: root });
+    const config = loadConsole();
+    const ids = command.adapter === "all" || command.all ? adapterIds() : [command.adapter || config.runner?.adapter || "pi"];
+    const errors = [];
+    for (const id of ids) {
+      try {
+        refreshCatalog(id, { cwd: root });
+      } catch (err) {
+        errors.push(`${id}: ${err.message}`);
+      }
+    }
     resetCatalog();
-    return { ok: true, refreshed: true, adapter };
+    return { ok: errors.length === 0, refreshed: true, adapters: ids, errors };
   }
   if (type === "settings.save") {
     const config = loadConsole();

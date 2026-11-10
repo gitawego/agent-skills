@@ -1362,7 +1362,7 @@ document.addEventListener("click", (event) => {
       const root = campaigns()[0]?.root;
       if (!root) return toast("No project registered yet");
       const scope = target.dataset.scope || (view === "campaign" ? "campaign" : "console");
-      return command(root, { type: "catalog.refresh", adapter: adapterFor(scope) });
+      return command(root, { type: "catalog.refresh", adapter: "all", all: true });
     }
     case "add-ticket":
       return addTicket(root, campaign);
