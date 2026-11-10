@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path";
 import { sandbox, project, writeConsole, writeCampaign, writeTicket, MODELS } from "./helpers.mjs";
 import { startServer } from "../scripts/lib/server.mjs";
@@ -94,6 +95,22 @@ test("the panel serves state, refuses a missing token, and queues commands", asy
   });
   assert.equal(bad.status, 400);
 
+  panel.close();
+});
+
+test("the panel accepts an image upload and keeps it inside the campaign", async () => {
+  const root = fixture();
+  const panel = await startServer({ roots: [root], port: 0 });
+  const data = Buffer.from("not-a-real-png").toString("base64");
+  const res = await fetch(`http://127.0.0.1:${panel.port}/api/attachments?token=${panel.token}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ root, campaign: "demo", name: "ref.png", data }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.path, "orchestration/demo/attachments/ref.png");
+  assert.ok(fs.existsSync(path.join(root, body.path)));
   panel.close();
 });
 
