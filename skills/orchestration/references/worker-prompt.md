@@ -22,6 +22,10 @@ Base: {{BASE}}
 
 {{ACCEPTANCE}}
 
+### Attached images
+
+{{ATTACHMENTS}}
+
 ### What to read first
 
 {{READING}}

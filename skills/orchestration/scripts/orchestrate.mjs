@@ -263,6 +263,7 @@ const commands = {
         kind: flags.kind || "code",
         blockedBy: flags["blocked-by"],
         touches: flags.touches,
+        attachments: flags.attachments,
         what: flags.what,
         criteria: flags.accept,
       });
@@ -284,6 +285,7 @@ const commands = {
       if (flags.kind) patch.kind = flags.kind;
       if (flags.touches) patch.touches = flags.touches;
       if (flags["blocked-by"] !== undefined) patch.blocked_by = flags["blocked-by"];
+      if (flags.attachments !== undefined) patch.attachments = flags.attachments;
       if (flags.what) patch.what = flags.what;
       if (flags.accept) patch.criteria = flags.accept;
       if (!Object.keys(patch).length) throw new UserError("Nothing to change: pass --title, --kind, --touches, --blocked-by, --what or --accept");

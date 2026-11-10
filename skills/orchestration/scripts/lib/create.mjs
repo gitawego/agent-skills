@@ -136,6 +136,13 @@ export function editTicket({ root, slug, id, patch = {} }) {
     if (blockers.length) data.blocked_by = blockers;
     else delete data.blocked_by;
   }
+  if (patch.attachments !== undefined) {
+    const images = (Array.isArray(patch.attachments) ? patch.attachments : String(patch.attachments).split(","))
+      .map((a) => String(a).trim())
+      .filter(Boolean);
+    if (images.length) data.attachments = images;
+    else delete data.attachments;
+  }
   delete data.title;
   const title = String(patch.title || ticketTitle(ticket)).trim();
   const what = patch.what !== undefined ? patch.what : ticket.what;
@@ -168,7 +175,7 @@ export function removeTicket({ root, slug, id }) {
   return { id: ticket.data.id, file: ticket.file };
 }
 
-export function addTicket({ root, slug, title, kind, blockedBy = [], touches = [], what, criteria = [] }) {
+export function addTicket({ root, slug, title, kind, blockedBy = [], touches = [], attachments = [], what, criteria = [] }) {
   const campaign = readCampaign(root, slug);
   const name = String(title || "").trim();
   if (!name) throw new UserError("A ticket needs a title");
@@ -183,6 +190,9 @@ export function addTicket({ root, slug, title, kind, blockedBy = [], touches = [
     .map((b) => String(b).trim())
     .filter(Boolean)
     .map(pad2);
+  const images = (Array.isArray(attachments) ? attachments : String(attachments).split(","))
+    .map((a) => String(a).trim())
+    .filter(Boolean);
 
   const id = nextTicketId(root, slug);
   const dir = ticketsDir(root, slug);
@@ -190,6 +200,7 @@ export function addTicket({ root, slug, title, kind, blockedBy = [], touches = [
   const file = path.join(dir, `${id}-${slugify(name)}.md`);
   const data = { id, kind, touches: paths };
   if (blockers.length) data.blocked_by = blockers;
+  if (images.length) data.attachments = images;
   const body = [
     `# ${name}`,
     "",

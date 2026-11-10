@@ -47,6 +47,10 @@ function permissionNote(line) {
 try {
   const init = await initialize(client, { name: "orchestration", version: "1" });
   const caps = init.agentCapabilities || {};
+  const images = Array.isArray(spec.images) ? spec.images : [];
+  if (images.length && !caps.promptCapabilities?.image) {
+    throw new Error(`adapter "${spec.adapter}" does not support image prompts`);
+  }
   const systemParam =
     spec.promptMode === "meta" && spec.systemPrompt
       ? { _meta: { antigravity: { systemPrompt: { append: spec.systemPrompt } } } }
@@ -117,9 +121,14 @@ try {
       : spec.prompt;
 
   permissionNote(`auto-approve adapter=${spec.adapter} nonce=${spec.nonce}`);
+  const content = [
+    { type: "text", text: prompt },
+    ...images.map((image) => ({ type: "image", data: image.data, mimeType: image.mimeType })),
+  ];
+  if (images.length) record({ type: "acp.images", files: images.map((image) => image.path) });
   const result = await client.request(
     "session/prompt",
-    { sessionId: session.sessionId, prompt: [{ type: "text", text: prompt }] },
+    { sessionId: session.sessionId, prompt: content },
     24 * 60 * 60 * 1000,
   );
 

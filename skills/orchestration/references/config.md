@@ -173,9 +173,10 @@ Refusal happens at approval, not at dispatch: a plan is never approved against a
 ```markdown
 ---
 id: 03
-kind: code
+kind: design
 blocked_by: [01, 02]
 touches: ["src/api/**", "src/db/migrations/**"]
+attachments: ["refs/shelf.png"]
 ---
 
 ## What to build
@@ -199,6 +200,7 @@ Rules:
 - **Blockers are real edges.** A ticket with no blockers can start immediately. A cycle is a planning error and fails validation.
 - **`touches` is a promise about blast radius.** Globs that the ticket will modify. The scheduler refuses to run two tickets whose `touches` can overlap, so parallelism never manufactures a merge conflict. Over-declaring costs throughput; under-declaring costs a parked ticket.
 - **`kind` picks the model chain.** The planner sets it; a human may override it in the panel before approval.
+- **`attachments` carries images.** Paths are relative to the project, must be png/jpeg/webp/gif and inside the project. The supervisor sends them as ACP image blocks (and as `@file` context to pi); the run records their hashes, never the payload.
 - **Editing keeps the file.** `ticket edit` rewrites the heading, frontmatter and body in place: the filename is the ticket's address, and renaming it would churn history for no gain. A ticket can be removed once nothing is blocked by it.
 
 ## Spend

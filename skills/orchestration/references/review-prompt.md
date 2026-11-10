@@ -16,6 +16,10 @@ Base: {{BASE}}
 
 {{ACCEPTANCE}}
 
+### Attached images
+
+{{ATTACHMENTS}}
+
 ## What to review
 
 {{DIFF}}

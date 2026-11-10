@@ -58,6 +58,7 @@ import {
 } from "./runs.mjs";
 import { judgePrompt, mergePrompt, promptDigest, resumePrompt, reviewPrompt, systemPromptDigest, systemPromptFiles, workerPrompt } from "./prompts.mjs";
 import { createItem, findItem, listItems, openItemForTicket, updateItem } from "./inbox.mjs";
+import { attachmentAudit, attachmentPaths, loadAttachments } from "./attachments.mjs";
 import {
   changedSince,
   deliverBranch,
@@ -657,6 +658,19 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
       : resume
         ? entry.sessionId || null
         : null;
+  const attached = loadAttachments(root, attachmentPaths(ticket));
+  if (attached.errors.length) {
+    setStage(root, slug, state, id, "failed", { reason: attached.errors.join("; ") });
+    if (!openItemForTicket(root, slug, id, "failure")) {
+      createItem(root, slug, {
+        kind: "failure",
+        ticket: id,
+        title: `${id}: attachment rejected`,
+        brief: attached.errors.join("\n"),
+      });
+    }
+    return null;
+  }
   const campaign = readCampaign(root, slug);
   const prompt = resume
     ? resumePrompt({
@@ -664,6 +678,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
         answer: resume.answer,
         citation: resume.citation,
         findings: resume.findings,
+        attachments: attached.items.map((item) => item.path),
       })
     : workerPrompt({
         campaign: slug,
@@ -676,6 +691,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
         decisions: decisionsFor(root, slug, asArray(ticket.data.touches)),
         sections: campaign.sections,
         data: ticket,
+        attachments: attached.items.map((item) => item.path),
       });
   writePrompt(root, slug, runId, prompt);
 
@@ -694,6 +710,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
     touches: asArray(ticket.data.touches),
     question: resume?.question || null,
     before,
+    attachments: attachmentAudit(attached.items),
     systemPrompts,
     systemPromptHash: systemPromptDigest(systemPrompts),
     promptHash: promptDigest(prompt),
@@ -704,6 +721,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
     thinking,
     tools: kind.tools,
     prompt,
+    attachments: attached.items,
     sessionsDir: campaignSessionsDir(root, slug),
     systemPrompts,
     runDir: runDir(root, slug, runId),
@@ -764,6 +782,19 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
   }
   const runId = newRunId(id, "review", (entry.gateCycles || 0) + 1);
   const sessionId = runner.adapter === "pi" ? sessionIdFor(slug, id, `review${(entry.gateCycles || 0) + 1}`) : null;
+  const attached = loadAttachments(root, attachmentPaths(ticket));
+  if (attached.errors.length) {
+    return failedRun({
+      root,
+      slug,
+      state,
+      plan,
+      run,
+      summary: { errors: attached.errors, logTail: "", report: null },
+      consoleConfig,
+      kinds,
+    });
+  }
   const prompt = reviewPrompt({
     campaign: slug,
     ticket: id,
@@ -774,6 +805,7 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
     kind: ticket.data.kind,
     data: ticket,
     landing: campaign.data.landing || "branch",
+    attachments: attached.items.map((item) => item.path),
   });
   writePrompt(root, slug, runId, prompt);
   const systemPrompts = systemPromptFiles("review");
@@ -789,6 +821,7 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
     chainIndex: index,
     sessionId,
     touches: [],
+    attachments: attachmentAudit(attached.items),
     systemPrompts,
     systemPromptHash: systemPromptDigest(systemPrompts),
     promptHash: promptDigest(prompt),
@@ -799,6 +832,7 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
     thinking: kind.models[index]?.thinking || "high",
     tools: kind.tools,
     prompt,
+    attachments: attached.items,
     sessionsDir: campaignSessionsDir(root, slug),
     systemPrompts,
     runDir: runDir(root, slug, runId),
@@ -1473,6 +1507,7 @@ export function applyCommand(root, command, consoleConfig) {
       kind: command.kind,
       blockedBy: command.blocked_by,
       touches: command.touches,
+      attachments: command.attachments,
       what: command.what,
       criteria: command.criteria,
     });

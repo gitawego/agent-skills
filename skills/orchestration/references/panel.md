@@ -49,7 +49,7 @@ Dark is the default. `?theme=light` / `?theme=dark`, or the toggle at the foot o
 
 **Cancel all** stops every live run and pauses the campaign, leaving branches for inspection. **Archive** closes a delivered or paused campaign: it leaves the board, the branches stay.
 
-**New ticket** from the Campaign screen: title, kind, blockers, touched paths, what to build, and one acceptance criterion per line. It takes the next number, and a ticket that would break the plan (unknown blocker, empty touches, no criteria) is refused with the reason and not written.
+**New ticket** from the Campaign screen: title, kind, blockers, touched paths, images, what to build, and one acceptance criterion per line. Images can be typed as project-relative paths or uploaded; they are stored under `orchestration/<campaign>/attachments/`. It takes the next number, and a ticket that would break the plan (unknown blocker, empty touches, no criteria) is refused with the reason and not written.
 
 Both have CLI equivalents: `orchestrate start "<goal>"` and `orchestrate ticket add`.
 
@@ -73,6 +73,7 @@ Both have CLI equivalents: `orchestrate start "<goal>"` and `orchestrate ticket 
 - **`GET /api/events`** is `text/event-stream`. Each message carries the ledger event and its sequence id; on connect the stream replays what it still holds after `lastId`. The page refetches `/api/state` on each event, coalesced, so a gap costs a redraw and nothing else.
 - **`GET /api/log?project=&campaign=&run=&offset=`** returns the next bytes of a run log with the new offset, so the drawer keeps streaming across reconnects.
 - **`POST /api/commands`** takes `{ root, type, ... }` and returns the queued command. The supervisor picks it up within one tick (2 s by default).
+- **`POST /api/attachments`** takes `{ root, campaign, name, data }` (base64 image) and writes it under `orchestration/<campaign>/attachments/`, returning the project-relative path. Used by the new/edit ticket image field; 5 MB per image, png/jpeg/webp/gif only.
 
 Commands: `answer`, `review.approve`, `review.reject`, `retry`, `stop`, `pause`, `resume`, `approve`, `deliver`, `campaign.create`, `campaign.save`, `ticket.add`, `settings.save`, `catalog.refresh`.
 

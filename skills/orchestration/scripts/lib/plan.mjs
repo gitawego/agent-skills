@@ -5,7 +5,7 @@ import { UserError, exists, pad2, readText } from "./util.mjs";
 import { splitFrontmatter } from "./yaml.mjs";
 import { sections } from "./config.mjs";
 
-const TICKET_FIELDS = new Set(["id", "kind", "blocked_by", "touches"]);
+const TICKET_FIELDS = new Set(["id", "kind", "blocked_by", "touches", "attachments"]);
 
 export function ticketsDir(root, slug) {
   return path.join(root, "orchestration", slug, "tickets");
@@ -82,6 +82,13 @@ export function validateTickets(tickets) {
     if (!ticket.criteria.length) errors.push(`${id}: no acceptance criteria`);
     const touches = asArray(ticket.data.touches);
     if (!touches.length) errors.push(`${id}: no touches; declare the paths this ticket may modify`);
+    for (const attachment of asArray(ticket.data.attachments)) {
+      const file = String(attachment);
+      if (path.isAbsolute(file) || file.split(/[\\/]/).includes(".."))
+        errors.push(`${id}: attachment "${file}" must be a path inside the project`);
+      else if (!/\.(png|jpe?g|webp|gif)$/i.test(file))
+        errors.push(`${id}: attachment "${file}" is not a supported image`);
+    }
   }
 
   for (const ticket of tickets) {

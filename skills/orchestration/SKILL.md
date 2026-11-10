@@ -73,7 +73,7 @@ The script is the source of truth; the skill's slash commands are conveniences o
 | `init` | Scaffold `orchestration/`, register the project in the console, write defaults |
 | `start <goal>` | Create a `draft` campaign |
 | `plan [campaign]` | Validate the plan and list every ticket |
-| `ticket add "<title>" --kind code --touches "<globs>" [--blocked-by 01] [--what ...] [--accept ...]` | Add one ticket with the next number |
+| `ticket add "<title>" --kind code --touches "<globs>" [--attachments img.png] [--blocked-by 01] [--what ...] [--accept ...]` | Add one ticket with the next number |
 | `ticket edit <id> [--title ...] [--kind ...] [--touches ...] [--blocked-by ...] [--what ...] [--accept ...]` | Change a ticket; a change that would break the plan is rolled back |
 | `ticket remove <id>` | Delete a ticket, refused while it still blocks another |
 | `cancel [campaign]` | Stop every live run and pause, keeping the branches |

@@ -28,13 +28,13 @@ function json(res, status, body) {
   res.end(text);
 }
 
-function readBody(req) {
+function readBody(req, limit = 2_000_000) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
     req.on("data", (chunk) => {
       size += chunk.length;
-      if (size > 2_000_000) {
+      if (size > limit) {
         reject(new Error("request body too large"));
         req.destroy();
         return;
@@ -225,6 +225,36 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
       const start = Math.min(offset, text.length);
       const chunk = text.slice(start, start + 200_000);
       json(res, 200, { text: chunk, offset: start + chunk.length, size: text.length });
+      return;
+    }
+
+    if (route === "/api/attachments" && req.method === "POST") {
+      try {
+        const body = await readBody(req, 8_000_000);
+        if (!currentRoots().includes(body.root)) throw new Error("unknown project");
+        if (!/^[a-z0-9][a-z0-9-]*$/.test(String(body.campaign || ""))) throw new Error("unknown campaign");
+        const ext = path.extname(String(body.name || "")).toLowerCase();
+        const mime = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif" }[ext];
+        if (!mime) throw new Error("only png, jpeg, webp or gif images are supported");
+        const raw = String(body.data || "").replace(/^data:[^;]+;base64,/, "");
+        const bytes = Buffer.from(raw, "base64");
+        if (!bytes.length) throw new Error("empty image");
+        if (bytes.length > 5 * 1024 * 1024) throw new Error("image is larger than 5 MB");
+        const dir = path.join(body.root, "orchestration", body.campaign, "attachments");
+        fs.mkdirSync(dir, { recursive: true });
+        const base = path.basename(String(body.name)).replace(/[^A-Za-z0-9._-]/g, "-").slice(-80) || `image${ext}`;
+        let name = base;
+        if (fs.existsSync(path.join(dir, name))) name = `${Date.now()}-${base}`;
+        fs.writeFileSync(path.join(dir, name), bytes);
+        json(res, 200, {
+          ok: true,
+          path: path.relative(body.root, path.join(dir, name)).split(path.sep).join("/"),
+          mimeType: mime,
+          bytes: bytes.length,
+        });
+      } catch (err) {
+        json(res, 400, { error: err.message });
+      }
       return;
     }
 

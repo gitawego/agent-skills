@@ -34,6 +34,7 @@ export function campaignView(root, slug) {
       stage: entry.stage || "queued",
       blockedBy: asArray(ticket.data.blocked_by).map((b) => String(b).padStart(2, "0")),
       touches: asArray(ticket.data.touches),
+      attachments: asArray(ticket.data.attachments),
       accepted: ticket.criteria,
       body: ticket.what,
       notes: ticket.notes,

@@ -51,12 +51,17 @@ export function renderDecisions(decisions) {
   return decisions.map((d) => `- ${d.text}${d.cite ? ` (${d.cite})` : ""}`).join("\n");
 }
 
+export function renderAttachments(paths) {
+  if (!paths.length) return "None attached.";
+  return paths.map((file) => `- \`${file}\` (attached to this turn as an image)`).join("\n");
+}
+
 const QUESTION_RULE = [
   "Ask only when the answer is not in the campaign form, the ticket, the standing decisions, or the repository.",
   "If you ask, that is the end of this turn: report `needs_answer` and stop. Do not guess and continue.",
 ].join(" ");
 
-export function workerPrompt({ campaign, ticket, ticketTitle, runId, workdir, base, kind, decisions, sections, data }) {
+export function workerPrompt({ campaign, ticket, ticketTitle, runId, workdir, base, kind, decisions, sections, data, attachments = [] }) {
   return template("worker-prompt.md", {
     CAMPAIGN: campaign,
     TICKET_ID: ticket,
@@ -67,6 +72,7 @@ export function workerPrompt({ campaign, ticket, ticketTitle, runId, workdir, ba
     BASE: base,
     TICKET_BODY: data.what,
     ACCEPTANCE: renderCriteria(data),
+    ATTACHMENTS: renderAttachments(attachments),
     READING: renderReading(sections),
     BRIEF: (sections.brief || "(none)").trim(),
     CONSTRAINTS: (sections.constraints || "(none)").trim(),
@@ -77,7 +83,7 @@ export function workerPrompt({ campaign, ticket, ticketTitle, runId, workdir, ba
   });
 }
 
-export function reviewPrompt({ campaign, ticket, ticketTitle, runId, workdir, base, kind, data, landing }) {
+export function reviewPrompt({ campaign, ticket, ticketTitle, runId, workdir, base, kind, data, landing, attachments = [] }) {
   const diffInstructions =
     landing === "directory"
       ? [
@@ -97,6 +103,7 @@ export function reviewPrompt({ campaign, ticket, ticketTitle, runId, workdir, ba
     BASE: base,
     TICKET_BODY: data.what,
     ACCEPTANCE: renderCriteria(data),
+    ATTACHMENTS: renderAttachments(attachments),
     DIFF: diffInstructions,
     REPORT_CMD: `node ${REPORT_SCRIPT}`,
   });
@@ -120,7 +127,7 @@ export function judgePrompt({ campaign, ticket, ticketTitle, question, summary, 
   });
 }
 
-export function resumePrompt({ ticket, answer, citation, findings }) {
+export function resumePrompt({ ticket, answer, citation, findings, attachments = [] }) {
   const lines = [];
   if (findings) {
     const detail = String(findings).trim();
@@ -133,6 +140,7 @@ export function resumePrompt({ ticket, answer, citation, findings }) {
     lines.push("Continue the ticket. Do not ask the same question again.");
   }
   lines.push("", `Ticket: ${ticket}. Report when the acceptance criteria hold, or when you are genuinely stuck.`);
+  if (attachments.length) lines.push("", "Attached images:", ...attachments.map((file) => `- ${file}`));
   return lines.join("\n");
 }
 

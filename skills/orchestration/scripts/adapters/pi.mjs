@@ -35,10 +35,10 @@ export function listModels({ refresh = false } = {}) {
   return listPiModels({ refresh });
 }
 
-export function buildLaunch({ run, modelEntry, thinking, tools, prompt, sessionsDir, systemPrompts, command }) {
+export function buildLaunch({ run, modelEntry, thinking, tools, prompt, sessionsDir, systemPrompts, attachments = [], command }) {
   return {
     command: command || process.env.PI_BIN || "pi",
-    argv: buildWorkerArgv({ run, modelEntry, thinking, tools, prompt, sessionsDir, systemPrompts }),
+    argv: buildWorkerArgv({ run, modelEntry, thinking, tools, prompt, sessionsDir, systemPrompts, attachments }),
     env: {},
   };
 }

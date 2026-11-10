@@ -80,6 +80,24 @@ test("ticket.add refuses what would break the plan, and leaves nothing behind", 
   assert.deepEqual(fs.readdirSync(path.join(dir, "orchestration", slug, "tickets")), before);
 });
 
+test("ticket.add keeps image attachments in frontmatter", () => {
+  const dir = fixture();
+  createCampaign({ root: dir, goal: "Ship it" });
+  const created = addTicket({
+    root: dir,
+    slug: "ship-it",
+    title: "Look at the reference",
+    kind: "design",
+    touches: ["site/**"],
+    attachments: ["refs/red.png"],
+    what: "Build it.",
+    criteria: ["It exists."],
+  });
+  const text = fs.readFileSync(created.file, "utf8");
+  assert.match(text, /attachments:/);
+  assert.match(text, /refs\/red\.png/);
+});
+
 test("a ticket can be edited, and an edit that breaks the plan is rolled back", () => {
   const dir = fixture();
   const { slug } = createCampaign({ root: dir, goal: "Ship it", slug: "demo" });

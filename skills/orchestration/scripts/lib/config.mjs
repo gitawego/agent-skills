@@ -292,6 +292,20 @@ export function validateCampaign({ root, consoleConfig, data, tickets = [], cata
     if (!check || !check.cmd) errors.push(`check "${check?.name || "?"}" has no command`);
   }
 
+  for (const ticket of tickets) {
+    const list = ticket?.data?.attachments;
+    const files = list == null ? [] : Array.isArray(list) ? list : [list];
+    for (const file of files) {
+      const abs = path.resolve(root, String(file));
+      const rel = path.relative(root, abs);
+      if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) {
+        errors.push(`${ticket.data.id}: attachment "${file}" is outside the project`);
+      } else if (!exists(abs)) {
+        errors.push(`${ticket.data.id}: attachment "${file}" does not exist`);
+      }
+    }
+  }
+
   const limits = consoleConfig.limits;
   if (data.max_autoship_lines != null && !Number.isInteger(data.max_autoship_lines))
     errors.push("max_autoship_lines must be an integer");
