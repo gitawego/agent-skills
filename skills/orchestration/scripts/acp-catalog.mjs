@@ -70,6 +70,9 @@ try {
   if (!enriched.length) throw new Error("the adapter advertised no models");
   console.log(JSON.stringify(sortByPrice(enriched)));
   await client.request("session/close", { sessionId: session.sessionId }).catch(() => {});
+  if (init.agentCapabilities?.sessionCapabilities?.delete) {
+    await client.request("session/delete", { sessionId: session.sessionId }).catch(() => {});
+  }
 } catch (err) {
   console.error(err.message);
   process.exitCode = 1;

@@ -96,7 +96,7 @@ export function campaignView(root, slug) {
     kinds: Object.fromEntries(
       Object.entries(campaign.data.kinds || {}).map(([id, kind]) => [
         id,
-        { models: (kind.models || []).map((m) => ({ model: m.model, thinking: m.thinking || null })) },
+        { models: (kind.models || []).map((m) => ({ adapter: m.adapter || null, model: m.model, thinking: m.thinking || null })) },
       ]),
     ),
     effectiveKinds: Object.fromEntries(
@@ -105,7 +105,7 @@ export function campaignView(root, slug) {
         {
           label: kind.label,
           description: kind.description,
-          models: kind.models.map((m) => ({ model: m.model, thinking: m.thinking || null })),
+          models: kind.models.map((m) => ({ adapter: m.adapter || null, model: m.model, thinking: m.thinking || null })),
           max_concurrent: kind.max_concurrent,
           tools: kind.tools,
           timeout_min: kind.timeout_min,

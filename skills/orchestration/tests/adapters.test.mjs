@@ -122,6 +122,30 @@ test("subscription-only refuses a model that is not included", () => {
   assert.ok(errors.some((e) => /not included in the .* subscription/.test(e)), errors.join("\n"));
 });
 
+test("a dollar budget over a subscription adapter needs an acknowledgment", () => {
+  const { dir, config, plan } = fixture();
+  const data = {
+    ...readCampaign(dir, "demo").data,
+    budget: { tokens: null, dollars: 1 },
+    runner: { adapter: "agy-acp", spend: "subscription-only" },
+    kinds: {
+      code: { models: [{ adapter: "agy-acp", model: "antigravity/gemini-3.8-flash" }] },
+      review: { models: [{ adapter: "agy-acp", model: "antigravity/gemini-4-argon" }] },
+    },
+  };
+  const rows = rowsFor("agy-acp");
+  const rejected = validateCampaign({ root: dir, consoleConfig: config, data, tickets: plan.ordered, catalogRows: { "agy-acp": rows } });
+  assert.ok(rejected.errors.some((e) => /ack_unmetered/.test(e)), rejected.errors.join("\n"));
+  const accepted = validateCampaign({
+    root: dir,
+    consoleConfig: config,
+    data: { ...data, budget: { tokens: null, dollars: 1, ack_unmetered: true } },
+    tickets: plan.ordered,
+    catalogRows: { "agy-acp": rows },
+  });
+  assert.deepEqual(accepted.errors, []);
+});
+
 test("the adapter catalog is visible to the panel and model resolution", () => {
   fixture();
   const view = adaptersView();

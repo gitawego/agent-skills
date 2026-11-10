@@ -62,6 +62,8 @@ ACP does not list per-model context windows or modalities. Antigravity advertise
 
 The `kinds` block is the role table. Worker roles and the roles that judge, review, and merge are all ticket kinds, one axis, so "which model ran this?" has exactly one answer. Each kind also has a role contract under `references/roles/`, appended to that run's system prompt after the standing `contract.md`; a custom kind with no file of its own gets `roles/general.md`.
 
+A chain entry may override the campaign's adapter: `{ adapter: agy-acp, model: antigravity/gemini-4-argon, thinking: medium }`. That is how a campaign runs code on pi and design or review on Antigravity in the same plan. The campaign-level `runner.adapter` is the default for entries that omit it.
+
 The chains ship **empty**. This skill names no vendor and no model, because a default that is not installed on the machine is a setup failure wearing a config's clothes. Binding is a step, not a default.
 
 A **chain** is ordered. The first model starts the ticket; each next one is the fallback. A fallback is used only when the previous model is unusable: no credentials, a model missing from the catalog, a provider failure that survives the retries, or a per-model budget guard. The attempt that used it is recorded on the run.
@@ -144,7 +146,7 @@ The campaign form mirrors the intake a human already fills for a new orchestrati
 | `base` | The ref a branch-landing campaign branches from and merges back into |
 | `checks` | Deterministic commands the supervisor runs itself in the ticket's worktree. A worker's own check claims are ignored |
 | `allow_paths` | Globs that never count as drift: lockfiles, snapshots, generated files a worker regenerates without declaring them |
-| `budget` | Campaign-wide ceiling in tokens and dollars; either may be null. The supervisor meters from the `usage` of each run's JSON log and pauses the campaign on exhaustion |
+| `budget` | Campaign-wide ceiling in tokens and dollars; either may be null. The supervisor meters from the `usage` of each run's JSON log and pauses the campaign on exhaustion. `ack_unmetered: true` is required when a dollar ceiling is combined with a subscription adapter, because those runs report tokens but no dollar cost. |
 | `max_autoship_lines` | Additions plus deletions above which a delivery never ships without a human, whatever the autonomy level |
 | `kinds` | Sparse overrides of the console's kinds: model chains may be replaced, caps and timeouts may only be tightened |
 

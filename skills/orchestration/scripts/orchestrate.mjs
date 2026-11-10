@@ -434,32 +434,33 @@ const commands = {
     const slug = resolveCampaign(root, campaignArg);
     const campaign = readCampaign(root, slug);
     const runner = runnerConfig(loadConsole(), campaign.data);
+    const adapterId = flags.adapter || runner.adapter;
     try {
-      if (runner.adapter !== "pi") refreshCatalog(runner.adapter, { cwd: root });
+      if (adapterId !== "pi") refreshCatalog(adapterId, { cwd: root });
     } catch (err) {
-      throw new UserError(`adapter "${runner.adapter}" could not discover models`, [
+      throw new UserError(`adapter "${adapterId}" could not discover models`, [
         err.message,
         err.hint || "Check that the harness is installed and signed in.",
       ]);
     }
-    const rows = rowsFor(runner.adapter, root);
+    const rows = rowsFor(adapterId, root);
     const parse = (value) => {
       const [model, thinking] = String(value).split(":");
       const resolved = resolveModel(model, rows);
       if (!resolved) {
-        throw new UserError(`"${model}" is not in the catalog for adapter "${runner.adapter}"`, [
-          `Run \`orchestrate catalog --adapter ${runner.adapter}\` and pick a model id.`,
+        throw new UserError(`"${model}" is not in the catalog for adapter "${adapterId}"`, [
+          `Run \`orchestrate catalog --adapter ${adapterId}\` and pick a model id.`,
         ]);
       }
-      if (resolved.adapter && resolved.adapter !== runner.adapter) {
-        throw new UserError(`"${model}" belongs to adapter "${resolved.adapter}", not "${runner.adapter}"`);
+      if (resolved.adapter && resolved.adapter !== adapterId) {
+        throw new UserError(`"${model}" belongs to adapter "${resolved.adapter}", not "${adapterId}"`);
       }
       if (runner.spend === "subscription-only" && resolved.included === false) {
-        throw new UserError(`"${model}" is not included in the ${runner.adapter} subscription`, [
+        throw new UserError(`"${model}" is not included in the ${adapterId} subscription`, [
           "Set runner.spend: metered-ok on the campaign to allow metered models.",
         ]);
       }
-      return { model: `${resolved.provider}/${resolved.model}`, thinking: thinking || "medium" };
+      return { adapter: adapterId, model: `${resolved.provider}/${resolved.model}`, thinking: thinking || "medium" };
     };
     const chain = [parse(modelArg)];
     const fallbacks = flags.fallback ? (Array.isArray(flags.fallback) ? flags.fallback : [flags.fallback]) : [];
@@ -476,7 +477,7 @@ const commands = {
     const kinds = campaign.data.kinds || {};
     kinds[kindId] = { ...(kinds[kindId] || {}), models: chain };
     fs.writeFileSync(campaign.file, joinFrontmatter({ ...campaign.data, kinds }, campaign.body));
-    console.log(`${slug} ${kindId}: ${chain.map((c) => `${c.model}:${c.thinking}`).join(" -> ")}`);
+    console.log(`${slug} ${kindId}: ${chain.map((c) => `${c.adapter}/${c.model}:${c.thinking}`).join(" -> ")}`);
   },
 
   approve({ flags, positional }) {

@@ -135,6 +135,11 @@ export function runnerConfig(consoleConfig, data = {}) {
   return { adapter, spend, command: consoleConfig.runner?.command || "pi" };
 }
 
+/* A chain entry may override the campaign adapter; otherwise it inherits. */
+export function entryAdapter(runner, entry = {}) {
+  return entry.adapter || runner.adapter;
+}
+
 // --- catalog ---------------------------------------------------------------
 
 export function resetCatalog() {
@@ -257,7 +262,12 @@ export function validateCampaign({ root, consoleConfig, data, tickets = [], cata
     errors.push(`unknown runner.adapter "${runner.adapter}"; one of ${ADAPTER_IDS.join(", ")}`);
   if (!SPEND_MODES.includes(runner.spend))
     errors.push(`runner.spend must be one of ${SPEND_MODES.join(", ")}`);
-  const rows = catalogRows || (runner.adapter === "pi" ? catalog() : []);
+  const rowsForAdapter = (adapterId) => {
+    if (Array.isArray(catalogRows)) return adapterId === runner.adapter ? catalogRows : adapterId === "pi" ? catalog() : [];
+    if (catalogRows && typeof catalogRows === "object") return catalogRows[adapterId] || (adapterId === "pi" ? catalog() : []);
+    return adapterId === "pi" ? catalog() : [];
+  };
+  const rows = rowsForAdapter(runner.adapter);
   if (runner.adapter !== "pi" && !rows.length)
     errors.push(`adapter "${runner.adapter}" has no catalog; run \`orchestrate catalog --adapter ${runner.adapter} --refresh\``);
 
@@ -346,26 +356,31 @@ export function validateCampaign({ root, consoleConfig, data, tickets = [], cata
     for (const entry of kind.models) {
       if (!entry.model) errors.push(`kind "${id}" has a chain entry without a model`);
       else {
-        const resolved = resolveModel(entry.model, rows);
+        const adapterId = entry.adapter || runner.adapter;
+        const entryRows = rowsForAdapter(adapterId);
+        const resolved = resolveModel(entry.model, entryRows);
         if (!resolved) {
-          errors.push(`model "${entry.model}" in kind "${id}" is not in the catalog for adapter "${runner.adapter}"; run \`orchestrate catalog --adapter ${runner.adapter}\``);
-        } else if (resolved.adapter && resolved.adapter !== runner.adapter) {
-          errors.push(`model "${entry.model}" belongs to adapter "${resolved.adapter}", but this campaign runs on "${runner.adapter}"`);
+          errors.push(`model "${entry.model}" in kind "${id}" is not in the catalog for adapter "${adapterId}"; run \`orchestrate catalog --adapter ${adapterId}\``);
+        } else if (resolved.adapter && resolved.adapter !== adapterId) {
+          errors.push(`model "${entry.model}" belongs to adapter "${resolved.adapter}", but the entry is bound to "${adapterId}"`);
         } else if (runner.spend === "subscription-only" && resolved.included === false) {
-          errors.push(`model "${entry.model}" is not included in the ${runner.adapter} subscription; set runner.spend: metered-ok to allow it`);
+          errors.push(`model "${entry.model}" is not included in the ${adapterId} subscription; set runner.spend: metered-ok to allow it`);
         }
       }
     }
   }
 
   /* A reviewer that starts on the same model as the work is not a gate. */
-  const reviewModel = kinds.review?.models?.[0]?.model;
-  if (reviewModel) {
+  const reviewEntry = kinds.review?.models?.[0];
+  if (reviewEntry?.model) {
+    const reviewAdapter = reviewEntry.adapter || runner.adapter;
     for (const id of used) {
       if (id === "review") continue;
-      const first = kinds[id]?.models?.[0]?.model;
-      if (first && first === reviewModel)
-        errors.push(`the review chain starts with ${reviewModel}, the same model as kind "${id}"; bind review to a different model`);
+      const first = kinds[id]?.models?.[0];
+      if (!first?.model) continue;
+      const firstAdapter = first.adapter || runner.adapter;
+      if (firstAdapter === reviewAdapter && first.model === reviewEntry.model)
+        errors.push(`the review chain starts with ${reviewAdapter}/${reviewEntry.model}, the same model as kind "${id}"; bind review to a different model`);
     }
   }
 
@@ -377,6 +392,13 @@ export function validateCampaign({ root, consoleConfig, data, tickets = [], cata
       errors.push(`budget ${unit} must be a positive number`);
     if (consoleBudget[unit] != null && budget[unit] > consoleBudget[unit])
       errors.push(`budget ${unit} ${budget[unit]} exceeds the console ceiling ${consoleBudget[unit]}`);
+  }
+  if (budget.dollars && !budget.ack_unmetered) {
+    const unmetered = Object.values(kinds).some((kind) =>
+      (kind.models || []).some((entry) => (entry.adapter || runner.adapter) !== "pi"),
+    );
+    if (unmetered)
+      errors.push("budget.dollars cannot cap a subscription adapter; set budget.ack_unmetered: true to approve that");
   }
 
   return { errors, kinds, runner, rows };

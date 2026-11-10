@@ -79,7 +79,7 @@ The script is the source of truth; the skill's slash commands are conveniences o
 | `cancel [campaign]` | Stop every live run and pause, keeping the branches |
 | `archive [campaign]` | Close a delivered campaign |
 | `approve <campaign>` | Approve plan and bindings; allow dispatch |
-| `bind <campaign> <kind> <model>[:thinking] [--fallback ...]` | Set one kind's chain; refused while the campaign is running |
+| `bind <campaign> <kind> <model>[:thinking] [--fallback ...] [--adapter <id>]` | Set one kind's chain; refused while the campaign is running |
 | `up` | Start the supervisor and panel if they are not running, open the panel, print its URL |
 | `down` | Stop the supervisor and panel |
 | `run` | Supervisor: all registered campaigns, one tick loop, plus the panel |

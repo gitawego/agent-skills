@@ -2,7 +2,7 @@
 import { spawn } from "node:child_process";
 import readline from "node:readline";
 
-export function connect({ command, args = [], cwd, env = {}, onNotification, onStderr, autoApprove = true }) {
+export function connect({ command, args = [], cwd, env = {}, onNotification, onStderr, autoApprove = true, onPermission = null }) {
   const child = spawn(command, args, {
     cwd,
     env: { ...process.env, ...env },
@@ -26,10 +26,20 @@ export function connect({ command, args = [], cwd, env = {}, onNotification, onS
     if (msg.method) {
       if (msg.id != null) {
         // Server -> client request. Only permissions matter for a worker.
-        if (msg.method === "session/request_permission" && autoApprove) {
+        if (msg.method === "session/request_permission") {
           const options = msg.params?.options || [];
-          const option = options.find((o) => /allow/i.test(`${o.optionId} ${o.name}`)) || options[0];
-          send({ jsonrpc: "2.0", id: msg.id, result: { outcome: { outcome: "selected", optionId: option?.optionId } } });
+          let option = null;
+          if (onPermission) {
+            const chosen = onPermission(msg);
+            option = options.find((o) => o.optionId === chosen) || null;
+          } else if (autoApprove) {
+            option = options.find((o) => /allow/i.test(`${o.optionId} ${o.name}`)) || options[0];
+          }
+          if (option) {
+            send({ jsonrpc: "2.0", id: msg.id, result: { outcome: { outcome: "selected", optionId: option.optionId } } });
+          } else {
+            send({ jsonrpc: "2.0", id: msg.id, result: { outcome: { outcome: "cancelled" } } });
+          }
           return;
         }
         send({

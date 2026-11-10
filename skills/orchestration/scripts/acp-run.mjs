@@ -2,6 +2,7 @@
 // The supervisor spawns this helper; it speaks ACP to the harness, streams
 // progress into the run log, writes session.json, and exits when the turn ends.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { connect, initialize } from "./lib/acp-client.mjs";
 import { profile } from "./lib/acp-profiles.mjs";
@@ -36,6 +37,28 @@ const client = connect({
     if (msg.method === "session/update") {
       record({ type: "acp.update", update: msg.params?.update || null });
     }
+  },
+  onPermission: (msg) => {
+    const tool = msg.params?.toolCall || {};
+    const paths = [
+      ...(tool.locations || []).map((location) => location.path),
+      tool.rawInput?.path,
+      tool.rawInput?.file_path,
+      tool.rawInput?.cwd,
+    ].filter((value) => typeof value === "string" && value.length);
+    const roots = [path.resolve(spec.cwd), os.tmpdir()];
+    const outside = paths.filter((file) => {
+      const abs = path.resolve(spec.cwd, file);
+      return !roots.some((root) => abs === root || abs.startsWith(root + path.sep));
+    });
+    const options = msg.params?.options || [];
+    const allow = options.find((option) => /allow/i.test(`${option.optionId} ${option.name}`)) || options[0];
+    if (outside.length) {
+      record({ type: "acp.permission", decision: "deny", paths: outside });
+      return null;
+    }
+    record({ type: "acp.permission", decision: "allow", paths });
+    return allow?.optionId || null;
   },
 });
 
@@ -98,22 +121,31 @@ try {
 
   const options = session.configOptions || [];
   const byId = Object.fromEntries(options.map((o) => [o.id, o]));
+  const applied = {};
 
   async function setConfig(id, value, { required = false } = {}) {
     if (!id || value == null) return;
     const option = byId[id];
     if (!option) return;
-    if (option.currentValue === value) return;
+    if (option.currentValue === value) {
+      applied[id] = option.currentValue;
+      return;
+    }
     const allowed = (option.options || []).map((o) => o.value);
-    if (allowed.length && !allowed.includes(value)) return;
+    if (allowed.length && !allowed.includes(value)) {
+      applied[id] = option.currentValue;
+      return;
+    }
     try {
       await client.request("session/set_config_option", {
         sessionId: session.sessionId,
         configId: id,
         value,
       });
+      applied[id] = value;
       record({ type: "acp.config", id, value });
     } catch (err) {
+      applied[id] = option.currentValue;
       record({ type: "acp.config.error", id, value, message: err.message });
       if (required) throw err;
     }
@@ -153,6 +185,7 @@ try {
         usage,
         adapter: spec.adapter,
         model: `${spec.provider}/${spec.model}`,
+        config: applied,
         at: new Date().toISOString(),
       },
       null,

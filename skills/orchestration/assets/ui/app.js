@@ -235,7 +235,12 @@ function draftKey(scope, kind) {
 
 function draft(scope, kind, models) {
   const key = draftKey(scope, kind);
-  if (!drafts[key]) drafts[key] = (models || []).map((m) => ({ model: m.model, thinking: m.thinking || "medium" }));
+  if (!drafts[key])
+    drafts[key] = (models || []).map((m) => ({
+      adapter: m.adapter || adapterFor(scope),
+      model: m.model,
+      thinking: m.thinking || "medium",
+    }));
   return drafts[key];
 }
 
@@ -257,11 +262,8 @@ function spendFor(scope) {
 }
 
 function catalogFor(scope) {
-  const id = adapterFor(scope);
   const spend = spendFor(scope);
-  return catalog().filter(
-    (row) => (row.adapter || "pi") === id && (spend !== "subscription-only" || row.included !== false),
-  );
+  return catalog().filter((row) => spend !== "subscription-only" || row.included !== false);
 }
 
 function adapterSelect(scope) {
@@ -298,16 +300,33 @@ function chainEditor(scope, kind, models) {
   const chips = selected.length
     ? selected
         .map(
-          (entry, index) => `<span class="model-chip"><span class="m">${esc(entry.model)}</span><span class="t">${esc(entry.thinking || "medium")}</span><button class="x" data-act="chain-remove" data-scope="${scope}" data-kind="${esc(kind)}" data-index="${index}" aria-label="Remove ${esc(entry.model)}">×</button></span>`,
+          (entry, index) => `<span class="model-chip"><span class="m">${esc(entry.adapter ? `${entry.adapter} · ${entry.model}` : entry.model)}</span><span class="t">${esc(entry.thinking || "medium")}</span><button class="x" data-act="chain-remove" data-scope="${scope}" data-kind="${esc(kind)}" data-index="${index}" aria-label="Remove ${esc(entry.model)}">×</button></span>`,
         )
         .join("")
     : `<span class="hint">nothing bound${scope === "console" ? ", so these tickets cannot dispatch" : ""}</span>`;
+  const groups = new Map();
+  for (const row of options) {
+    const id = row.adapter || "pi";
+    if (!groups.has(id)) groups.set(id, []);
+    groups.get(id).push(row);
+  }
+  const choices = [...groups.entries()]
+    .map(
+      ([id, rows]) =>
+        `<optgroup label="${esc(id)}">${rows
+          .map(
+            (row) =>
+              `<option value="${esc(`${id}|${modelKey(row)}`)}">${esc(modelKey(row))} · ${esc(row.context || "?")}${row.images ? " · images" : ""} · ${esc(priceLabel(row))}</option>`,
+          )
+          .join("")}</optgroup>`,
+    )
+    .join("");
   return `<div class="chain-editor">
       <div class="model-chips">${chips}</div>
       <div class="chain-add">
         <select data-role="model" data-scope="${scope}" data-kind="${esc(kind)}" aria-label="${esc(kind)} model">
           <option value="">choose a model…</option>
-          ${options.map((row) => `<option value="${esc(modelKey(row))}">${esc(modelKey(row))} · ${esc(row.context || "?")}${row.images ? " · images" : ""} · ${esc(priceLabel(row))}</option>`).join("")}
+          ${choices}
         </select>
         <select data-role="thinking" data-scope="${scope}" data-kind="${esc(kind)}" aria-label="${esc(kind)} thinking">
           ${THINKING.map((t) => `<option ${t === "high" ? "selected" : ""}>${t}</option>`).join("")}
@@ -638,7 +657,8 @@ function viewCampaign() {
               <input id="bt" name="budget_tokens" type="number" min="0" placeholder="tokens" value="${c.budget?.tokens ?? ""}" />
               <input name="budget_dollars" type="number" min="0" step="0.01" placeholder="dollars" value="${c.budget?.dollars ?? ""}" />
             </div>
-            <span class="sub">${c.runner?.adapter && c.runner.adapter !== "pi" && c.budget?.dollars ? "A dollar budget cannot cap a subscription adapter; tokens still apply." : "empty: no ceiling."}</span>
+            <span class="sub">${c.runner?.adapter && c.runner.adapter !== "pi" && c.budget?.dollars ? "A dollar budget cannot cap a subscription adapter; check the acknowledgment." : "empty: no ceiling."}</span>
+            <label class="sub" style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="budget_ack" ${c.budget?.ack_unmetered ? "checked" : ""}/> acknowledge unmetered adapters</label>
           </div></div>
         </div>
 
@@ -861,7 +881,7 @@ function saveCampaign(root, slug) {
   const kinds = {};
   for (const [id, kind] of Object.entries(c.effectiveKinds || {})) {
     const models = draft("campaign", id, kind.models);
-    const before = JSON.stringify(kind.models.map((m) => ({ model: m.model, thinking: m.thinking || "medium" })));
+    const before = JSON.stringify(kind.models.map((m) => ({ adapter: m.adapter || null, model: m.model, thinking: m.thinking || "medium" })));
     if (kind.overridden || JSON.stringify(models) !== before) kinds[id] = { models };
   }
   clearAfterLoad.add("campaign");
@@ -879,6 +899,7 @@ function saveCampaign(root, slug) {
     budget: {
       tokens: value("budget_tokens") ? Number(value("budget_tokens")) : null,
       dollars: value("budget_dollars") ? Number(value("budget_dollars")) : null,
+      ack_unmetered: Boolean(document.querySelector('[name="budget_ack"]')?.checked),
     },
     max_autoship_lines: Number(value("max_autoship_lines") || 200),
     kinds,
@@ -1190,8 +1211,6 @@ document.addEventListener("change", (event) => {
   const scope = select.dataset.scope;
   adapterChoice[scope] = select.value;
   spendChoice[scope] = null;
-  const kinds = scope === "console" ? state?.console?.kinds : current()?.effectiveKinds;
-  for (const id of Object.keys(kinds || {})) drafts[`${scope}:${id}`] = [];
   render();
 });
 
@@ -1283,12 +1302,14 @@ document.addEventListener("click", (event) => {
     case "chain-add": {
       const scope = target.dataset.scope;
       const kind = target.dataset.kind;
-      const model = document.querySelector(`select[data-role="model"][data-scope="${scope}"][data-kind="${kind}"]`)?.value;
+      const value = document.querySelector(`select[data-role="model"][data-scope="${scope}"][data-kind="${kind}"]`)?.value;
       const thinking = document.querySelector(`select[data-role="thinking"][data-scope="${scope}"][data-kind="${kind}"]`)?.value || "medium";
-      if (!model) return toast("Pick a model first");
+      if (!value) return toast("Pick a model first");
+      const [adapter, ...rest] = value.split("|");
+      const model = rest.join("|");
       const list = draft(scope, kind, []);
-      if (list.some((m) => m.model === model)) return toast("Already in the chain");
-      list.push({ model, thinking });
+      if (list.some((m) => m.model === model && m.adapter === adapter)) return toast("Already in the chain");
+      list.push({ adapter, model, thinking });
       render();
       return;
     }
@@ -1304,10 +1325,12 @@ document.addEventListener("click", (event) => {
       const select = document.querySelector(`select[data-role="model"][data-scope="${scope}"][data-kind="${kind}"]`);
       const first = [...(select?.options || [])].find((option) => option.value);
       if (!first) return toast("No model catalog for this adapter");
+      const [adapter, ...rest] = first.value.split("|");
+      const model = rest.join("|");
       const list = draft(scope, kind, []);
-      if (list.some((entry) => entry.model === first.value)) return toast("Already in the chain");
+      if (list.some((entry) => entry.model === model && entry.adapter === adapter)) return toast("Already in the chain");
       const thinking = document.querySelector(`select[data-role="thinking"][data-scope="${scope}"][data-kind="${kind}"]`)?.value || "medium";
-      list.push({ model: first.value, thinking });
+      list.push({ adapter, model, thinking });
       render();
       return;
     }
