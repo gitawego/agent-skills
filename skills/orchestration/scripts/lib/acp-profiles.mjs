@@ -14,6 +14,7 @@ export const PROFILES = {
     modeConfig: "mode",
     mode: "auto",
     thinking: ["low", "medium", "high"],
+    imageMetadata: "adapter", // the server advertises image input; models are not listed individually
   },
   "opencode-acp": {
     id: "opencode-acp",
@@ -29,6 +30,7 @@ export const PROFILES = {
     modeConfig: "mode",
     mode: "build",
     thinking: ["default", "low", "medium", "high"],
+    imageMetadata: "model", // enriched per model from the local price store
   },
 };
 

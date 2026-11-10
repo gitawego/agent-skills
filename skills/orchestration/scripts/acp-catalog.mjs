@@ -13,7 +13,7 @@ const cwd = process.argv[3] || fs.mkdtempSync(path.join(os.tmpdir(), `orch-${ada
 const cleanup = !process.argv[3];
 const client = connect({ command: p.command, args: p.args, cwd, onStderr: () => {} });
 
-function modelsFromOptions(options = []) {
+function modelsFromOptions(options = [], adapterImages = null) {
   const byId = Object.fromEntries(options.map((o) => [o.id, o]));
   const modelOption = byId[p.modelConfig];
   const thinkingOption = byId[p.thinkingConfig];
@@ -22,6 +22,14 @@ function modelsFromOptions(options = []) {
   return values.map((entry) => {
     const raw = String(entry.value);
     const { provider, model } = splitModel(p, raw);
+    let images = adapterImages;
+    if (p.imageMetadata === "adapter" && adapterImages === true) {
+      /* The server accepts images; the advertised model family tells us which
+         models actually consume them. Unknown stays unknown, never "no". */
+      if (/^gemini-|^claude-/i.test(model)) images = true;
+      else if (/^gpt-oss/i.test(model)) images = false;
+      else images = null;
+    }
     return {
       adapter,
       provider,
@@ -31,7 +39,8 @@ function modelsFromOptions(options = []) {
       maxOut: null,
       thinking: levels.length > 0,
       thinkingLevels: levels,
-      images: null,
+      images,
+      imagesSource: images == null ? null : "adapter",
       price: null,
       billing: p.billing,
       plan: p.includedProviders ? (p.includedProviders.includes(provider) ? "subscription" : "metered") : "subscription",
@@ -41,9 +50,11 @@ function modelsFromOptions(options = []) {
 }
 
 try {
-  await initialize(client, { name: "orchestration-catalog", version: "1" });
+  const init = await initialize(client, { name: "orchestration-catalog", version: "1" });
+  const adapterImages =
+    p.imageMetadata === "adapter" && init.agentCapabilities?.promptCapabilities?.image === true ? true : null;
   const session = await client.request("session/new", { cwd, mcpServers: [] });
-  const rows = modelsFromOptions(session.configOptions);
+  const rows = modelsFromOptions(session.configOptions, adapterImages);
   const prices = loadPriceMap();
   const enriched = rows.map((row) => {
     const withPrice = enrichModel(row, prices);

@@ -58,6 +58,8 @@ runner:
 
 Every adapter writes a snapshot to `~/.local/state/orchestration/catalogs/<adapter>.json`; the panel reads it and `bind`/`approve` refresh it. ACP discovery creates and closes one session, so it costs seconds, not tokens.
 
+ACP does not list per-model context windows or modalities. Antigravity advertises image input at the server level, so Gemini and Claude rows are marked as image-capable, GPT-OSS is marked text-only, and an unknown family stays `null`; OpenCode rows get modalities and prices from the local model store. `null` means "not proven", not "no", and a `visual` chain is refused until the model is known to read images.
+
 The `kinds` block is the role table. Worker roles and the roles that judge, review, and merge are all ticket kinds, one axis, so "which model ran this?" has exactly one answer. Each kind also has a role contract under `references/roles/`, appended to that run's system prompt after the standing `contract.md`; a custom kind with no file of its own gets `roles/general.md`.
 
 The chains ship **empty**. This skill names no vendor and no model, because a default that is not installed on the machine is a setup failure wearing a config's clothes. Binding is a step, not a default.
