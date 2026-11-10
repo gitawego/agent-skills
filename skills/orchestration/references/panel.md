@@ -47,7 +47,7 @@ Dark is the default. `?theme=light` / `?theme=dark`, or the toggle at the foot o
 
 **New campaign** from the rail: a goal in one sentence, a project, autonomy, landing and base. It writes `campaign.md` in `draft`, so planning continues in the Campaign screen or in a session.
 
-**Open another repository** from the rail: type an absolute path; the server validates it, adds it to the live project list and writes it to the console registry, so its campaigns and orchestration records appear immediately and on the next start.
+**Open another repository** from the rail: browse folders, then **Open this folder**. The server validates the directory, adds it to the live project list and writes it to the console registry, so its campaigns and orchestration records appear immediately and on the next start. `GET /api/browse?path=` lists subdirectories; no string path is required in the UI.
 
 **Cancel all** stops every live run and pauses the campaign, leaving branches for inspection. **Archive** closes a delivered or paused campaign: it leaves the board, the branches stay.
 
@@ -76,6 +76,7 @@ Both have CLI equivalents: `orchestrate start "<goal>"` and `orchestrate ticket 
 - **`GET /api/log?project=&campaign=&run=&offset=`** returns the next bytes of a run log with the new offset, so the drawer keeps streaming across reconnects.
 - **`POST /api/commands`** takes `{ root, type, ... }` and returns the queued command. The supervisor picks it up within one tick (2 s by default).
 - **`POST /api/projects`** takes `{ root }`, validates the directory, adds it to the live project list and the console registry.
+- **`GET /api/browse?path=`** lists subdirectories for the folder picker; omit `path` for the home directory.
 - **`POST /api/attachments`** takes `{ root, campaign, name, data }` (base64 image or PDF) and writes it under `orchestration/<campaign>/attachments/`, returning the project-relative path. Used by the new/edit ticket attachment field; 5 MB per image, 20 MB per PDF, png/jpeg/webp/gif/pdf only.
 
 Commands: `answer`, `review.approve`, `review.reject`, `retry`, `stop`, `pause`, `resume`, `approve`, `deliver`, `campaign.create`, `campaign.save`, `ticket.add`, `settings.save`, `catalog.refresh`.

@@ -107,13 +107,13 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#settings` });
     await sleep(2500);
     const result = await send("Runtime.evaluate", {
-      expression: `JSON.stringify({ adapters: document.querySelectorAll('[data-role="adapter"]').length, spend: document.querySelector('[name="spend"]')?.value, sandbox: document.querySelector('[name="sandbox"]')?.value, openRepo: Boolean(document.getElementById("open-repo")), search: Boolean(document.querySelector('[data-role="model-search"]')), title: document.body.innerText.includes("Settings") })`,
+      expression: `JSON.stringify({ adapters: document.querySelectorAll('[data-role="adapter"]').length, spend: document.querySelector('[name="spend"]')?.value, sandbox: document.querySelector('[name="sandbox"]')?.value, openRepo: Boolean(document.getElementById("browse-repo")), search: Boolean(document.querySelector('[data-role="model-search"]')), title: document.body.innerText.includes("Settings") })`,
       returnByValue: true,
     });
     const page = JSON.parse(result.result.result.value);
     assert.ok(page.adapters >= 1, "an adapter selector is rendered");
     assert.equal(page.title, true, "the settings screen is visible");
-    assert.equal(page.openRepo, true, "the open-repository form is rendered");
+    assert.equal(page.openRepo, true, "the open-repository button is rendered");
     assert.equal(page.search, true, "the searchable model picker is rendered");
     assert.match(page.spend, /metered-ok|subscription-only/);
     assert.match(page.sandbox, /auto|bwrap|none/);
@@ -135,6 +135,17 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     const suggestion = JSON.parse(stillOpen.result.result.value);
     assert.equal(suggestion.open, true, "the suggestion list survives the 15s refresh");
     assert.match(suggestion.text, /gemini/i);
+
+    await send("Runtime.evaluate", { expression: `document.getElementById("browse-repo").click()`, returnByValue: true });
+    await sleep(1200);
+    const folder = await send("Runtime.evaluate", {
+      expression: `JSON.stringify({ open: !document.getElementById("folder-picker").hidden, path: document.getElementById("browse-path").textContent, entries: document.querySelectorAll("#browse-list button").length })`,
+      returnByValue: true,
+    });
+    const picker = JSON.parse(folder.result.result.value);
+    assert.equal(picker.open, true, "the folder picker opens");
+    assert.ok(picker.path.length > 0, "the picker shows a path");
+    assert.ok(picker.entries > 0, "the picker lists directories");
     ws.close();
   } finally {
     browser.kill("SIGKILL");

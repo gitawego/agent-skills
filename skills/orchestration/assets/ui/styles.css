@@ -185,6 +185,69 @@ a:hover { text-decoration-color: var(--ink); }
   cursor: pointer;
 }
 .rail-open button:hover { border-color: var(--ink); color: var(--ink); }
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 1rem;
+}
+.modal[hidden] { display: none; }
+.modal-card {
+  width: min(46rem, 100%);
+  max-height: min(36rem, 90vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+.modal-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1rem 1.1rem 0.7rem;
+  border-bottom: 1px solid var(--rule);
+}
+.modal-card h2 { margin: 0.1rem 0 0; font-size: 1.35rem; }
+.modal-card footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.8rem 1.1rem;
+  border-top: 1px solid var(--rule);
+}
+.browse-path {
+  padding: 0.65rem 1.1rem;
+  font: 0.74rem/1.3 var(--mono);
+  color: var(--muted);
+  border-bottom: 1px solid var(--rule);
+  word-break: break-all;
+}
+.browse-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem;
+  overflow: auto;
+  min-height: 8rem;
+}
+.browse-list li { margin: 0; }
+.browse-list button {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  padding: 0.48rem 0.6rem;
+  border-radius: 3px;
+  font: 0.78rem/1.2 var(--mono);
+  cursor: pointer;
+}
+.browse-list button:hover, .browse-list button:focus { background: var(--rule); }
 .rail-foot {
   margin-top: auto;
   font: 0.7rem/1.5 var(--mono);

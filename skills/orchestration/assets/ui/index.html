@@ -20,10 +20,7 @@
         <div class="rail-label">Campaigns</div>
         <nav class="campaign-list" id="campaigns" aria-label="Campaigns"></nav>
         <button class="rail-new" data-act="new-campaign">New campaign</button>
-        <form class="rail-open" id="open-repo">
-          <input name="root" type="text" placeholder="/path/to/another/repo" aria-label="Open another repository" spellcheck="false" />
-          <button type="submit">Open</button>
-        </form>
+        <button class="rail-new" id="browse-repo" data-act="browse-repo">Open repository…</button>
         <div class="rail-foot">
           <span id="foot-state">local</span>
           <span class="themetoggle" title="Theme">
@@ -54,6 +51,24 @@
       </div>
 
       <aside class="drawer" id="drawer" hidden></aside>
+    </div>
+
+    <div class="modal" id="folder-picker" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="folder-title">
+        <header>
+          <div>
+            <div class="eyebrow">open repository</div>
+            <h2 id="folder-title">Choose a folder</h2>
+          </div>
+          <button class="btn ghost" data-act="close-folder">Close</button>
+        </header>
+        <div class="browse-path" id="browse-path"></div>
+        <ul class="browse-list" id="browse-list"></ul>
+        <footer>
+          <button class="btn" data-act="browse-parent">Up</button>
+          <button class="btn primary" data-act="browse-open">Open this folder</button>
+        </footer>
+      </div>
     </div>
     <script src="/app.js"></script>
   </body>

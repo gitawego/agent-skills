@@ -1229,20 +1229,42 @@ async function uploadAttachments(input) {
   toast("image attached");
 }
 
-document.addEventListener("submit", async (event) => {
-  if (event.target.id !== "open-repo") return;
-  event.preventDefault();
-  const root = String(new FormData(event.target).get("root") || "").trim();
-  if (!root) return;
+let folderState = { path: null, parent: null };
+
+async function openFolder(path) {
+  try {
+    const res = await fetch(`/api/browse?path=${encodeURIComponent(path || "")}`, {
+      headers: { "x-orch-token": token },
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || "could not read the folder");
+    folderState = { path: body.path, parent: body.parent };
+    document.getElementById("folder-picker").hidden = false;
+    document.getElementById("browse-path").textContent = body.path;
+    document.getElementById("browse-list").innerHTML = body.entries.length
+      ? body.entries
+          .map(
+            (entry) =>
+              `<li><button data-act="browse-into" data-path="${esc(entry.path)}">${esc(entry.name)}/</button></li>`,
+          )
+          .join("")
+      : `<li class="model-empty">No subdirectories. Open this folder, or go up.</li>`;
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function openSelectedFolder() {
+  if (!folderState.path) return toast("Choose a folder first");
   try {
     const res = await fetch("/api/projects", {
       method: "POST",
       headers: { "content-type": "application/json", "x-orch-token": token },
-      body: JSON.stringify({ root }),
+      body: JSON.stringify({ root: folderState.path }),
     });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || "could not open the repository");
-    event.target.reset();
+    document.getElementById("folder-picker").hidden = true;
     toast("repository opened");
     await load();
     const project = state.projects.find((item) => item.root === body.root);
@@ -1255,6 +1277,15 @@ document.addEventListener("submit", async (event) => {
     }
   } catch (err) {
     toast(err.message);
+  }
+}
+
+document.addEventListener("click", (event) => {
+  if (event.target.id === "folder-picker") event.target.hidden = true;
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !document.getElementById("folder-picker").hidden) {
+    document.getElementById("folder-picker").hidden = true;
   }
 });
 
@@ -1488,6 +1519,17 @@ document.addEventListener("click", (event) => {
       localStorage.setItem("orch.textSize", target.dataset.size);
       document.documentElement.style.fontSize = `${target.dataset.size}px`;
       render();
+      return;
+    case "browse-repo":
+      return openFolder(null);
+    case "browse-into":
+      return openFolder(target.dataset.path);
+    case "browse-parent":
+      return openFolder(folderState.parent);
+    case "browse-open":
+      return openSelectedFolder();
+    case "close-folder":
+      document.getElementById("folder-picker").hidden = true;
       return;
     case "new-campaign":
       app.innerHTML = newCampaignForm();

@@ -1,6 +1,7 @@
 // The panel server: loopback only, SSE, and a command queue. No dependencies.
 import fs from "node:fs";
 import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { SKILL_DIR, consoleStateDir, ensureDir, globalPanelFile, nowIso, projectStateDir, readJson, registryFile, writeJson } from "./util.mjs";
@@ -227,6 +228,29 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
       const start = Math.min(offset, text.length);
       const chunk = text.slice(start, start + 200_000);
       json(res, 200, { text: chunk, offset: start + chunk.length, size: text.length });
+      return;
+    }
+
+    if (route === "/api/browse") {
+      try {
+        const dir = path.resolve(url.searchParams.get("path") || os.homedir());
+        const stat = fs.statSync(dir);
+        if (!stat.isDirectory()) throw new Error("not a directory");
+        const entries = fs
+          .readdirSync(dir, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => ({ name: entry.name, path: path.join(dir, entry.name) }))
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .slice(0, 500);
+        json(res, 200, {
+          ok: true,
+          path: dir,
+          parent: path.dirname(dir) === dir ? null : path.dirname(dir),
+          entries,
+        });
+      } catch (err) {
+        json(res, 400, { error: err.message });
+      }
       return;
     }
 
