@@ -19,7 +19,7 @@ export function createAcpAdapter(adapterId) {
     label: p.label,
     capabilities() {
       return {
-        systemPrompt: p.systemPrompt === "meta" ? "acp-meta" : "prompt-prefix",
+        systemPrompt: p.systemPrompt === "meta" ? "acp-meta" : p.systemPrompt === "agent-config" ? "acp-agent-config" : "prompt-prefix",
         tools: "native",
         thinking: "config",
         resume: "session",

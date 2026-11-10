@@ -79,6 +79,7 @@ test("the panel serves state, refuses a missing token, and queues commands", asy
   assert.ok(Array.isArray(body.catalog) && body.catalog.length > 0, "the catalog is offered");
   assert.ok(body.catalog[0].provider && body.catalog[0].model);
   assert.ok(Array.isArray(body.adapters) && body.adapters.some((a) => a.id === "pi"), "adapters are offered");
+  assert.ok(body.catalogs && body.catalogs[body.projects[0].root], "a per-project catalog is offered");
   assert.ok(body.catalog.every((row) => row.adapter), "every catalog row names its adapter");
 
   const post = await fetch(`http://127.0.0.1:${panel.port}/api/commands?token=${panel.token}`, {

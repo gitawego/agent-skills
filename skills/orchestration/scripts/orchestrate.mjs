@@ -156,18 +156,26 @@ function printTickets(root, slug) {
 const commands = {
   init({ flags }) {
     const root = rootDir(flags);
-    ensureConsole();
     ensureDir(path.join(root, ".orchestration"));
     ensureDir(path.join(root, "orchestration"));
     ensureGitignore(root);
     registryAdd(root);
-    const { created } = ensureConsole();
+    const { config, created } = ensureConsole();
     console.log(`project   ${root}`);
     console.log(`state     ${path.join(root, ".orchestration")}`);
     console.log(`console   ${consoleFile()}${created ? " (created)" : ""}`);
     const adapters = adaptersView();
     const total = adapters.reduce((n, a) => n + (a.models || 0), 0);
     console.log(`adapters  ${adapters.map((a) => `${a.id}${a.models ? ` (${a.models})` : ""}`).join(", ")} — ${total} models`);
+    if (created) {
+      const pi = adapters.find((a) => a.id === "pi");
+      const installed = adapters.find((a) => a.id !== "pi" && a.adapterVersion);
+      if ((!pi || !pi.models) && installed) {
+        config.runner = { ...config.runner, adapter: installed.id };
+        saveConsole(config);
+        console.log(`adapter   defaulted to ${installed.id} (no pi catalog found)`);
+      }
+    }
     console.log(`catalog   set the adapter with \`orchestrate adapter <id>\`, then refresh it in the panel`);
     console.log("");
     console.log('Next: orchestrate start "<goal>"');
@@ -228,8 +236,20 @@ const commands = {
   },
 
   doctor({ flags }) {
-    const rows = adaptersView();
+    const root = rootDir(flags);
+    let rows = adaptersView();
     const problems = [];
+    if (flags.refresh) {
+      for (const row of rows) {
+        if (!row.adapterVersion) continue;
+        try {
+          refreshCatalog(row.id, { cwd: root });
+        } catch (err) {
+          problems.push(`${row.id}: live discovery failed: ${err.message}`);
+        }
+      }
+      rows = adaptersView();
+    }
     for (const row of rows) {
       if (!row.adapterVersion) problems.push(`${row.id}: harness not found`);
       if (!row.models) problems.push(`${row.id}: no catalog; run \`orchestrate catalog --adapter ${row.id} --refresh\``);
@@ -458,6 +478,11 @@ const commands = {
       if (runner.spend === "subscription-only" && resolved.included === false) {
         throw new UserError(`"${model}" is not included in the ${adapterId} subscription`, [
           "Set runner.spend: metered-ok on the campaign to allow metered models.",
+        ]);
+      }
+      if (["code", "design", "visual", "review"].includes(kindId) && resolved.price && resolved.price.input === 0 && resolved.price.output === 0) {
+        throw new UserError(`"${model}" is free/promo and not allowed for kind "${kindId}"`, [
+          "Bind a paid or self-hosted model for production kinds.",
         ]);
       }
       return { adapter: adapterId, model: `${resolved.provider}/${resolved.model}`, thinking: thinking || "medium" };
@@ -800,7 +825,7 @@ const commands = {
   archive [campaign]                    close a delivered campaign
   catalog [search]                       the live model catalog; --adapter <id> [--refresh]
   adapters                               adapters, versions and catalog status
-  doctor                                 check harness versions and catalog freshness
+  doctor [--refresh]                      check harness versions and catalog freshness
   adapter <id> [--spend mode]            set the console adapter and spend mode
   bind <campaign> <kind> <model>[:t]    set a kind's chain; --fallback for the next entry
   approve <campaign>                    approve plan and bindings, then dispatch

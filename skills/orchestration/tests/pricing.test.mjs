@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadPriceMap, enrichModel, priceScore, sortByPrice, priceLabel } from "../scripts/lib/pricing.mjs";
+import { loadPriceMap, loadModelsDevMap, enrichModel, priceScore, sortByPrice, priceLabel } from "../scripts/lib/pricing.mjs";
 
 function store() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orch-price-"));
@@ -84,6 +84,32 @@ test("cheapest first, with unknown prices last", () => {
     "nope",
   ]);
   assert.ok(priceScore(ordered[0]) < priceScore(ordered[1]));
+});
+
+test("models.dev fills a provider the local store does not know", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orch-modelsdev-"));
+  const file = path.join(dir, "api.json");
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      openrouter: {
+        models: {
+          "~anthropic/claude-fable-latest": {
+            cost: { input: 8, output: 40, cache_read: 0.2, cache_write: 10 },
+            limit: { context: 1_000_000, output: 128_000 },
+            attachment: true,
+            reasoning: true,
+          },
+        },
+      },
+    }),
+  );
+  const map = loadModelsDevMap(file);
+  const row = map.get("openrouter/~anthropic/claude-fable-latest");
+  assert.equal(row.price.input, 8);
+  assert.equal(row.price.cacheRead, 0.2);
+  assert.equal(row.contextTokens, 1_000_000);
+  assert.equal(row.images, true);
 });
 
 test("a subscription model is labelled as included, not as free", () => {

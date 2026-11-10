@@ -5,7 +5,7 @@ import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { SKILL_DIR, consoleStateDir, ensureDir, globalPanelFile, projectStateDir } from "./util.mjs";
 import { projectView, consoleView } from "./view.mjs";
-import { adaptersView, allModels } from "./catalogs.mjs";
+import { adaptersView, allModels, catalogsForRoot } from "./catalogs.mjs";
 import { enqueue } from "./commands.mjs";
 
 const UI = path.join(SKILL_DIR, "assets", "ui");
@@ -181,6 +181,7 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
         projects,
         console: consoleView().config,
         adapters: adaptersView(),
+        catalogs: Object.fromEntries(projects.map((project) => [project.root, catalogsForRoot(project.root)])),
         catalog: models,
       });
       return;

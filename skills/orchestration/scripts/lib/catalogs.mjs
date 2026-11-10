@@ -2,9 +2,12 @@
 //
 // The panel and validation read snapshots; `refreshCatalog` is the only writer
 // and is called from an explicit refresh/bind/approve, never from /api/state.
+import fs from "node:fs";
 import crypto from "node:crypto";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { ensureDir, nowIso, readJson, stateHome, writeJson } from "./util.mjs";
+import { modelsDevFile } from "./pricing.mjs";
 import * as pi from "../adapters/pi.mjs";
 import agy from "../adapters/agy-acp.mjs";
 import opencode from "../adapters/opencode-acp.mjs";
@@ -71,9 +74,27 @@ export function writeCatalogCache(id, models, extra = {}) {
 }
 
 export function refreshCatalog(id, { cwd } = {}) {
+  refreshPrices();
   const adapter = getAdapter(id);
   const models = adapter.listModels({ refresh: true, cwd });
   return writeCatalogCache(id, models, { adapterVersion: safeVersion(adapter), cwd });
+}
+
+const PRICE_SCRIPT = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "fetch-prices.mjs");
+let priceChecked = false;
+
+/* One network refresh per day; failures are silent because prices are
+   supplementary and the local model store remains the primary source. */
+function refreshPrices() {
+  if (priceChecked) return;
+  priceChecked = true;
+  try {
+    const stat = fs.statSync(modelsDevFile());
+    if (Date.now() - stat.mtimeMs < 24 * 60 * 60 * 1000) return;
+  } catch {
+    /* no cache yet */
+  }
+  spawnSync(process.execPath, [PRICE_SCRIPT], { timeout: 30_000, stdio: "ignore" });
 }
 
 /* A project-specific row set wins over the panel's last-known snapshot. */
@@ -95,6 +116,29 @@ export function allModels() {
     }
   }
   return rows;
+}
+
+/* Per-project projection: scoped snapshots first, then the last-known global. */
+export function catalogsForRoot(root) {
+  const out = {};
+  for (const id of adapterIds()) {
+    const scoped = readCatalogCache(id, root);
+    if (scoped?.models?.length) {
+      out[id] = scoped.models;
+      continue;
+    }
+    if (id === "pi") {
+      try {
+        out[id] = rowsFor(id);
+      } catch {
+        out[id] = [];
+      }
+      continue;
+    }
+    const global = readCatalogCache(id);
+    if (global?.models?.length) out[id] = global.models;
+  }
+  return out;
 }
 
 export function adaptersView() {

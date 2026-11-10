@@ -14,6 +14,16 @@ fs.rmSync(specPath, { force: true });
 const p = profile(spec.adapter);
 const log = fs.createWriteStream(spec.logFile, { flags: "a" });
 
+const extraEnv = {};
+if (p.systemPrompt === "agent-config" && spec.systemPrompt) {
+  extraEnv.OPENCODE_CONFIG_CONTENT = JSON.stringify({
+    default_agent: "orchestration-worker",
+    agent: {
+      "orchestration-worker": { prompt: spec.systemPrompt, mode: "primary" },
+    },
+  });
+}
+
 function record(event) {
   log.write(JSON.stringify({ ts: new Date().toISOString(), ...event }) + "\n");
 }
@@ -28,10 +38,12 @@ function clampThinking(values, wanted) {
   return null;
 }
 
+let replaying = false;
 const client = connect({
   command: p.command,
   args: p.args,
   cwd: spec.cwd,
+  env: extraEnv,
   onStderr: (text) => record({ type: "acp.stderr", text: text.trim().slice(0, 2000) }),
   onNotification: (msg) => {
     if (replaying) return;
@@ -52,10 +64,20 @@ const client = connect({
       const abs = path.resolve(spec.cwd, file);
       return !roots.some((root) => abs === root || abs.startsWith(root + path.sep));
     });
+    /* Commands are not a full sandbox, but an absolute path outside the
+       worktree/tmp/system roots is a clear escape and is refused. */
+    const command = String(tool.rawInput?.command || "");
+    const systemRoots = [...roots, "/usr", "/bin", "/lib", "/lib64", "/opt", "/nix", "/dev", "/proc"];
+    const escapes = [...command.matchAll(/(?:^|\s)((?:\/|\.\.\/)[^\s"'`;&|]+)/g)]
+      .map((match) => match[1])
+      .filter((token) => {
+        const abs = path.resolve(spec.cwd, token);
+        return !systemRoots.some((root) => abs === root || abs.startsWith(root + path.sep));
+      });
     const options = msg.params?.options || [];
     const allow = options.find((option) => /allow/i.test(`${option.optionId} ${option.name}`)) || options[0];
-    if (outside.length) {
-      record({ type: "acp.permission", decision: "deny", paths: outside });
+    if (outside.length || escapes.length) {
+      record({ type: "acp.permission", decision: "deny", paths: [...outside, ...escapes] });
       return null;
     }
     record({ type: "acp.permission", decision: "allow", paths });
@@ -85,7 +107,6 @@ try {
 
   let session;
   let sessionMode = "new";
-  let replaying = false;
   try {
     if (spec.sessionId && caps.loadSession) {
       sessionMode = "load";
@@ -158,13 +179,12 @@ try {
 
   await setConfig(p.modelConfig, spec.modelConfigValue, { required: true });
   await setConfig(p.thinkingConfig, clampThinking((byId[p.thinkingConfig]?.options || []).map((o) => o.value), spec.thinking));
-  await setConfig(p.modeConfig, spec.mode);
+  if (p.systemPrompt !== "agent-config") await setConfig(p.modeConfig, spec.mode);
 
   const prompt =
     spec.promptMode === "prefix" && spec.systemPrompt
       ? `${spec.systemPrompt}\n\n---\n\n${spec.prompt}`
       : spec.prompt;
-
   permissionNote(`auto-approve adapter=${spec.adapter} nonce=${spec.nonce}`);
   /* A loaded session already holds the images; resending them only burns
      tokens. A fresh/fallback session needs them again. */

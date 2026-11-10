@@ -365,6 +365,8 @@ export function validateCampaign({ root, consoleConfig, data, tickets = [], cata
           errors.push(`model "${entry.model}" belongs to adapter "${resolved.adapter}", but the entry is bound to "${adapterId}"`);
         } else if (runner.spend === "subscription-only" && resolved.included === false) {
           errors.push(`model "${entry.model}" is not included in the ${adapterId} subscription; set runner.spend: metered-ok to allow it`);
+        } else if (["code", "design", "visual", "review"].includes(id) && resolved.price && (resolved.price.input === 0 && resolved.price.output === 0)) {
+          errors.push(`model "${entry.model}" is free/promo and not allowed for kind "${id}"; bind a paid or self-hosted model`);
         }
       }
     }

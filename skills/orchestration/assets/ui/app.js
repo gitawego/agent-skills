@@ -222,7 +222,12 @@ function priceLabel(row) {
 }
 
 function catalog() {
-  return [...(state?.catalog || [])].sort((a, b) => priceScore(a) - priceScore(b));
+  const root = selected?.root || current()?.root || state?.projects?.[0]?.root;
+  const scoped = root ? state?.catalogs?.[root] : null;
+  const rows = scoped
+    ? Object.entries(scoped).flatMap(([adapter, list]) => list.map((row) => ({ ...row, adapter: row.adapter || adapter })))
+    : state?.catalog || [];
+  return [...rows].sort((a, b) => priceScore(a) - priceScore(b));
 }
 
 function modelKey(entry) {
@@ -657,7 +662,7 @@ function viewCampaign() {
               <input id="bt" name="budget_tokens" type="number" min="0" placeholder="tokens" value="${c.budget?.tokens ?? ""}" />
               <input name="budget_dollars" type="number" min="0" step="0.01" placeholder="dollars" value="${c.budget?.dollars ?? ""}" />
             </div>
-            <span class="sub">${c.runner?.adapter && c.runner.adapter !== "pi" && c.budget?.dollars ? "A dollar budget cannot cap a subscription adapter; check the acknowledgment." : "empty: no ceiling."}</span>
+            <span class="sub">${budgetEstimate(c) || (c.runner?.adapter && c.runner.adapter !== "pi" && c.budget?.dollars ? "A dollar budget cannot cap a subscription adapter; check the acknowledgment." : "empty: no ceiling.")}</span>
             <label class="sub" style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="budget_ack" ${c.budget?.ack_unmetered ? "checked" : ""}/> acknowledge unmetered adapters</label>
           </div></div>
         </div>
@@ -747,6 +752,23 @@ function viewCampaign() {
         <span class="hint">It lands in <span class="mono">orchestration/${esc(c.slug)}/tickets/</span> with the next number.</span>
       </div>
     </details>`;
+}
+
+function budgetEstimate(c) {
+  const budget = c.budget?.tokens;
+  if (!budget) return null;
+  const scores = [];
+  for (const kind of Object.values(c.effectiveKinds || {})) {
+    for (const entry of kind.models || []) {
+      const row = catalog().find((candidate) => (candidate.adapter || "pi") === (entry.adapter || c.runner?.adapter || "pi") && `${candidate.provider}/${candidate.model}` === entry.model);
+      const score = row ? priceScore(row) : Number.POSITIVE_INFINITY;
+      if (Number.isFinite(score)) scores.push(score);
+    }
+  }
+  if (!scores.length) return null;
+  const low = (budget * Math.min(...scores)) / 1_000_000;
+  const high = (budget * Math.max(...scores)) / 1_000_000;
+  return `${budget.toLocaleString()} tokens ≈ $${low.toFixed(2)}–$${high.toFixed(2)} at the bound prices`;
 }
 
 function viewSettings() {

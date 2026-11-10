@@ -24,7 +24,7 @@ export const PROFILES = {
     provider: null, // provider/model comes from the model id
     billing: "metered",
     includedProviders: ["opencode-go"],
-    systemPrompt: "prefix", // OpenCode accepts the field but ignores it
+    systemPrompt: "agent-config", // OPENCODE_CONFIG_CONTENT default_agent prompt
     modelConfig: "model",
     thinkingConfig: "effort",
     modeConfig: "mode",

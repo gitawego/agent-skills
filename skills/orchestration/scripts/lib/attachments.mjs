@@ -20,6 +20,41 @@ export function imageMime(file) {
   return TYPES[path.extname(String(file)).toLowerCase()] || null;
 }
 
+export function imageDimensions(bytes, mimeType) {
+  try {
+    if (mimeType === "image/png" && bytes.length >= 24) {
+      return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+    }
+    if (mimeType === "image/gif" && bytes.length >= 10) {
+      return { width: bytes.readUInt16LE(6), height: bytes.readUInt16LE(8) };
+    }
+    if (mimeType === "image/jpeg") {
+      let offset = 2;
+      while (offset + 9 < bytes.length) {
+        if (bytes[offset] !== 0xff) break;
+        const marker = bytes[offset + 1];
+        const length = bytes.readUInt16BE(offset + 2);
+        if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+          return { width: bytes.readUInt16BE(offset + 7), height: bytes.readUInt16BE(offset + 5) };
+        }
+        offset += 2 + length;
+      }
+    }
+    if (mimeType === "image/webp" && bytes.length >= 30) {
+      const kind = bytes.toString("ascii", 12, 16);
+      if (kind === "VP8X") return { width: 1 + bytes.readUIntLE(24, 3), height: 1 + bytes.readUIntLE(27, 3) };
+      if (kind === "VP8 ") return { width: bytes.readUInt16LE(26) & 0x3fff, height: bytes.readUInt16LE(28) & 0x3fff };
+      if (kind === "VP8L") {
+        const b = bytes.readUInt32LE(21);
+        return { width: (b & 0x3fff) + 1, height: ((b >> 14) & 0x3fff) + 1 };
+      }
+    }
+  } catch {
+    /* unknown dimension is not a failure */
+  }
+  return { width: null, height: null };
+}
+
 export function attachmentPaths(ticket) {
   const value = ticket?.data?.attachments ?? ticket?.attachments;
   if (value == null || value === "") return [];
@@ -65,11 +100,14 @@ export function loadAttachments(root, paths) {
       break;
     }
     const bytes = fs.readFileSync(abs);
+    const { width, height } = imageDimensions(bytes, mimeType);
     items.push({
       path: inside.split(path.sep).join("/"),
       absPath: abs,
       mimeType,
       bytes: bytes.length,
+      width,
+      height,
       sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
       data: bytes.toString("base64"),
     });
@@ -78,7 +116,14 @@ export function loadAttachments(root, paths) {
 }
 
 export function attachmentAudit(items) {
-  return items.map(({ path: file, mimeType, bytes, sha256 }) => ({ path: file, mimeType, bytes, sha256 }));
+  return items.map(({ path: file, mimeType, bytes, width, height, sha256 }) => ({
+    path: file,
+    mimeType,
+    bytes,
+    width,
+    height,
+    sha256,
+  }));
 }
 
 let imageMagick;
@@ -115,11 +160,14 @@ export function prepareForPrompt(item, { maxEdge = 1600, maxBytes = 512 * 1024 }
     if (res.status !== 0) return item;
     const bytes = fs.readFileSync(target);
     if (!bytes.length || bytes.length >= item.bytes) return item;
+    const size = imageDimensions(bytes, "image/webp");
     return {
       ...item,
       data: bytes.toString("base64"),
       mimeType: "image/webp",
       bytes: bytes.length,
+      width: size.width ?? item.width,
+      height: size.height ?? item.height,
       originalBytes: item.bytes,
       prepared: true,
     };

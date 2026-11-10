@@ -56,6 +56,8 @@ runner:
 
 `spend` is `subscription-only` or `metered-ok`. Subscription-only hides models the plan does not include and refuses a binding to them; metered-ok shows every discovered model with its price. Antigravity and OpenCode Go default to subscription-only; pi defaults to metered-ok. The campaign's adapter is fixed while it runs, for the same reason a chain is.
 
+ACP permission requests are mediated by the client: a tool call naming a path outside the worktree or the system temp directory is denied, and the decision is written to `permissions.jsonl`. Commands are checked for absolute-path escapes, but this is a guard, not an OS sandbox.
+
 Every adapter writes a snapshot to `~/.local/state/orchestration/catalogs/<adapter>.json`; `bind`/`approve` also write a project-scoped snapshot, because OpenCode's model list depends on the project. The panel reads the latest projection and marks it stale after an hour; `bind`/`approve` always refresh live. `orchestrate doctor` reports missing harnesses, empty catalogs and stale snapshots. ACP discovery creates and closes one session, so it costs seconds, not tokens.
 
 ACP does not list per-model context windows or modalities. Antigravity advertises image input at the server level, so Gemini and Claude rows are marked as image-capable, GPT-OSS is marked text-only, and an unknown family stays `null`; OpenCode rows get modalities and prices from the local model store. `null` means "not proven", not "no", and a `visual` chain is refused until the model is known to read images.

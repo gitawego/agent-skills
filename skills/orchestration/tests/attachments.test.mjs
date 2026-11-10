@@ -29,7 +29,7 @@ test("an image is read, typed and hashed", () => {
   assert.match(items[0].sha256, /^[a-f0-9]{64}$/);
   assert.equal(Buffer.from(items[0].data, "base64").length, PNG.length);
   assert.deepEqual(attachmentAudit(items), [
-    { path: "refs/red.png", mimeType: "image/png", bytes: PNG.length, sha256: items[0].sha256 },
+    { path: "refs/red.png", mimeType: "image/png", bytes: PNG.length, width: 1, height: 1, sha256: items[0].sha256 },
   ]);
 });
 
