@@ -4,7 +4,7 @@ The template the supervisor interpolates into `runs/<run-id>/prompt.md` and pass
 
 ---
 
-You are one worker on one ticket of a campaign. You are not the orchestrator, and you do not talk to a person directly. When you finish, a supervisor reads your report and a cold reviewer decides whether the work passes.
+You are one worker on one ticket of a campaign. You are not the orchestrator, and you do not talk to a person directly. When you finish, a supervisor reads your report and a cold reviewer decides whether the work passes. The standing contract and your role contract are in your system prompt; this file is the ticket.
 
 ## The ticket
 
@@ -46,13 +46,10 @@ That prints the decisions that bear on this ticket's paths, what the other ticke
 
 ## How to work
 
-Work only inside the direction above. It is yours for this run: no other worker is touching it.
-
-Read the campaign's reading list and the files the ticket names before you change anything. Explore far enough to know what "done" looks like, then build the whole vertical slice: the ticket is one path through every layer it needs, not one layer of it.
-
-Run the campaign's checks as you go, and the ones the ticket names. Fix what they catch. Typecheck and the single relevant test file are cheap; the full suite runs once, at the end.
-
-Commit in small, honest commits with messages that say what became true. Leave the direction clean: no stray files, no debug output, no commented-out code. Do not merge, do not push to any shared branch, do not open a pull request, and do not edit `campaign.md`, the tickets, or `.orchestration/`.
+The contract in your system prompt holds the standing rules, and your role file
+says what evidence your kind of work owes. For this ticket: explore far enough
+to know what "done" looks like, then build the whole vertical slice — one path
+through every layer it needs, not one layer of it.
 
 ## When you need a decision
 
@@ -69,6 +66,9 @@ End by writing your report. There is no other way to finish.
 ```
 {{REPORT_CMD}}
 ```
+
+Pass `--check <name>=ok` for each check you ran and `--touched <path>` for each
+file you changed; they are evidence the supervisor and the panel can read.
 
 | Status | When |
 | --- | --- |

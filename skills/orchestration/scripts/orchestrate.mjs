@@ -34,7 +34,7 @@ import { listItems } from "./lib/inbox.mjs";
 import { campaignView, projectView } from "./lib/view.mjs";
 import { startServer } from "./lib/server.mjs";
 import { joinFrontmatter } from "./lib/yaml.mjs";
-import { addTicket, createCampaign } from "./lib/create.mjs";
+import { addTicket, createCampaign, ensureGitignore } from "./lib/create.mjs";
 import { loadState } from "./lib/state.mjs";
 
 function parseArgs(argv) {
@@ -156,6 +156,7 @@ const commands = {
     ensureConsole();
     ensureDir(path.join(root, ".orchestration"));
     ensureDir(path.join(root, "orchestration"));
+    ensureGitignore(root);
     registryAdd(root);
     const { created } = ensureConsole();
     console.log(`project   ${root}`);
@@ -252,16 +253,16 @@ const commands = {
     throw new UserError("Usage: orchestrate ticket add|edit|remove ...");
   },
 
-  cancel({ flags }) {
+  cancel({ flags, positional }) {
     const root = rootDir(flags);
-    const slug = resolveCampaign(root, flags.campaign);
+    const slug = resolveCampaign(root, flags.campaign || positional[0]);
     enqueue(root, { type: "cancel", campaign: slug, reason: flags.reason || "cancelled by a person" });
     tickNow(root);
   },
 
-  archive({ flags }) {
+  archive({ flags, positional }) {
     const root = rootDir(flags);
-    const slug = resolveCampaign(root, flags.campaign);
+    const slug = resolveCampaign(root, flags.campaign || positional[0]);
     enqueue(root, { type: "archive", campaign: slug });
     tickNow(root);
   },
@@ -393,9 +394,9 @@ const commands = {
     console.log(`${slug} ${kindId}: ${chain.map((c) => `${c.model}:${c.thinking}`).join(" -> ")}`);
   },
 
-  approve({ flags }) {
+  approve({ flags, positional }) {
     const root = rootDir(flags);
-    const slug = resolveCampaign(root, flags.campaign);
+    const slug = resolveCampaign(root, flags.campaign || positional[0]);
     approveCampaign(root, slug, loadConsole());
     console.log(`approved ${slug}`);
     tickNow(root);
@@ -477,11 +478,21 @@ const commands = {
       text: text.join(" "),
     });
     tickNow(root);
+    if (decision === "approve") {
+      const after = findItem(root, id);
+      const state = loadState(root, found.slug);
+      if (after?.status === "open") {
+        console.error(`not merged: ${state.delivery?.detail || "the delivery did not merge"}`);
+        process.exitCode = 1;
+      } else if (state.delivery?.mode === "merged") {
+        console.log(`merged: ${state.delivery.detail}`);
+      }
+    }
   },
 
-  deliver({ flags }) {
+  deliver({ flags, positional }) {
     const root = rootDir(flags);
-    const slug = resolveCampaign(root, flags.campaign);
+    const slug = resolveCampaign(root, flags.campaign || positional[0]);
     enqueue(root, { type: "deliver", campaign: slug });
     const result = tickNow(root);
     const state = loadState(root, slug);
@@ -504,16 +515,16 @@ const commands = {
     tickNow(root);
   },
 
-  pause({ flags }) {
+  pause({ flags, positional }) {
     const root = rootDir(flags);
-    const slug = resolveCampaign(root, flags.campaign);
+    const slug = resolveCampaign(root, flags.campaign || positional[0]);
     enqueue(root, { type: "pause", campaign: slug });
     tickNow(root);
   },
 
-  resume({ flags }) {
+  resume({ flags, positional }) {
     const root = rootDir(flags);
-    const slug = resolveCampaign(root, flags.campaign);
+    const slug = resolveCampaign(root, flags.campaign || positional[0]);
     enqueue(root, { type: "resume", campaign: slug });
     tickNow(root);
   },

@@ -15,6 +15,23 @@ function cli(cwd, args, env = {}) {
   });
 }
 
+test("campaign-scoped verbs accept a positional campaign when several exist", () => {
+  const box = sandbox();
+  const dir = project(path.join(box, "repo"));
+  writeConsole();
+  assert.equal(cli(dir, ["init"]).status, 0);
+  assert.equal(cli(dir, ["start", "first campaign"]).status, 0);
+  assert.equal(cli(dir, ["start", "second campaign"]).status, 0);
+
+  const cancel = cli(dir, ["cancel", "second-campaign"]);
+  assert.equal(cancel.status, 0, cancel.stderr);
+  assert.match(cancel.stdout, /second-campaign \[paused\]/);
+
+  const first = cli(dir, ["status", "first-campaign"]);
+  assert.equal(first.status, 0, first.stderr);
+  assert.match(first.stdout, /first-campaign \[draft\]/);
+});
+
 test("init, start, catalog, bind, plan and approve work from the CLI", () => {
   const box = sandbox();
   const dir = project(path.join(box, "repo"));

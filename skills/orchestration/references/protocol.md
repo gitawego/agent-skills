@@ -31,7 +31,7 @@ A **run** is one worker process executing one ticket. Nothing else is a run: not
 
 1. **Claim.** The supervisor picks a ticket from the frontier, writes `runs/<run-id>/run.json` with the binding it will use, and moves the ticket to `working`. The claim is the state write; there is no lock file. The binding is read once, at claim, so a config edit can never reach a run that is already alive.
 2. **Materialize.** It builds the worktree (branch-landing) or the workspace (directory-landing), writes `prompt.md` from [worker-prompt.md](worker-prompt.md) with the ticket and campaign interpolated, and records the model chain it will try, in order.
-3. **Dispatch.** It spawns `pi` with the run's working directory, an isolated session directory, a stable `--session-id`, the kind's model and thinking level, and the kind's tool set. Stdout is `--mode json`, teed into `log.jsonl`.
+3. **Dispatch.** It spawns `pi` with the run's working directory, an isolated session directory, a stable `--session-id`, the kind's model and thinking level, the kind's tool set, and two `--append-system-prompt` files: the standing [contract](contract.md) and the role file for the kind ([roles/](roles/)). Stdout is `--mode json`, teed into `log.jsonl`.
 4. **Observe.** While the process lives the run is `working`. The supervisor tails the log for liveness and spend. No new output for `stuck_after_min` counts as stuck.
 5. **Collect.** It reads `report.json`. Missing, unparsable, or schema-invalid counts as `failed` with the log tail attached.
 6. **Release.** The slot is freed, spend is recorded, the stage is set from the report (and from the gates, if the report says `ready`), and the next frontier ticket may be dispatched.
@@ -124,7 +124,7 @@ A gate run reports its verdict in its own report: `ready` means no blocking find
 
 A failed gate sets `needs_changes`, attaches the findings, and redispatches in the **same worker session** as the changes request. Three gate cycles without passing escapes to a person, because a loop that fails three times is a spec problem.
 
-Bind `review` to a different model than the work kinds. The reviewer that grades its own work is not a gate, and the panel shows which model reviewed what.
+Bind `review` to a different model than the work kinds. The reviewer that grades its own work is not a gate, and the panel shows which model reviewed what. Approval refuses a review chain whose first model matches a work kind's first model.
 
 ## Landing
 
@@ -135,6 +135,8 @@ Delivery also writes `orchestration/<campaign>/CLOSE.md`: landed and dropped tic
 Delivery also prunes: the per-ticket worktrees and `orch/<slug>/<ticket>` branches are removed, because the integration branch already holds their commits. `orch/<slug>/integration` stays as the campaign's record, and a decision whose declared paths no longer exist is retired as `paths-removed`.
 
 A campaign delivers when every ticket is `done` or `dropped`: one result from the integration branch to `base`, by pull request when the base is a protected branch, or by fast-forward when the campaign is `trusted` and the diff is under `max_autoship_lines`.
+
+Approving a delivery item is a merge attempt, not a receipt. If the merge cannot happen — a dirty checkout, a moved base, a conflict — the item stays open, the reason is recorded as `delivery.blocked`, and the same approval can be retried after the cause is fixed.
 
 **Directory landing.** No branches. Each ticket writes into the workspace root; `touches` overlap is the only concurrency control. A passed ticket's files are copied into the delivery directory in ticket order, and the campaign delivers a manifest, not a commit.
 
@@ -148,7 +150,7 @@ What ships follows the autonomy level, and the campaign's `max_autoship_lines` o
 {"ts":"2026-11-09T18:03:11Z","campaign":"pocket-museum-v4","ticket":"03","run":"r-...-a1","type":"run.reported","data":{"status":"ready","cost":0.42,"tokens":18422}}
 ```
 
-Types: `campaign.created`, `plan.drafted`, `campaign.approved`, `campaign.paused`, `campaign.resumed`, `campaign.delivered`, `ticket.added`, `ticket.stage`, `run.dispatched`, `run.reported`, `run.exited`, `run.retried`, `run.stopped`, `gate.check`, `gate.review`, `question.answered`, `inbox.opened`, `inbox.answered`, `merge.done`, `merge.conflict`, `spend.recorded`, `error`.
+Types: `campaign.created`, `plan.drafted`, `campaign.approved`, `campaign.paused`, `campaign.resumed`, `campaign.delivered`, `ticket.added`, `ticket.stage`, `run.dispatched`, `run.reported`, `run.exited`, `run.retried`, `run.stopped`, `gate.check`, `gate.review`, `question.answered`, `inbox.opened`, `inbox.answered`, `merge.done`, `merge.conflict`, `delivery.blocked`, `delivery.rejected`, `spend.recorded`, `error`.
 
 Every event carries the campaign and, where it applies, the ticket and run. A system-wide error carries neither. The ledger is never rewritten; a correction is a new event that names what it supersedes.
 

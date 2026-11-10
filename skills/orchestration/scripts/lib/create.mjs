@@ -21,6 +21,17 @@ export function defaultBase(root) {
   return git(root, ["rev-parse", "--abbrev-ref", "HEAD"]).stdout || "main";
 }
 
+export function ensureGitignore(root) {
+  if (!isGitRepo(root)) return false;
+  const file = path.join(root, ".gitignore");
+  const current = exists(file) ? readText(file, "") : "";
+  const lines = current.split("\n").map((line) => line.trim());
+  if (lines.includes(".orchestration/") || lines.includes(".orchestration")) return false;
+  const prefix = current && !current.endsWith("\n") ? "\n" : "";
+  fs.writeFileSync(file, `${current}${prefix}.orchestration/\n`);
+  return true;
+}
+
 export function createCampaign({ root, goal, slug, autonomy, planGate, landing, base }) {
   const text = String(goal || "").trim();
   if (!text) throw new UserError("A campaign needs a goal: one sentence about the outcome");

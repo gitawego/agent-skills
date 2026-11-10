@@ -12,6 +12,8 @@ The supervisor is a zero-dependency Node process (`scripts/orchestrate.mjs`) plu
 
 - [references/config.md](references/config.md): campaign form, ticket kinds, model chains, budget, inheritance, validation.
 - [references/protocol.md](references/protocol.md): stages, ticket files, report schema, slots, retries, gates, landing, events.
+- [references/contract.md](references/contract.md): the standing rules appended to every worker's system prompt.
+- [references/roles/](references/roles/): one contract per kind — code, design, visual, research, plan, chores, review, judge, merge.
 - [references/panel.md](references/panel.md): screens, actions, HTTP and SSE surface.
 - [references/memory.md](references/memory.md): decisions, supersession, promotion, the context command, the close report.
 - [references/worker-prompt.md](references/worker-prompt.md): what a worker is told.

@@ -125,6 +125,16 @@ test("an uncommitted plan does not block the delivery", async () => {
   assert.ok(fs.existsSync(path.join(dir, "work-01.txt")));
 });
 
+test("machine state never blocks a delivery, even without a gitignore", async () => {
+  const { dir, slug } = setup({ autonomy: "trusted", tickets: 1 });
+  fs.writeFileSync(path.join(dir, ".gitignore"), "");
+  commitAll(dir, "drop the state ignore line");
+  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  const view = await until(dir, slug, (v) => v.stage === "delivered");
+  assert.equal(view.delivery.mode, "merged", JSON.stringify(view.delivery));
+  assert.ok(fs.existsSync(path.join(dir, "work-01.txt")));
+});
+
 test("a blocking edge holds a ticket until its blocker is done", async () => {
   const { dir, slug } = setup({ tickets: 1 });
   writeTicket(
@@ -322,6 +332,28 @@ test("a failed report retries to the attempt cap, then parks", async () => {
   const view = await until(dir, slug, (v) => v.tickets[0].stage === "failed");
   assert.equal(view.tickets[0].attempts, 3, "three dispatches before parking");
   assert.ok(view.inbox.some((i) => i.kind === "failure"));
+});
+
+test("an approval that cannot merge stays open and can be retried", async () => {
+  const { dir, slug } = setup({ autonomy: "supervised", tickets: 1 });
+  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  const view = await until(dir, slug, (v) => v.stage === "delivered");
+  const item = view.inbox.find((i) => i.kind === "review");
+  assert.ok(item, "a delivery review item is filed");
+
+  fs.writeFileSync(path.join(dir, "DIRTY.txt"), "uncommitted\n");
+  applyCommand(dir, { type: "review.approve", campaign: slug, item: item.id }, loadConsole());
+  assert.ok(
+    listItems(dir, slug, { status: "open" }).some((i) => i.id === item.id),
+    "the approval stays open when the merge is blocked",
+  );
+  assert.equal(loadState(dir, slug).delivery.mode, "manual");
+  assert.ok(!fs.existsSync(path.join(dir, "work-01.txt")), "nothing merged");
+
+  fs.unlinkSync(path.join(dir, "DIRTY.txt"));
+  applyCommand(dir, { type: "review.approve", campaign: slug, item: item.id }, loadConsole());
+  assert.ok(!listItems(dir, slug, { status: "open" }).some((i) => i.id === item.id), "the retry answers the item");
+  assert.ok(fs.existsSync(path.join(dir, "work-01.txt")), "the retry merges");
 });
 
 test("a campaign-level rejection does not merge the branch", async () => {

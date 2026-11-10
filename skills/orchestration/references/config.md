@@ -48,7 +48,7 @@ A kind that reports (every kind does) needs a tool that can write `report.json`:
 
 `runner.command` is the worker program. It stays `pi` unless a test or another harness needs to stand in, which is the adapter seam; everything else in the contract is unchanged.
 
-The `kinds` block is the role table. Worker roles and the roles that judge, review, and merge are all ticket kinds, one axis, so "which model ran this?" has exactly one answer.
+The `kinds` block is the role table. Worker roles and the roles that judge, review, and merge are all ticket kinds, one axis, so "which model ran this?" has exactly one answer. Each kind also has a role contract under `references/roles/`, appended to that run's system prompt after the standing `contract.md`; a custom kind with no file of its own gets `roles/general.md`.
 
 The chains ship **empty**. This skill names no vendor and no model, because a default that is not installed on the machine is a setup failure wearing a config's clothes. Binding is a step, not a default.
 

@@ -73,6 +73,20 @@ test("a model outside the catalog is refused", () => {
   assert.ok(errors.some((e) => /not in the catalog/.test(e)));
 });
 
+test("a review chain on the same model as the work is refused", () => {
+  const { dir, config, data, plan } = setup(
+    {},
+    {
+      kinds: {
+        code: { models: [{ model: MODELS.strong, thinking: "high" }] },
+        review: { models: [{ model: MODELS.strong, thinking: "high" }] },
+      },
+    },
+  );
+  const { errors } = validateCampaign({ root: dir, consoleConfig: config, data, tickets: plan.ordered });
+  assert.ok(errors.some((e) => /review chain starts with .* the same model as kind "code"/.test(e)), errors.join("\n"));
+});
+
 test("a cap above the console cap is refused", () => {
   const { dir, config, data, plan } = setup({}, { kinds: { code: { models: [{ model: MODELS.strong }], max_concurrent: 9 } } });
   const { errors } = validateCampaign({ root: dir, consoleConfig: config, data, tickets: plan.ordered });

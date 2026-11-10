@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { sandbox, project, writeConsole, writeCampaign, writeTicket, commitAll } from "./helpers.mjs";
-import { createCampaign, addTicket, editTicket, removeTicket, nextTicketId } from "../scripts/lib/create.mjs";
+import { createCampaign, addTicket, editTicket, removeTicket, nextTicketId, ensureGitignore } from "../scripts/lib/create.mjs";
 import { loadPlan, parseTicket } from "../scripts/lib/plan.mjs";
 
 const BODY = `## Goal\n\nShip it.\n\n## Brief\n\nB.\n\n## Acceptance criteria\n\n- [ ] ok\n\n## Constraints\n\nnone\n\n## What to read first\n\n- **Files:** README.md\n`;
@@ -26,6 +26,14 @@ test("campaign.create writes a draft campaign with the console defaults", () => 
   assert.match(text, /base: main/);
   assert.match(text, /## Goal/);
   assert.ok(fs.existsSync(path.join(dir, "orchestration", "ship-the-thing", "tickets")));
+});
+
+test("the state directory is added to .gitignore once", () => {
+  const dir = fixture();
+  fs.writeFileSync(path.join(dir, ".gitignore"), "");
+  assert.equal(ensureGitignore(dir), true);
+  assert.match(fs.readFileSync(path.join(dir, ".gitignore"), "utf8"), /^\.orchestration\/$/m);
+  assert.equal(ensureGitignore(dir), false);
 });
 
 test("campaign.create refuses an existing name and an empty goal", () => {

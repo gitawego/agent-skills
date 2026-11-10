@@ -337,6 +337,17 @@ export function validateCampaign({ root, consoleConfig, data, tickets = [], cata
     }
   }
 
+  /* A reviewer that starts on the same model as the work is not a gate. */
+  const reviewModel = kinds.review?.models?.[0]?.model;
+  if (reviewModel) {
+    for (const id of used) {
+      if (id === "review") continue;
+      const first = kinds[id]?.models?.[0]?.model;
+      if (first && first === reviewModel)
+        errors.push(`the review chain starts with ${reviewModel}, the same model as kind "${id}"; bind review to a different model`);
+    }
+  }
+
   const budget = data.budget || {};
   const consoleBudget = consoleConfig.limits.budget || {};
   for (const unit of ["tokens", "dollars"]) {

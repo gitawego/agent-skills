@@ -1,7 +1,32 @@
 // Prompts are content: they live in references/ and are filled here.
+import crypto from "node:crypto";
 import path from "node:path";
-import { SKILL_DIR, REPORT_SCRIPT, readText } from "./util.mjs";
+import { SKILL_DIR, REPORT_SCRIPT, exists, readText } from "./util.mjs";
 import { asArray } from "./plan.mjs";
+
+const CONTRACT_FILE = path.join(SKILL_DIR, "references", "contract.md");
+const ROLES_DIR = path.join(SKILL_DIR, "references", "roles");
+
+/* The system prompt is pi's default plus two files: the standing contract and
+   the role contract for this run. A custom ticket kind gets the general role. */
+export function systemPromptFiles(role) {
+  if (!exists(CONTRACT_FILE)) throw new Error(`missing prompt file ${CONTRACT_FILE}`);
+  const named = path.join(ROLES_DIR, `${role}.md`);
+  const roleFile = exists(named) ? named : path.join(ROLES_DIR, "general.md");
+  if (!exists(roleFile)) throw new Error(`missing prompt file ${roleFile}`);
+  return [CONTRACT_FILE, roleFile];
+}
+
+export function promptDigest(text) {
+  return crypto.createHash("sha256").update(text).digest("hex");
+}
+
+/* The system prompt is files, not one string; hash the resolved contents so a
+   run stays explainable after the contract or a role file changes. */
+export function systemPromptDigest(files) {
+  const text = files.map((file) => readText(file, "")).join("\n\0\n");
+  return crypto.createHash("sha256").update(text).digest("hex");
+}
 
 function template(name, values) {
   const text = readText(path.join(SKILL_DIR, "references", name));
@@ -61,7 +86,7 @@ export function reviewPrompt({ campaign, ticket, ticketTitle, runId, workdir, ba
           asArray(data.data?.touches ?? data.touches).map((path) => `  ${path}`).join("\n") ||
             "  (the ticket declares no paths; read what it names)",
         ].join("\n")
-      : ["```", `git diff ${base}...HEAD`, `git log --oneline ${base}..HEAD`, "```"].join("\n");
+      : ["```", `git diff --stat ${base}...HEAD`, `git diff ${base}...HEAD`, `git log --oneline ${base}..HEAD`, "```"].join("\n");
   return template("review-prompt.md", {
     CAMPAIGN: campaign,
     TICKET_ID: ticket,
@@ -72,6 +97,7 @@ export function reviewPrompt({ campaign, ticket, ticketTitle, runId, workdir, ba
     BASE: base,
     TICKET_BODY: data.what,
     ACCEPTANCE: renderCriteria(data),
+    DIFF: diffInstructions,
     REPORT_CMD: `node ${REPORT_SCRIPT}`,
   });
 }

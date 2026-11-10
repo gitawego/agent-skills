@@ -69,7 +69,7 @@ export function usageFromLog(root, slug, runId) {
   };
 }
 
-export function buildWorkerArgv({ run, modelEntry, thinking, tools, prompt, sessionsDir }) {
+export function buildWorkerArgv({ run, modelEntry, thinking, tools, prompt, sessionsDir, systemPrompts = [] }) {
   const argv = [
     "--print",
     "--mode",
@@ -85,6 +85,8 @@ export function buildWorkerArgv({ run, modelEntry, thinking, tools, prompt, sess
     "--thinking",
     thinking,
   ];
+  /* The contract is appended first, then the role; pi reads a path as file contents. */
+  for (const file of systemPrompts) argv.push("--append-system-prompt", file);
   if (tools && tools !== "default") argv.push("--tools", tools);
   argv.push(prompt);
   return argv;

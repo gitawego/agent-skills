@@ -83,7 +83,9 @@ export function deliverBranch(root, slug, { base, allowMerge }) {
     .stdout.split("\n")
     .map((line) => line.replace(/^\S{1,2}\s+/, "").trim())
     .filter(Boolean)
-    .filter((file) => file !== ownPlan && !file.startsWith(ownPlan));
+    .filter((file) => file !== ownPlan && !file.startsWith(ownPlan))
+    /* machine state is ignored even in a project that never added the line */
+    .filter((file) => file !== ".orchestration" && !file.startsWith(".orchestration/"));
   if (dirty.length) {
     return { mode: "manual", ok: true, branch, detail: `uncommitted changes: ${dirty.slice(0, 5).join(", ")}` };
   }

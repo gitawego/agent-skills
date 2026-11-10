@@ -51,7 +51,7 @@ import {
   summarizeRun,
   writePrompt,
 } from "./runs.mjs";
-import { judgePrompt, mergePrompt, resumePrompt, reviewPrompt, workerPrompt } from "./prompts.mjs";
+import { judgePrompt, mergePrompt, promptDigest, resumePrompt, reviewPrompt, systemPromptDigest, systemPromptFiles, workerPrompt } from "./prompts.mjs";
 import { createItem, findItem, listItems, openItemForTicket, updateItem } from "./inbox.mjs";
 import {
   changedSince,
@@ -651,6 +651,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
       });
   writePrompt(root, slug, runId, prompt);
 
+  const systemPrompts = systemPromptFiles(ticket.data.kind);
   const run = {
     id: runId,
     campaign: slug,
@@ -664,6 +665,9 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
     touches: asArray(ticket.data.touches),
     question: resume?.question || null,
     before,
+    systemPrompts,
+    systemPromptHash: systemPromptDigest(systemPrompts),
+    promptHash: promptDigest(prompt),
   };
   const argv = buildWorkerArgv({
     run,
@@ -672,6 +676,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
     tools: kind.tools,
     prompt,
     sessionsDir: campaignSessionsDir(root, slug),
+    systemPrompts,
   });
   const record = startRun({
     root,
@@ -731,6 +736,7 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
     landing: campaign.data.landing || "branch",
   });
   writePrompt(root, slug, runId, prompt);
+  const systemPrompts = systemPromptFiles("review");
   const gateRun = {
     id: runId,
     campaign: slug,
@@ -742,6 +748,9 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
     chainIndex: index,
     sessionId,
     touches: [],
+    systemPrompts,
+    systemPromptHash: systemPromptDigest(systemPrompts),
+    promptHash: promptDigest(prompt),
   };
   const argv = buildWorkerArgv({
     run: gateRun,
@@ -750,6 +759,7 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
     tools: kind.tools,
     prompt,
     sessionsDir: campaignSessionsDir(root, slug),
+    systemPrompts,
   });
   const record = startRun({
     root,
@@ -805,6 +815,7 @@ function startJudge({ root, slug, state, plan, ticket, run, report, kinds, conso
     decisions: readDecisions(root, slug),
   });
   writePrompt(root, slug, runId, prompt);
+  const systemPrompts = systemPromptFiles("judge");
   const judgeRun = {
     id: runId,
     campaign: slug,
@@ -817,6 +828,9 @@ function startJudge({ root, slug, state, plan, ticket, run, report, kinds, conso
     sessionId,
     touches: [],
     question: report.question,
+    systemPrompts,
+    systemPromptHash: systemPromptDigest(systemPrompts),
+    promptHash: promptDigest(prompt),
   };
   const argv = buildWorkerArgv({
     run: judgeRun,
@@ -825,6 +839,7 @@ function startJudge({ root, slug, state, plan, ticket, run, report, kinds, conso
     tools: kind.tools,
     prompt,
     sessionsDir: campaignSessionsDir(root, slug),
+    systemPrompts,
   });
   const record = startRun({
     root,
@@ -863,6 +878,7 @@ function startMerge({ root, slug, state, ticketId, run, conflict, kinds, console
   const sessionId = sessionIdFor(slug, ticketId, `merge${runId.slice(-6)}`);
   const prompt = mergePrompt({ root: dir, slug, ticket: ticketId, conflict });
   writePrompt(root, slug, runId, prompt);
+  const systemPrompts = systemPromptFiles("merge");
   const mergeRun = {
     id: runId,
     campaign: slug,
@@ -875,6 +891,9 @@ function startMerge({ root, slug, state, ticketId, run, conflict, kinds, console
     sessionId,
     touches: [],
     conflict,
+    systemPrompts,
+    systemPromptHash: systemPromptDigest(systemPrompts),
+    promptHash: promptDigest(prompt),
   };
   const argv = buildWorkerArgv({
     run: mergeRun,
@@ -883,6 +902,7 @@ function startMerge({ root, slug, state, ticketId, run, conflict, kinds, console
     tools: "default",
     prompt,
     sessionsDir: campaignSessionsDir(root, slug),
+    systemPrompts,
   });
   const record = startRun({
     root,
@@ -1194,19 +1214,22 @@ export function applyCommand(root, command, consoleConfig) {
     if (item.status !== "open") throw new UserError(`Inbox item "${command.item}" is already ${item.status}`);
     const text = command.text || (type === "review.approve" ? "Approved." : "");
     const findings = type === "review.reject" ? command.text : null;
-    updateItem(root, slug, item.id, {
-      status: "answered",
-      answer: { text: command.text || null, by: "human", at: nowIso() },
-    });
-    appendEvent(root, {
-      campaign: slug,
-      ticket: item.ticket,
-      type: "inbox.answered",
-      data: { item: item.id, kind: item.kind },
-    });
+    const markAnswered = () => {
+      updateItem(root, slug, item.id, {
+        status: "answered",
+        answer: { text: command.text || null, by: "human", at: nowIso() },
+      });
+      appendEvent(root, {
+        campaign: slug,
+        ticket: item.ticket,
+        type: "inbox.answered",
+        data: { item: item.id, kind: item.kind },
+      });
+    };
 
     if (!item.ticket) {
       if (type === "review.reject") {
+        markAnswered();
         appendEvent(root, {
           campaign: slug,
           type: "delivery.rejected",
@@ -1220,9 +1243,21 @@ export function applyCommand(root, command, consoleConfig) {
       const res = deliverBranch(root, slug, { base, allowMerge: true });
       state.delivery = { ...res, stats, at: nowIso() };
       saveState(root, slug, state);
+      /* An approval that did not merge is not an answer yet: keep the item
+         open so the reason can be fixed and the same decision retried. */
+      if (res.mode !== "merged") {
+        appendEvent(root, {
+          campaign: slug,
+          type: "delivery.blocked",
+          data: { item: item.id, detail: res.detail || null },
+        });
+        return { ok: false, delivery: res };
+      }
+      markAnswered();
       return { ok: true, delivery: res };
     }
 
+    markAnswered();
     const state = loadState(root, slug);
     const plan = loadPlan(root, slug);
     const entry = ticketState(state, item.ticket);
