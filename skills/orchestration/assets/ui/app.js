@@ -311,10 +311,14 @@ function isFree(row) {
   return Boolean(row.price) && (row.price.input || 0) === 0 && (row.price.output || 0) === 0;
 }
 
+function modelOptions(scope, kind) {
+  const freeAllowed = ["research", "chores", "plan"].includes(kind);
+  return catalogFor(scope).filter((row) => freeAllowed || !isFree(row));
+}
+
 function chainEditor(scope, kind, models) {
   const selected = draft(scope, kind, models);
-  const freeAllowed = ["research", "chores", "plan"].includes(kind);
-  const options = catalogFor(scope).filter((row) => freeAllowed || !isFree(row));
+  const options = modelOptions(scope, kind);
   const chips = selected.length
     ? selected
         .map(
@@ -322,30 +326,14 @@ function chainEditor(scope, kind, models) {
         )
         .join("")
     : `<span class="hint">nothing bound${scope === "console" ? ", so these tickets cannot dispatch" : ""}</span>`;
-  const groups = new Map();
-  for (const row of options) {
-    const id = row.adapter || "pi";
-    if (!groups.has(id)) groups.set(id, []);
-    groups.get(id).push(row);
-  }
-  const choices = [...groups.entries()]
-    .map(
-      ([id, rows]) =>
-        `<optgroup label="${esc(id)}">${rows
-          .map(
-            (row) =>
-              `<option value="${esc(`${id}|${modelKey(row)}`)}">${esc(modelKey(row))} · ${esc(row.context || "?")}${row.images ? " · images" : ""} · ${esc(priceLabel(row))}</option>`,
-          )
-          .join("")}</optgroup>`,
-    )
-    .join("");
   return `<div class="chain-editor">
       <div class="model-chips">${chips}</div>
       <div class="chain-add">
-        <select data-role="model" data-scope="${scope}" data-kind="${esc(kind)}" aria-label="${esc(kind)} model">
-          <option value="">choose a model…</option>
-          ${choices}
-        </select>
+        <div class="model-picker" data-scope="${scope}" data-kind="${esc(kind)}">
+          <input type="text" data-role="model-search" data-scope="${scope}" data-kind="${esc(kind)}" placeholder="Search ${options.length} models…" autocomplete="off" spellcheck="false" />
+          <input type="hidden" data-role="model" data-scope="${scope}" data-kind="${esc(kind)}" />
+          <div class="model-suggest" hidden></div>
+        </div>
         <select data-role="thinking" data-scope="${scope}" data-kind="${esc(kind)}" aria-label="${esc(kind)} thinking">
           ${THINKING.map((t) => `<option ${t === "high" ? "selected" : ""}>${t}</option>`).join("")}
         </select>
@@ -1261,6 +1249,88 @@ document.addEventListener("submit", async (event) => {
   }
 });
 
+function closeModelSuggest() {
+  document.querySelectorAll(".model-suggest").forEach((box) => {
+    box.hidden = true;
+    box.innerHTML = "";
+  });
+}
+
+function renderModelSuggest(input) {
+  const picker = input.closest(".model-picker");
+  const box = picker?.querySelector(".model-suggest");
+  if (!box) return;
+  const scope = picker.dataset.scope;
+  const kind = picker.dataset.kind;
+  const q = input.value.trim().toLowerCase();
+  const rows = modelOptions(scope, kind).filter((row) => {
+    if (!q) return true;
+    const adapter = row.adapter || "pi";
+    return `${adapter} ${row.provider}/${row.model} ${row.label || ""} ${priceLabel(row)}`.toLowerCase().includes(q);
+  });
+  const visible = rows.slice(0, 60);
+  box.innerHTML = visible.length
+    ? visible
+        .map((row) => {
+          const adapter = row.adapter || "pi";
+          const value = `${adapter}|${row.provider}/${row.model}`;
+          const label = `${adapter} · ${row.provider}/${row.model} · ${row.context || "?"}${row.images ? " · images" : ""} · ${priceLabel(row)}`;
+          return `<button type="button" class="model-option" data-model-option data-adapter="${esc(adapter)}" data-model="${esc(`${row.provider}/${row.model}`)}" data-label="${esc(label)}" data-value="${esc(value)}">${esc(label)}</button>`;
+        })
+        .join("")
+    : `<div class="model-empty">no model matches “${esc(input.value)}”</div>`;
+  box.hidden = false;
+}
+
+function chooseModelOption(option) {
+  const picker = option.closest(".model-picker");
+  if (!picker) return;
+  picker.querySelector('[data-role="model"]').value = option.dataset.value;
+  picker.querySelector('[data-role="model-search"]').value = option.dataset.label;
+  closeModelSuggest();
+}
+
+document.addEventListener("click", (event) => {
+  const option = event.target.closest("[data-model-option]");
+  if (option) {
+    event.preventDefault();
+    chooseModelOption(option);
+    return;
+  }
+  if (!event.target.closest(".model-picker")) closeModelSuggest();
+});
+
+document.addEventListener("input", (event) => {
+  const input = event.target.closest('[data-role="model-search"]');
+  if (!input) return;
+  const picker = input.closest(".model-picker");
+  picker.querySelector('[data-role="model"]').value = "";
+  renderModelSuggest(input);
+});
+
+document.addEventListener("focusin", (event) => {
+  const input = event.target.closest('[data-role="model-search"]');
+  if (input) renderModelSuggest(input);
+});
+
+document.addEventListener("keydown", (event) => {
+  const input = event.target.closest('[data-role="model-search"]');
+  if (!input) return;
+  const box = input.closest(".model-picker")?.querySelector(".model-suggest");
+  if (event.key === "Escape") {
+    closeModelSuggest();
+    input.blur();
+    return;
+  }
+  if (event.key === "Enter") {
+    const first = box?.querySelector("[data-model-option]");
+    if (first && !box.hidden) {
+      event.preventDefault();
+      chooseModelOption(first);
+    }
+  }
+});
+
 document.addEventListener("change", (event) => {
   const files = event.target.closest("input[data-role='attach-files']");
   if (files) {
@@ -1369,7 +1439,7 @@ document.addEventListener("click", (event) => {
     case "chain-add": {
       const scope = target.dataset.scope;
       const kind = target.dataset.kind;
-      const value = document.querySelector(`select[data-role="model"][data-scope="${scope}"][data-kind="${kind}"]`)?.value;
+      const value = document.querySelector(`input[data-role="model"][data-scope="${scope}"][data-kind="${kind}"]`)?.value;
       const thinking = document.querySelector(`select[data-role="thinking"][data-scope="${scope}"][data-kind="${kind}"]`)?.value || "medium";
       if (!value) return toast("Pick a model first");
       const [adapter, ...rest] = value.split("|");
@@ -1389,11 +1459,10 @@ document.addEventListener("click", (event) => {
     case "chain-cheapest": {
       const scope = target.dataset.scope;
       const kind = target.dataset.kind;
-      const select = document.querySelector(`select[data-role="model"][data-scope="${scope}"][data-kind="${kind}"]`);
-      const first = [...(select?.options || [])].find((option) => option.value);
+      const first = modelOptions(scope, kind)[0];
       if (!first) return toast("No model catalog for this adapter");
-      const [adapter, ...rest] = first.value.split("|");
-      const model = rest.join("|");
+      const adapter = first.adapter || "pi";
+      const model = `${first.provider}/${first.model}`;
       const list = draft(scope, kind, []);
       if (list.some((entry) => entry.model === model && entry.adapter === adapter)) return toast("Already in the chain");
       const thinking = document.querySelector(`select[data-role="thinking"][data-scope="${scope}"][data-kind="${kind}"]`)?.value || "medium";

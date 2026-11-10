@@ -6,6 +6,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { sandbox, project, writeConsole, writeCampaign, writeTicket, MODELS } from "./helpers.mjs";
 import { startServer } from "../scripts/lib/server.mjs";
+import { writeCatalogCache } from "../scripts/lib/catalogs.mjs";
 
 const BODY = `## Goal\n\nPanel.\n\n## Brief\n\nB.\n\n## Acceptance criteria\n\n- [ ] Shown.\n\n## Constraints\n\nC.\n\n## What to read first\n\n- **Files:** README.md\n`;
 
@@ -44,6 +45,23 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     BODY,
   );
   writeTicket(dir, "demo", "01-work.md", { id: "01", kind: "code", touches: ["src/**"] }, "## What to build\n\nIt.\n\n## Acceptance criteria\n\n- [ ] Works.");
+  writeCatalogCache("agy-acp", [
+    {
+      adapter: "agy-acp",
+      provider: "antigravity",
+      model: "gemini-4-argon",
+      label: "Gemini 4 Argon",
+      context: null,
+      maxOut: null,
+      thinking: true,
+      thinkingLevels: ["low", "medium", "high"],
+      images: true,
+      price: null,
+      billing: "subscription",
+      plan: "subscription",
+      included: true,
+    },
+  ]);
 
   const panel = await startServer({ roots: [dir], port: 0 });
   const port = 9300 + Math.floor(Math.random() * 400);
@@ -89,15 +107,26 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#settings` });
     await sleep(2500);
     const result = await send("Runtime.evaluate", {
-      expression: `JSON.stringify({ adapters: document.querySelectorAll('[data-role="adapter"]').length, spend: document.querySelector('[name="spend"]')?.value, sandbox: document.querySelector('[name="sandbox"]')?.value, openRepo: Boolean(document.getElementById("open-repo")), title: document.body.innerText.includes("Settings") })`,
+      expression: `JSON.stringify({ adapters: document.querySelectorAll('[data-role="adapter"]').length, spend: document.querySelector('[name="spend"]')?.value, sandbox: document.querySelector('[name="sandbox"]')?.value, openRepo: Boolean(document.getElementById("open-repo")), search: Boolean(document.querySelector('[data-role="model-search"]')), title: document.body.innerText.includes("Settings") })`,
       returnByValue: true,
     });
     const page = JSON.parse(result.result.result.value);
     assert.ok(page.adapters >= 1, "an adapter selector is rendered");
     assert.equal(page.title, true, "the settings screen is visible");
     assert.equal(page.openRepo, true, "the open-repository form is rendered");
+    assert.equal(page.search, true, "the searchable model picker is rendered");
     assert.match(page.spend, /metered-ok|subscription-only/);
     assert.match(page.sandbox, /auto|bwrap|none/);
+    const search = await send("Runtime.evaluate", {
+      expression: `(() => {
+        const input = document.querySelector('[data-role="model-search"]');
+        input.value = "gemini";
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        return document.querySelector(".model-suggest")?.textContent || "";
+      })()`,
+      returnByValue: true,
+    });
+    assert.match(search.result.result.value, /gemini/i, "search filters the model list");
     ws.close();
   } finally {
     browser.kill("SIGKILL");
