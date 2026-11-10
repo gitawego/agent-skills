@@ -34,6 +34,7 @@ const client = connect({
   cwd: spec.cwd,
   onStderr: (text) => record({ type: "acp.stderr", text: text.trim().slice(0, 2000) }),
   onNotification: (msg) => {
+    if (replaying) return;
     if (msg.method === "session/update") {
       record({ type: "acp.update", update: msg.params?.update || null });
     }
@@ -84,15 +85,18 @@ try {
 
   let session;
   let sessionMode = "new";
+  let replaying = false;
   try {
     if (spec.sessionId && caps.loadSession) {
       sessionMode = "load";
+      replaying = true;
       session = await client.request("session/load", {
         sessionId: spec.sessionId,
         cwd: spec.cwd,
         mcpServers: [],
         ...systemParam,
       });
+      replaying = false;
       session = { ...session, sessionId: spec.sessionId };
       record({ type: "acp.session", mode: "load", sessionId: spec.sessionId });
     } else if (spec.sessionId && caps.sessionCapabilities?.resume) {
@@ -113,6 +117,7 @@ try {
   } catch (err) {
     /* A changed adapter or an expired server-side session must not dead-end
        the ticket; start fresh and record why. */
+    replaying = false;
     record({ type: "acp.session.fallback", message: err.message });
     sessionMode = "new";
     session = await client.request("session/new", { cwd: spec.cwd, mcpServers: [], ...systemParam });
