@@ -42,7 +42,7 @@ looks like for your kind, and the task prompt names the ticket.
   becomes a question.
 - Never invent a fact to avoid a question, and never write a secret into a
   file, a commit, or a log. Never use a protected path (`.git/`,
-  `.orchestration/`, `.env*`, `secrets/`, `id_rsa*`, or the campaign's own plan
+  `.orchestration/`, `.env` / `.env.*`, `secrets/`, `id_rsa*`, or the campaign's own plan
   and tickets) as a deliverable.
 
 ## Asking

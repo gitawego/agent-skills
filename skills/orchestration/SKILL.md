@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 A **campaign** turns one paragraph of intent into landed work. You plan it as **tickets** with blocking edges, approve the model binding for each **ticket kind**, then a supervisor dispatches **runs** in parallel, up to its **slots** and provider quota windows. Questions stop at the **inbox**; finished deliveries wait in **acceptance**; work that passes its **gates** lands.
 
-The supervisor is a zero-dependency Node process (`scripts/orchestrate.mjs`) plus a local panel.
+The supervisor is a zero-dependency Node process (`scripts/orchestrate.mjs`) plus a local panel. For the human-facing guide, see [README.md](README.md).
 
 ## Attention
 
