@@ -218,7 +218,7 @@ Once a ticket is `done` or `dropped`, its worktree is removed (`worktree.removed
 
 Delivery also writes `orchestration/<campaign>/CLOSE.md`: landed and dropped tickets, per-ticket model, cost and attempts, the decisions, the checks, and what needed more than one try.
 
-Delivery removes any remaining ticket worktree checkouts but keeps every `orch/<slug>/<ticket>` branch and `orch/<slug>/integration`. The branches are cheap pointers into the integration history; the integration branch stays as the campaign's record. A decision whose declared paths no longer exist is retired as `paths-removed`.
+Delivery removes any remaining ticket worktree checkouts but keeps every `orch/<slug>/<ticket>` branch, `orch/<slug>/integration`, and the `_integration` worktree. The integration branch is the delivery pointer: a manual delivery can be opened as a PR from that branch into `base`, or approved as a local merge. After the integration branch is in `base`, `orchestrate cleanup <campaign> --dry-run` previews the branches and worktree that would be removed; without `--dry-run`, cleanup deletes every ticket branch, the integration branch, and the integration worktree. The base checkout is never removed. A decision whose declared paths no longer exist is retired as `paths-removed`.
 
 A campaign delivers when every ticket is `done` or `dropped`: one result from the integration branch to `base`, by pull request when the base is a protected branch, or by fast-forward when the campaign is `trusted` and the diff is under `max_autoship_lines`.
 
@@ -236,7 +236,7 @@ What ships follows the autonomy level, and the campaign's `max_autoship_lines` o
 {"ts":"2026-11-09T18:03:11Z","campaign":"pocket-museum-v4","ticket":"03","run":"r-...-a1","type":"run.reported","data":{"status":"ready","cost":0.42,"tokens":18422}}
 ```
 
-Types: `campaign.created`, `plan.drafted`, `campaign.approved`, `campaign.paused`, `campaign.resumed`, `campaign.delivered`, `ticket.added`, `ticket.stage`, `run.dispatched`, `run.reported`, `run.exited`, `run.retried`, `run.stopped`, `gate.check`, `gate.review`, `question.answered`, `inbox.opened`, `inbox.answered`, `merge.done`, `merge.conflict`, `worktree.removed`, `worktrees.pruned`, `delivery.blocked`, `delivery.rejected`, `dispatch.paused`, `dispatch.resumed`, `spend.recorded`, `error`.
+Types: `campaign.created`, `plan.drafted`, `campaign.approved`, `campaign.paused`, `campaign.resumed`, `campaign.delivered`, `ticket.added`, `ticket.stage`, `run.dispatched`, `run.reported`, `run.exited`, `run.retried`, `run.stopped`, `gate.check`, `gate.review`, `question.answered`, `inbox.opened`, `inbox.answered`, `merge.done`, `merge.conflict`, `worktree.removed`, `worktrees.pruned`, `branches.cleaned`, `delivery.blocked`, `delivery.rejected`, `dispatch.paused`, `dispatch.resumed`, `spend.recorded`, `error`.
 
 Every event carries the campaign and, where it applies, the ticket and run. A system-wide error carries neither. The ledger is never rewritten; a correction is a new event that names what it supersedes.
 

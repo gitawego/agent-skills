@@ -80,7 +80,9 @@ Answer questions with a decision, not with advice. A worker resumes from the ans
 
 ### 5. Close
 
-Report what landed, what was dropped and why, what the spend was, and which tickets cost more than one attempt. If a class of failure repeated, propose a check that would have caught it. The campaign stage is `archived`.
+Report what landed, what was dropped and why, what the spend was, and which tickets cost more than one attempt. If a class of failure repeated, propose a check that would have caught it.
+
+When the campaign reaches `delivered`, name the integration branch and ask the human one clear question: **open a PR from that branch into `base`, or merge locally?** After it is in `base`, ask a second: **remove the campaign branches and integration worktree?** `orchestrate cleanup <campaign> --dry-run` shows exactly what would go; cleanup keeps the base checkout. Do not remove the worktree or branches before that answer. The campaign stage is `archived` when closed.
 
 **Done when:** the report is written and the panel shows no open inbox item or waiting delivery for the campaign.
 
@@ -96,7 +98,7 @@ The script is the source of truth; the skill's slash commands are conveniences o
 | `plan draft <campaign> --file plan.yml` | Save a draft; print the table, deltas, assumptions, open questions and warnings |
 | `plan diff <campaign>` | Reprint the draft deltas without writing |
 | `plan show <campaign> [--ticket <key>]` | Full draft ticket text; `--applied` shows the applied plan |
-| `plan import <campaign> [--file plan.yml] [--prune] [--accept-open]` | Apply the draft atomically; refuses while running; stops before approval |
+| `plan import <campaign> [--file plan.yml] [--prune] [--accept-open] [--accept-fragmented]` | Apply the draft atomically; refuses while running; stops before approval |
 | `plan discard <campaign>` | Abandon the draft without touching tickets |
 | `plan audit <campaign> [--write]` | Show or persist the applied-plan audit; legacy campaigns derive it from the ticket graph |
 | `context append <campaign> --from notes.md` | Append free-form human input to `context.md` |
@@ -105,6 +107,7 @@ The script is the source of truth; the skill's slash commands are conveniences o
 | `ticket remove <id>` | Delete a ticket, refused while it still blocks another |
 | `cancel [campaign]` | Stop every live run and pause, keeping the branches |
 | `archive [campaign]` | Close a delivered campaign |
+| `cleanup <campaign> [--dry-run]` | After the integration branch is merged, remove ticket/integration branches and the integration worktree; keep the base checkout |
 | `approve <campaign>` | Approve plan and bindings; allow dispatch |
 | `bind <campaign> <kind> <model>[:thinking] [--fallback ...] [--adapter <id>]` | Set one kind's chain; refused while the campaign is running |
 | `defaults [campaign] [--apply] [--force]` | Resolve the newest default family per kind from the live catalog; `--apply` fills empty chains, `--force` replaces |

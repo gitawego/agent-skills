@@ -60,3 +60,23 @@ test("paused, delivered and archived each name the right handoff", () => {
   assert.match(deriveNextAction({ ...base, stage: "delivered" }).command, /archive demo/);
   assert.equal(deriveNextAction({ ...base, stage: "archived" }).actor, "none");
 });
+
+test("a delivered campaign names the branch, the PR choice and cleanup", () => {
+  const manual = deriveNextAction({
+    ...base,
+    stage: "delivered",
+    delivery: { mode: "manual", branch: "orch/demo/integration" },
+    base: "main",
+  });
+  assert.match(manual.text, /orch\/demo\/integration/);
+  assert.match(manual.text, /open a PR/);
+  assert.match(manual.command, /acceptance/);
+  const merged = deriveNextAction({
+    ...base,
+    stage: "delivered",
+    delivery: { mode: "merged", branch: "orch/demo/integration" },
+    base: "main",
+  });
+  assert.match(merged.text, /Merged into main/);
+  assert.match(merged.command, /cleanup demo --dry-run/);
+});

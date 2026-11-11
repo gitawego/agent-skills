@@ -10,6 +10,7 @@ import { loadState, saveState } from "../scripts/lib/state.mjs";
 import { loadConsole, readCampaign } from "../scripts/lib/config.mjs";
 import { listItems, createItem } from "../scripts/lib/inbox.mjs";
 import { loadDispatch, setDispatch } from "../scripts/lib/dispatch.mjs";
+import { cleanupCampaignBranches } from "../scripts/lib/landing.mjs";
 import { childrenFromLog, rollupChildren } from "../scripts/lib/runs.mjs";
 
 const BODY = `## Goal
@@ -104,9 +105,18 @@ test("a supervised campaign leaves the delivery for a person", async () => {
   const view = await until(dir, slug, (v) => v.stage === "delivered");
   const item = view.inbox.find((i) => i.kind === "review");
   assert.ok(item, "a review item is filed");
+  assert.equal(view.delivery.mode, "manual");
+  assert.match(view.delivery.branch, /integration/);
+  assert.match(view.nextAction.text, /open a PR/);
+  assert.match(view.nextAction.text, new RegExp(view.delivery.branch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.ok(!fs.existsSync(path.join(dir, "work-01.txt")), "nothing merged into main yet");
   applyCommand(dir, { type: "review.approve", campaign: slug, item: item.id }, loadConsole());
   assert.ok(fs.existsSync(path.join(dir, "work-01.txt")), "approval merges");
+  const after = campaignView(dir, slug);
+  assert.equal(after.delivery.mode, "merged");
+  assert.match(after.nextAction.command, new RegExp(`cleanup ${slug} --dry-run`));
+  const branches = gitOut(dir, ["branch", "--list", "orch/*"]);
+  assert.match(branches, new RegExp(`orch/${slug}/01`), "approval leaves cleanup to the person");
 });
 
 test("a manual delivery still merges after the base has moved", async () => {
@@ -471,6 +481,18 @@ test("delivery removes worktrees but keeps ticket and integration branches", asy
   const branches = gitOut(dir, ["branch", "--list", "orch/*"]);
   assert.match(branches, new RegExp(`orch/${slug}/integration`));
   assert.match(branches, new RegExp(`orch/${slug}/01`), "ticket branches stay after delivery");
+});
+
+test("cleanup removes campaign branches and the integration worktree, keeping the base", async () => {
+  const { dir, slug } = setup({ tickets: 1 });
+  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  await until(dir, slug, (v) => v.stage === "delivered");
+  const removed = cleanupCampaignBranches(dir, slug);
+  assert.ok(removed.includes(`orch/${slug}/01`));
+  assert.ok(removed.includes(`orch/${slug}/integration`));
+  assert.equal(gitOut(dir, ["branch", "--list", "main"]).trim(), "* main");
+  assert.deepEqual(fs.readdirSync(path.join(dir, ".orchestration", "campaigns", slug, "worktrees")), []);
+  assert.ok(fs.existsSync(path.join(dir, "work-01.txt")), "the merged file stays on the base");
 });
 
 test("a lost state file is rebuilt from the runs, attempts and spend included", async () => {

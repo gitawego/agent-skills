@@ -32,13 +32,39 @@ function cleanSection(value) {
 
 /* What the panel should point at next. The panel never decides this with a
    model; it reads the same state the supervisor writes. */
-export function deriveNextAction({ slug, stage, tickets = [], inbox = [], planErrors = [], reason = null, unboundKinds = [], draft = null }) {
+export function deriveNextAction({
+  slug,
+  stage,
+  tickets = [],
+  inbox = [],
+  planErrors = [],
+  reason = null,
+  unboundKinds = [],
+  draft = null,
+  delivery = null,
+  base = "main",
+}) {
   const open = inbox.filter((item) => item.status === "open");
   const review = open.find((item) => item.kind === "review");
   const question = open.find((item) => item.kind === "needs_answer");
   const failure = open.find((item) => item.kind === "failure");
   if (stage === "archived") return { actor: "none", text: "The record is closed.", command: null };
   if (stage === "delivered") {
+    if (delivery?.mode === "manual") {
+      const branch = delivery.branch || `orch/${slug}/integration`;
+      return {
+        actor: "you",
+        text: `Review the delivery. Branch ${branch} → ${base}; open a PR or approve a local merge.`,
+        command: "orchestrate acceptance",
+      };
+    }
+    if (delivery?.mode === "merged") {
+      return {
+        actor: "you",
+        text: `Merged into ${base}. Remove the integration worktree and campaign branches?`,
+        command: `orchestrate cleanup ${slug} --dry-run`,
+      };
+    }
     return { actor: "you", text: "Close the campaign with a report.", command: `orchestrate archive ${slug}` };
   }
   if (review) {
@@ -387,6 +413,8 @@ export function campaignView(root, slug) {
       inbox: inboxItems,
       planErrors: state.planErrors || [],
       reason: state.reason,
+      delivery: state.delivery || null,
+      base: campaign.data.base || "main",
       draft: { exists: draft.exists, error: draft.error, blocking: Boolean(draft.plan && planFragmentation(draft.plan).blocking) },
       unboundKinds: [...new Set(tickets.map((ticket) => ticket.kind))].filter(
         (kind) => !(effectiveKinds[kind]?.models || []).length,

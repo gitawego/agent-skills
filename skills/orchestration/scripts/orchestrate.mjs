@@ -58,7 +58,7 @@ import { bwrapAvailable } from "./lib/sandbox.mjs";
 import { asArray, loadPlan, ticketTitle } from "./lib/plan.mjs";
 import { decisionsFor, promoteDecision, readDecisions, summaryLine } from "./lib/memory.mjs";
 import { appendEvent, readEvents } from "./lib/ledger.mjs";
-import { diffStats, integrationBranch } from "./lib/landing.mjs";
+import { campaignBranches, cleanupCampaignBranches, diffStats, integrationBranch, integrationWorktree } from "./lib/landing.mjs";
 import { priceLabel } from "./lib/pricing.mjs";
 import { approveCampaign, tick } from "./lib/engine.mjs";
 import { enqueue } from "./lib/commands.mjs";
@@ -415,6 +415,45 @@ const commands = {
     const slug = resolveCampaign(root, flags.campaign || positional[0]);
     enqueue(root, { type: "archive", campaign: slug });
     tickNow(root);
+  },
+
+  cleanup({ flags, positional }) {
+    const root = rootDir(flags);
+    const slug = resolveCampaign(root, flags.campaign || positional[0]);
+    const state = loadState(root, slug);
+    const campaign = readCampaign(root, slug);
+    const base = campaign.data.base || "main";
+    const branch = integrationBranch(slug);
+    const merged =
+      state.delivery?.mode === "merged" ||
+      (git(root, ["rev-parse", "--verify", "--quiet", branch]).ok &&
+        git(root, ["merge-base", "--is-ancestor", branch, base]).ok);
+    if (!merged) {
+      throw new UserError(`Campaign "${slug}" has not merged into ${base}`, [
+        `Open a PR from ${branch} into ${base}, or approve a local merge in the agent session.`,
+        "Cleanup removes branches, so it refuses until the integration branch is in the base.",
+      ]);
+    }
+    const branches = campaignBranches(root, slug);
+    const integration = integrationWorktree(root, slug);
+    const worktreeExists = exists(integration);
+    if (flags["dry-run"]) {
+      console.log(`campaign ${slug} · ${branch} → ${base}`);
+      console.log(`branches ${branches.length ? branches.join(", ") : "none"}`);
+      console.log(`worktree ${worktreeExists ? integration : "none (already removed)"}`);
+      console.log("nothing removed; re-run without --dry-run to clean");
+      return;
+    }
+    const removed = cleanupCampaignBranches(root, slug);
+    if (removed.length) {
+      appendEvent(root, { campaign: slug, type: "branches.cleaned", data: { branches: removed } });
+      console.log(`removed ${removed.length} branch${removed.length === 1 ? "" : "es"}:`);
+      for (const item of removed) console.log(`  ${item}`);
+    } else {
+      console.log("nothing to clean");
+    }
+    if (worktreeExists) console.log(`removed ${integration}`);
+    console.log(`kept ${base}`);
   },
 
   context({ flags, positional }) {
@@ -944,6 +983,15 @@ const commands = {
             : `  draft ${view.draft.tickets} ticket${view.draft.tickets === 1 ? "" : "s"} · not applied · ${view.draft.hash}`,
         );
       }
+      if (view.stage === "delivered" && view.delivery?.mode !== "directory") {
+        const branch = view.delivery?.branch || `orch/${slug}/integration`;
+        console.log(`  delivery ${view.delivery.mode} · ${branch} → ${view.base}`);
+        if (view.delivery.mode === "manual") {
+          console.log(`  next  review and open a PR from ${branch} into ${view.base}, or approve a local merge`);
+        } else if (view.delivery.mode === "merged") {
+          console.log(`  next  orchestrate cleanup ${slug} --dry-run   # remove branches/worktree; keep ${view.base}`);
+        }
+      }
       console.log(
         `  spend ${view.spend.tokens} tokens, ${money(view.spend.dollars)}; ` +
           `${view.inbox.filter((i) => i.status === "open").length} open inbox items`,
@@ -1358,6 +1406,7 @@ const commands = {
   ticket add|edit|remove ...            change the plan: add, edit a ticket, remove one
   cancel [campaign]                     stop every live run and pause
   archive [campaign]                    close a delivered campaign
+  cleanup <campaign> [--dry-run]        preview or remove ticket/integration branches and the integration worktree
   catalog [search]                       the live model catalog; --adapter <id> [--refresh]
   adapters                               adapters, versions and catalog status
   doctor [--refresh]                      check harness versions and catalog freshness

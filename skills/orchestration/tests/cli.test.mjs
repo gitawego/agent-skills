@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import { sandbox, project, writeConsole, MODELS, SKILL } from "./helpers.mjs";
+import { sandbox, project, writeConsole, writeCampaign, MODELS, SKILL } from "./helpers.mjs";
 
 const CLI = path.join(SKILL, "scripts", "orchestrate.mjs");
 
@@ -30,6 +30,59 @@ test("campaign-scoped verbs accept a positional campaign when several exist", ()
   const first = cli(dir, ["status", "first-campaign"]);
   assert.equal(first.status, 0, first.stderr);
   assert.match(first.stdout, /first-campaign \[draft\]/);
+});
+
+test("cleanup previews and removes merged campaign branches, keeping the base", () => {
+  const box = sandbox();
+  const dir = project(path.join(box, "repo"));
+  writeConsole();
+  assert.equal(cli(dir, ["init"]).status, 0);
+  assert.equal(cli(dir, ["start", "demo", "--campaign", "demo"]).status, 0);
+  writeCampaign(
+    dir,
+    "demo",
+    {
+      campaign: "demo",
+      stage: "delivered",
+      autonomy: "supervised",
+      plan_gate: "human",
+      landing: "branch",
+      base: "main",
+      checks: [],
+      budget: { tokens: null, dollars: null },
+      max_autoship_lines: 200,
+      kinds: {},
+    },
+    "## Goal\n\nShip.\n",
+  );
+  const stateFile = path.join(dir, ".orchestration", "campaigns", "demo", "state.json");
+  fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+  fs.writeFileSync(
+    stateFile,
+    JSON.stringify({
+      campaign: "demo",
+      stage: "delivered",
+      delivery: { mode: "merged", branch: "orch/demo/integration", detail: "merged" },
+      tickets: {},
+      runs: {},
+      slots: {},
+      spend: { tokens: 0, dollars: 0, byModel: {} },
+    }),
+  );
+  execFileSync("git", ["branch", "orch/demo/01"], { cwd: dir });
+  execFileSync("git", ["branch", "orch/demo/integration"], { cwd: dir });
+
+  const dry = cli(dir, ["cleanup", "demo", "--dry-run"]);
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.match(dry.stdout, /orch\/demo\/01/);
+  assert.match(dry.stdout, /nothing removed/);
+  assert.match(execFileSync("git", ["branch", "--list", "orch/*"], { cwd: dir, encoding: "utf8" }), /orch\/demo\/01/);
+
+  const run = cli(dir, ["cleanup", "demo"]);
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /removed 2 branches/);
+  assert.match(run.stdout, /kept main/);
+  assert.equal(execFileSync("git", ["branch", "--list", "orch/*"], { cwd: dir, encoding: "utf8" }).trim(), "");
 });
 
 test("ticket add refuses to guess when several campaigns exist, and accepts --campaign", () => {

@@ -1509,6 +1509,34 @@ function campaignConfigure(c) {
     </div>`;
 }
 
+function deliveryBlock(c) {
+  const delivery = c.delivery;
+  if (!delivery) return "";
+  const branch = delivery.branch || `orch/${c.slug}/integration`;
+  const base = c.base || "main";
+  const manual = delivery.mode === "manual";
+  const merged = delivery.mode === "merged";
+  return `<section class="settings-block">
+    <header><h2 class="page">Delivery</h2><span class="hint">${esc(delivery.mode)} · ${esc(branch)} → ${esc(base)}</span></header>
+    ${delivery.detail ? `<p class="note">${esc(delivery.detail)}</p>` : ""}
+    ${
+      manual
+        ? `<p class="note">Open a PR from <span class="mono">${esc(branch)}</span> into <span class="mono">${esc(base)}</span>, or approve a local merge in your agent session.</p>
+           ${commandRow("Review the delivery", "orchestrate acceptance")}
+           ${commandRow("Push the branch", `git push origin ${branch}`)}`
+        : ""
+    }
+    ${
+      merged
+        ? `<p class="note">Merged into <span class="mono">${esc(base)}</span>. The integration worktree and campaign branches can be removed; the base checkout stays.</p>
+           ${commandRow("Preview cleanup", `orchestrate cleanup ${c.slug} --dry-run`)}
+           ${commandRow("Remove branches and worktree", `orchestrate cleanup ${c.slug}`)}`
+        : ""
+    }
+    ${commandRow("Close the campaign", `orchestrate archive ${c.slug}`)}
+  </section>`;
+}
+
 function campaignHistory(c) {
   const spend = c.spendByModel || [];
   return `${planAuditBlock(c)}
@@ -1548,11 +1576,7 @@ function campaignHistory(c) {
         }
       </ol>
     </section>
-    ${
-      c.delivery
-        ? `<section class="settings-block"><header><h2 class="page">Delivery</h2><span class="hint">${esc(c.delivery.mode)} · ${esc(c.delivery.detail || "")}</span></header>${commandRow("Close the campaign", `orchestrate archive ${c.slug}`)}</section>`
-        : ""
-    }`;
+    ${deliveryBlock(c)}`;
 }
 
 function viewCampaign() {

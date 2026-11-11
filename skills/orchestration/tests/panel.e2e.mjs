@@ -468,6 +468,42 @@ tickets:
     assert.equal(configurePage.chains, true, "chains live in Configure");
     assert.equal(configurePage.value, "321", "an unsaved config edit survives a background refresh");
     assert.equal(configurePage.save, true, "configuration has one explicit save");
+
+    const stateFile = path.join(stateDir, "state.json");
+    const stateBase = {
+      campaign: "demo",
+      stage: "delivered",
+      reason: null,
+      tickets: {},
+      runs: {},
+      slots: {},
+      spend: { tokens: 0, dollars: 0, byModel: {} },
+      delivery: { mode: "manual", branch: "orch/demo/integration", detail: "Ready to review", stats: { added: 1, removed: 0, lines: 1 } },
+    };
+    fs.writeFileSync(stateFile, JSON.stringify(stateBase));
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo/history` });
+    await sleep(700);
+    const manualDelivery = await send("Runtime.evaluate", {
+      expression: `document.body.innerText`,
+      returnByValue: true,
+    });
+    const manualText = manualDelivery.result.result.value;
+    assert.match(manualText, /orch\/demo\/integration/);
+    assert.match(manualText, /Open a PR/);
+    assert.match(manualText, /orchestrate acceptance/);
+
+    stateBase.delivery = { mode: "merged", branch: "orch/demo/integration", detail: "Merged", stats: { added: 1, removed: 0, lines: 1 } };
+    fs.writeFileSync(stateFile, JSON.stringify(stateBase));
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo/history` });
+    await sleep(700);
+    const mergedDelivery = await send("Runtime.evaluate", {
+      expression: `document.body.innerText`,
+      returnByValue: true,
+    });
+    const mergedText = mergedDelivery.result.result.value;
+    assert.match(mergedText, /Preview cleanup/);
+    assert.match(mergedText, /Remove branches and worktree/);
+    assert.match(mergedText, /orchestrate cleanup demo --dry-run/);
     ws.close();
   } finally {
     browser.kill("SIGKILL");

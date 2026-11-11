@@ -144,6 +144,32 @@ export function pruneWorktrees(root, slug) {
   return removed;
 }
 
+export function campaignBranches(root, slug) {
+  const list = git(root, ["branch", "--list", `orch/${slug}/*`]);
+  return (list.stdout || "")
+    .split("\n")
+    .map((line) => line.replace(/^[*+]\s*/, "").trim())
+    .filter(Boolean)
+    .sort();
+}
+
+/* Once the integration branch is merged into the base, the campaign's branches
+   are redundant: the merge commit in base is the record. Remove every ticket
+   branch and the integration branch, and the remaining checkouts. Keep base. */
+export function cleanupCampaignBranches(root, slug) {
+  pruneWorktrees(root, slug);
+  const integration = integrationWorktree(root, slug);
+  if (exists(integration)) {
+    const res = git(root, ["worktree", "remove", "--force", integration], { timeout: 60_000 });
+    if (!res.ok) git(root, ["worktree", "prune"]);
+  }
+  const removed = [];
+  for (const branch of campaignBranches(root, slug)) {
+    if (git(root, ["branch", "-D", branch]).ok) removed.push(branch);
+  }
+  return removed;
+}
+
 const SKIP_DIRS = new Set([".git", ".orchestration", "orchestration", "node_modules", ".pi"]);
 
 /* Directory landing has no branch to diff, so the run records the tree before
