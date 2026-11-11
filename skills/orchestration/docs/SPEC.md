@@ -22,7 +22,7 @@ A campaign is one paragraph of intent plus a set of tickets with blocking edges.
 | 10 | Resume keeps the session | An answer arrives in the context that asked the question, so no re-exploration |
 | 11 | One supervisor process for all campaigns | One writer, no locks, one UI; campaign loops stay isolated with their own slots and budgets |
 | 12 | Landing is a strategy: branch or directory | Design, visual, and research work does not end in a PR but shares the lifecycle |
-| 13 | Gates are checks plus a cold review on a different model | A worker's "ready" is a request for review; a reviewer grading its own work is not a gate |
+| 13 | Gates are acceptance evidence, checks, drift, and a cold review on a different model | A worker's "ready" is a request for review; a reviewer grading its own work is not a gate; a pass is bound to the revision it judged |
 | 14 | Model binding is a per-kind ordered chain chosen from the live catalog | The first model starts the ticket, each next one is the fallback; the chain is read at claim and the model used is recorded on the run |
 | 15 | Ticket kinds are one axis: plan, code, design, visual, research, review, chores | "Which model ran this?" gets one answer, and the setup screen has one section |
 | 16 | One approval gate: plan and role table together | Two gates is ceremony; the bindings are part of the plan |
@@ -34,7 +34,7 @@ A campaign is one paragraph of intent plus a set of tickets with blocking edges.
 | 22 | The panel monitors and configures; the agent converses and decides | A decision that needs a sentence happens in the agent; the panel offers switches that need none, plus one manual New ticket form for a single slice |
 | 23 | Raw context is append-only; the plan is synthesized and imported atomically | `context.md` is evidence, `campaign.md` and `tickets/` are the contract. One validated import replaces a dozen edits and keeps the plan explainable |
 | 24 | Tickets have a dedicated manifest; a manual form is a one-off convenience | The ticket graph is the campaign's center of gravity. The agent is the primary author; the form covers one extra slice without a conversation, never a whole plan |
-| 25 | A plan is drafted and reviewed before it is applied | The draft lives outside `tickets/`; `plan draft` shows the delta since the last message and the delta apply will make, requires assumptions, and blocks on open questions. A plan is capped at 16 tickets; four small slices making up half the plan block import unless `--accept-fragmented`. `plan import` writes and stops; approval is separate |
+| 25 | A plan is drafted and reviewed before it is applied, with one clean approval | The draft lives outside `tickets/`; `plan draft` shows the delta since the last message and the delta apply will make, requires assumptions, and blocks on open questions. A plan is capped at 16 tickets; four small slices making up half the plan block import unless `--accept-fragmented`. `approve` applies a clean draft atomically, then approves; `plan import` remains the apply-only path |
 | 26 | Human attention is a budget | One approval for a clean `plan_gate: auto` plan; one question at a time; one delivery decision; `CLOSE.md` and History count approvals, answers, reviews and cleanups |
 
 ## Refinements made while writing

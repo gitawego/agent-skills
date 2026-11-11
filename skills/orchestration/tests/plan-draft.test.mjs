@@ -22,6 +22,8 @@ import {
 } from "../scripts/lib/plan-draft.mjs";
 import { importPlan, normalizePlan } from "../scripts/lib/plan-import.mjs";
 import { loadTickets } from "../scripts/lib/plan.mjs";
+import { loadConsole } from "../scripts/lib/config.mjs";
+import { approveCampaign } from "../scripts/lib/engine.mjs";
 import { stringifyYaml } from "../scripts/lib/yaml.mjs";
 
 const CLI = path.join(SKILL, "scripts", "orchestrate.mjs");
@@ -280,7 +282,7 @@ test("a draft cannot be written while the campaign runs", () => {
   assert.match(refused.stderr, /may change only/);
 });
 
-test("approval refuses while a draft exists", () => {
+test("approval applies a clean draft, approves it once, and is idempotent", () => {
   const { box, dir } = setup();
   const planFile = path.join(box, "plan.yml");
   fs.writeFileSync(
@@ -288,10 +290,62 @@ test("approval refuses while a draft exists", () => {
     "version: 1\ngoal: G\nbrief: B\nassumptions: []\ntickets:\n  - key: one\n    title: One\n    kind: code\n    touches: [src/**]\n    what: Do it.\n    accept: [Done]\n",
   );
   assert.equal(cli(dir, ["plan", "draft", "demo", "--file", planFile]).status, 0);
-  const refused = cli(dir, ["approve", "demo"]);
-  assert.notEqual(refused.status, 0);
-  assert.match(`${refused.stdout}${refused.stderr}`, /unapplied draft/);
-  assert.equal(cli(dir, ["plan", "discard", "demo"]).status, 0);
+  const approved = cli(dir, ["approve", "demo"]);
+  assert.equal(approved.status, 0, approved.stderr);
+  assert.match(approved.stdout, /clean draft applied/);
+  assert.equal(fs.existsSync(draftFile(dir, "demo")), false, "the draft is consumed");
+  assert.equal(loadTickets(dir, "demo").length, 1, "the draft became the applied plan");
+  assert.equal(readAppliedAudit(dir, "demo").tickets.length, 1);
+  assert.equal(JSON.parse(cli(dir, ["status", "demo", "--json"]).stdout).campaigns[0].stage, "running");
+
+  const again = cli(dir, ["approve", "demo"]);
+  assert.equal(again.status, 0, again.stderr);
+  assert.equal(loadTickets(dir, "demo").length, 1, "a second approve creates no duplicate ticket");
+  const events = fs.readFileSync(path.join(dir, ".orchestration", "events.jsonl"), "utf8");
+  assert.equal((events.match(/"type":"campaign.approved"/g) || []).length, 1, "a second approve adds no event");
+});
+
+test("approve refuses an open-question draft and leaves tickets untouched", () => {
+  const { dir } = setup();
+  draftPlan({
+    root: dir,
+    slug: "demo",
+    plan: plan({ open_questions: ["Which storage format?"] }),
+    allowedKinds: ["code", "review"],
+  });
+  assert.throws(
+    () => approveCampaign(dir, "demo", loadConsole()),
+    /the draft is not ready/,
+  );
+  assert.equal(loadTickets(dir, "demo").length, 0, "nothing was applied");
+  assert.equal(readDraft(dir, "demo").exists, true, "the draft is kept for a decision");
+});
+
+test("approve refuses a draft that cannot bind, before applying any ticket", () => {
+  const { dir } = setup();
+  writeConsole({ unbound: true });
+  draftPlan({ root: dir, slug: "demo", plan: plan(), allowedKinds: ["code", "review"] });
+  assert.throws(
+    () => approveCampaign(dir, "demo", loadConsole()),
+    /the draft does not bind/,
+  );
+  assert.equal(loadTickets(dir, "demo").length, 0, "preflight failure wrote no tickets");
+  assert.equal(readDraft(dir, "demo").exists, true);
+});
+
+test("approve applies a clean draft with covers and records coverage", () => {
+  const { dir } = setup();
+  const claimed = plan({
+    tickets: [{ ...plan().tickets[0], covers: ["it works"] }],
+  });
+  draftPlan({ root: dir, slug: "demo", plan: claimed, allowedKinds: ["code", "review"] });
+  approveCampaign(dir, "demo", loadConsole());
+  const tickets = loadTickets(dir, "demo");
+  assert.equal(tickets.length, 1);
+  assert.deepEqual(tickets[0].data.covers, ["it works"]);
+  const audit = readAppliedAudit(dir, "demo");
+  assert.equal(audit.coverage.claimed, 1);
+  assert.equal(audit.coverage.total, 1);
 });
 
 test("the CLI refuses an open-question draft until --accept-open", () => {
@@ -321,6 +375,25 @@ tickets:
   const accepted = cli(dir, ["plan", "import", "demo", "--accept-open"]);
   assert.equal(accepted.status, 0, accepted.stderr);
   assert.equal(readAppliedAudit(dir, "demo").openQuestions.length, 1);
+});
+
+test("plan draft prints coverage and warns without blocking", () => {
+  const { box, dir } = setup();
+  const file = path.join(box, "plan.yml");
+  fs.writeFileSync(file, stringifyYaml(plan()));
+  const missing = cli(dir, ["plan", "draft", "demo", "--file", file]);
+  assert.equal(missing.status, 0, missing.stderr);
+  assert.match(missing.stdout, /coverage: 0\/1 criteria claimed; missing: it works/);
+  assert.match(missing.stdout, /Coverage is a warning, not a gate/);
+
+  fs.writeFileSync(
+    file,
+    stringifyYaml(plan({ tickets: [{ ...plan().tickets[0], covers: ["it works"] }] })),
+  );
+  const claimed = cli(dir, ["plan", "draft", "demo", "--file", file]);
+  assert.equal(claimed.status, 0, claimed.stderr);
+  assert.match(claimed.stdout, /coverage: 1\/1 criteria claimed/);
+  assert.doesNotMatch(claimed.stdout, /Coverage is a warning/);
 });
 
 test("plan draft hides informational warnings unless --verbose", () => {

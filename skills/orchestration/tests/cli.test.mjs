@@ -32,6 +32,28 @@ test("campaign-scoped verbs accept a positional campaign when several exist", ()
   assert.match(first.stdout, /first-campaign \[draft\]/);
 });
 
+test("ticket edit records a coverage claim and an amendment reason", () => {
+  const box = sandbox();
+  const dir = project(path.join(box, "repo"));
+  writeConsole();
+  assert.equal(cli(dir, ["init"]).status, 0);
+  assert.equal(cli(dir, ["start", "Coverage demo", "--campaign", "demo"]).status, 0);
+  const campaignFile = path.join(dir, "orchestration", "demo", "campaign.md");
+  fs.writeFileSync(campaignFile, fs.readFileSync(campaignFile, "utf8").replace("- [ ] \n", "- [ ] works\n"));
+  assert.equal(
+    cli(dir, ["ticket", "add", "First thing", "--campaign", "demo", "--kind", "code", "--touches", "src/**", "--accept", "works"]).status,
+    0,
+  );
+  const edited = cli(dir, ["ticket", "edit", "01", "--campaign", "demo", "--covers", "works", "--reason", "claim the campaign criterion"]);
+  assert.equal(edited.status, 0, edited.stderr);
+  const ticket = fs.readFileSync(path.join(dir, "orchestration", "demo", "tickets", "01-first-thing.md"), "utf8");
+  assert.match(ticket, /covers/);
+  assert.match(ticket, /works/);
+  const events = fs.readFileSync(path.join(dir, ".orchestration", "events.jsonl"), "utf8");
+  assert.match(events, /"type":"ticket.amended"/);
+  assert.match(events, /claim the campaign criterion/);
+});
+
 test("cleanup previews and removes merged campaign branches, keeping the base", () => {
   const box = sandbox();
   const dir = project(path.join(box, "repo"));

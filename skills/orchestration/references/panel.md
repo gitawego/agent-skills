@@ -35,11 +35,11 @@ A **strip** is one ticket: a perforated number stub, the title, the kind, and te
 | **Inbox** | Every open question and failure across projects, oldest first, with the question, options, default, what the worker tried and a copyable answer command | Copy the command, open the ticket, open the campaign. No textarea, no answer button |
 | **Acceptance** | Open delivery reviews grouped by campaign, with the changed-line count, autoship limit, checks and findings, plus copyable approve and send-back commands | **Approve, merge and clean up** as a binary action, copy the send-back command, open the campaign |
 | **Campaign → Overview** | The read-only briefing (goal as the title, brief, criteria, context, constraints, reading), health counts, the next-action rail and the recent ledger | Read; copy the next command; open another section; pause/resume/cancel/archive |
-| **Campaign → Tickets** | The ticket manifest: list or board, stage counts, kind filter, search, blocked-by chips, the ticket drawer, and a collapsible **New ticket** form | Open a ticket; stop or retry from the drawer; add one ticket by hand; copy the agent prompt for batches |
+| **Campaign → Tickets** | The ticket manifest: list or board, stage counts, kind filter, search, blocked-by chips, coverage chips, the ticket drawer, and a collapsible **New ticket** form | Open a ticket; stop or retry from the drawer; add one ticket by hand; copy the agent prompt for batches |
 | **Campaign → Configure** | Delivery policy, runtime (adapter, spend, sandbox, budget, autoship), checks, generated paths, quotas, and the model chains | Edit, save once, use defaults, refresh models; pause first for chain changes |
 | **Campaign → History** | Spend by model, cache-hit rate, the full ledger, decisions and the delivery record | Read; copy the promote/close commands |
 | **Settings** | Console limits, the runner adapter/spend/sandbox, provider quota windows, and the ticket kinds with their chains | Edit and save, discover or refresh adapter models |
-| **Drawer** | One ticket in a pinned head and foot: what to build, criteria, sources, findings, the last answer, telemetry, its runs and the streaming log | Stop while it runs, retry when it failed or was sent back, copy the edit/answer command. No edit form |
+| **Drawer** | One ticket in a pinned head and foot: what to build, criteria, sources, a collapsed **Evidence** section (acceptance results, findings by severity, review/worker models, reviewed SHA, gate cycles, integration state), the last answer, telemetry, its runs and the streaming log | Stop while it runs, retry when it failed or was sent back, copy the edit/answer command. No edit form |
 
 Views have addresses: `#fleet?status=acceptance&project=habitlog&adapter=agy-acp&q=seed`, `#inbox`, `#acceptance`, `#settings`, `#campaign/<slug>` for Overview, `#campaign/<slug>/tickets|configure|history` for the sections, and `#ticket/03` for the drawer. Old `#board` links land on the selected campaign's ticket board. Fleet filters are client-side up to 1,000 rows; the table renders 200 at a time with **Load more**.
 
@@ -50,7 +50,8 @@ Under every campaign title is one line that names the actor and, when the actor 
 | State | Actor | Line |
 | --- | --- | --- |
 | Draft, no tickets, no draft | You | Write the plan in your agent session |
-| Draft, tickets or paused, draft exists | You | Review the draft plan in your agent session |
+| Draft or paused, clean draft exists | You | **Approve and run** — applies the draft and dispatches; no separate import |
+| Draft, draft has an open question or blocking warning | You | Read the reason and copy `plan diff`; no approve action |
 | Draft, tickets, unbound chains | You | Bind the model chains |
 | Draft or awaiting approval | You | Approve the plan and bindings |
 | Running, quiet | Supervisor | Dispatching the frontier |
@@ -89,10 +90,10 @@ The agent flow is:
 
 1. `orchestrate start "<goal>"` creates the campaign.
 2. The human gives free-form context in chat. The agent persists it with `orchestrate context append <campaign> --from notes.md`; it lands in `orchestration/<campaign>/context.md` as timestamped raw input.
-3. The agent writes a draft and runs `orchestrate plan draft <campaign> --file plan.yml`. The command validates it, snapshots the previous draft, and prints the table, both deltas, assumptions, open questions and warnings. The agent presents that in chat.
+3. The agent writes a draft and runs `orchestrate plan draft <campaign> --file plan.yml`. The command validates it, snapshots the previous draft, and prints the table, both deltas, coverage, assumptions, open questions and warnings. The agent presents that in chat; the panel shows the same draft, its coverage matrix, and one **Approve and run** action when it is clean.
 4. The human fine-tunes in chat (“split 02”, “drop docs”, “block 03 on 01”). Each revision is another `plan draft`; the agent presents only the delta. `tickets/` is untouched until the human says “apply”.
-5. The agent runs `orchestrate plan import <campaign>`; it writes the tickets, records `plan.applied.yml` and the audit, and stops. Open questions block unless `--accept-open`. Re-import is idempotent by ticket `key`; `--prune` removes missing keyed tickets only when they have no runs.
-6. The agent proposes the chains (`orchestrate defaults <campaign> --apply`, then `bind` for exceptions) and the human approves in chat.
+5. The human makes one decision: **Approve and run**. `orchestrate approve <campaign>` applies the clean draft atomically, records `plan.applied.yml` and the audit, then approves and dispatches. An open question, error, blocking fragmentation, or failed binding preflight refuses and writes nothing. `plan import` remains available as apply-only for explicit and auto workflows. Re-import is idempotent by ticket `key`; `--prune` removes missing keyed tickets only when they have no runs.
+6. The agent proposes the chains (`orchestrate defaults <campaign> --apply`, then `bind` for exceptions) before that single approval.
 7. The supervisor dispatches; the panel watches. The human answers and reviews in the agent.
 
 The supervisor never invents tickets. Planning is an agent act, accepted by a human; execution is deterministic.
@@ -142,10 +143,10 @@ The same block shows context used against the model's window (when the catalog k
 
 ## Rules
 
-1. **Switches stay, sentences move.** Answers and nuanced review happen in the agent. Binary approvals — approve a clean plan, approve and merge a delivery — are one click because the evidence is already on the screen. The panel never hosts a textarea for a decision, and keeps one manual New ticket form for a single slice.
+1. **Switches stay, sentences move.** Answers and nuanced review happen in the agent. Binary approvals — approve a clean plan, approve and merge a delivery — are one click because the evidence is already on the screen. The clean-plan click applies the draft and dispatches; it is the same one decision as `orchestrate approve`. The panel never hosts a textarea for a decision, and keeps one manual New ticket form for a single slice.
 2. **What needs a person comes first.** An empty inbox says so in one line; a healthy campaign takes one band.
 3. **One place per concept.** Fleet is the map, Inbox is the question queue, Acceptance is the delivery queue, Tickets is one campaign's manifest, Configure is the only form, History is the audit.
-4. **A draft is not a ticket.** `plan draft` writes only `.orchestration/campaigns/<slug>/plan.yml`; the Tickets tab shows a read-only draft preview. `plan import` writes `tickets/`, and `approve` refuses while a draft is unapplied. Counts are lengths; a draft count never claims applied work.
+4. **A draft is not a ticket.** `plan draft` writes only `.orchestration/campaigns/<slug>/plan.yml`; the Tickets tab shows a read-only draft preview. `plan import` writes `tickets/`; `approve` writes them too when it applies a clean draft, then approves in the same action. Counts are lengths; a draft count never claims applied work.
 5. **Honest state.** Spend is measured and labelled actual, estimated or included. A stale quota is drawn as stale. The live dot turns hollow when the stream drops.
 6. **The page never writes plan files directly.** It enqueues commands, including the manual `ticket.add`; the supervisor applies them. The agent writes `context.md`, the plan and batches of tickets.
 7. **Local only.** The server binds `127.0.0.1` and refuses non-loopback callers. The token lives in `~/.local/state/orchestration/token` (mode 0600) and does not rotate between restarts. Opening the panel once with `?token=` sets an HttpOnly cookie for the origin, so a refresh, a new tab or a bookmark needs no token; the address bar is cleaned on load so the token does not sit in history.

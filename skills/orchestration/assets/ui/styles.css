@@ -1261,3 +1261,29 @@ pre.log {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+.quality-chip {
+  border: 1px solid var(--rule);
+  padding: 0.1rem 0.4rem;
+  font: 500 0.66rem/1.4 var(--mono);
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+}
+.quality-chip[data-state="passed"] { border-color: var(--good, #3f7f5f); }
+.quality-chip[data-state="failed"] { border-color: var(--bad, #9b4040); }
+.coverage-table { width: 100%; border-collapse: collapse; margin: 0.4rem 0; }
+.coverage-table th, .coverage-table td {
+  text-align: left;
+  padding: 0.25rem 0.4rem;
+  border-bottom: 1px solid var(--rule);
+  font-size: 0.78rem;
+}
+.coverage-table tr[data-missing="true"] td { color: var(--muted); }
+.evidence { border-top: 1px solid var(--rule); padding-top: 0.5rem; margin-top: 0.8rem; }
+.evidence > summary { cursor: pointer; font-weight: 600; }
+.evidence-meta { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 0.8rem; margin-top: 0.6rem; }
+.evidence-meta dt { color: var(--muted); font: 500 0.66rem/1.4 var(--mono); text-transform: uppercase; letter-spacing: 0.08em; }
+.evidence-meta dd { margin: 0; }
+.evidence-table { width: 100%; border-collapse: collapse; }
+.evidence-table th, .evidence-table td { text-align: left; padding: 0.25rem 0.4rem; border-bottom: 1px solid var(--rule); font-size: 0.78rem; }
+.evidence-table tr[data-status="failed"] td { color: var(--bad, #9b4040); }

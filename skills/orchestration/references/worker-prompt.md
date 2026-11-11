@@ -48,6 +48,8 @@ End by writing your report. There is no other way to finish.
 Pass `--check <name>=ok` for each check you ran and `--touched <path>` for each
 file you changed; they are evidence the supervisor and the panel can read.
 
+{{ACCEPTANCE_RULE}}
+
 | Status | When |
 | --- | --- |
 | `ready` | Every acceptance criterion holds and the checks pass. A supervisor runs its own gates next |

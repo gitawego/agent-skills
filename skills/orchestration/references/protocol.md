@@ -45,18 +45,19 @@ The agent writes a **draft** first. Nothing enters `tickets/` until the human sa
 orchestrate plan draft <campaign> --file plan.yml   # validate, snapshot previous, show deltas
 orchestrate plan diff <campaign>                    # reprint the deltas
 orchestrate plan show <campaign> --ticket store     # full ticket text
-orchestrate plan import <campaign>                  # apply the current draft
+orchestrate approve <campaign>                      # apply a clean draft, then approve
+orchestrate plan import <campaign>                  # apply only, without approving
 orchestrate plan discard <campaign>                 # abandon the draft
 ```
 
-The draft lives in `.orchestration/campaigns/<slug>/plan.yml`; the previous revision is `plan.prev.yml`; the applied plan is `plan.applied.yml` plus `plan.applied.json` (hash, time, ticket ids). Multiline fields are literal block scalars (`|-`, `|`, `|+`) so the stored plan and `plan show --applied` stay readable and round-trip exactly. `plan draft` prints two deltas:
+The draft lives in `.orchestration/campaigns/<slug>/plan.yml`; the previous revision is `plan.prev.yml`; the applied plan is `plan.applied.yml` plus `plan.applied.json` (hash, time, ticket ids, coverage). Multiline fields are literal block scalars (`|-`, `|`, `|+`) so the stored plan and `plan show --applied` stay readable and round-trip exactly. `plan draft` prints two deltas:
 
 - **since your last draft** — what the agent just changed after the human's message;
 - **apply will change** — the draft against the applied graph. A ticket marked `-` remains on disk unless `plan import --prune` is used.
 
 That is the fine-tuning loop: the human says “split 02”, “drop docs”, “block 03 on 01”; the agent edits the draft, runs `plan draft`, and presents only the delta. `plan import` is only run after an explicit “apply”.
 
-For an explicit request whose draft has no open questions and no blocking warning, `plan import --submit` applies the plan and runs a tick; when the campaign is `plan_gate: auto`, the supervisor approves without another human turn. With `plan_gate: human`, the tick leaves it `awaiting_approval` for one decision. `plan draft --verbose` adds informational warnings such as a ticket with no sources; the default output carries only actionable ones.
+For an explicit request whose draft has no open questions and no blocking warning, `plan import --submit` applies the plan and runs a tick; when the campaign is `plan_gate: auto`, the supervisor approves without another human turn. With `plan_gate: human`, `approve` is the one decision: it applies the clean draft atomically, preflights the binding/catalog validation, and approves. It refuses a draft with an error, an open question, blocking fragmentation, or a failed preflight, and writes nothing. `plan draft --verbose` adds informational warnings such as a ticket with no sources; the default output carries only actionable ones.
 
 ```yaml
 version: 1
@@ -78,6 +79,7 @@ tickets:
     touches: [src/store/**]
     what: Append and read entries.
     accept: [A note survives a restart]
+    covers: [The shell starts in under 200 ms]
     sources: [README.md, notes/interview.md]
   - key: cli
     title: CLI slice
@@ -86,10 +88,11 @@ tickets:
     touches: [src/cli/**]
     what: Add and list commands.
     accept: [add prints added]
+    covers: [The shell starts in under 200 ms]
     sources: [README.md]
 ```
 
-`assumptions` is required: an empty list is allowed, but the agent must state what it inferred. `open_questions` blocks `plan import` unless `--accept-open` is passed; `sources` is written to the ticket frontmatter and shown in the drawer.
+`assumptions` is required: an empty list is allowed, but the agent must state what it inferred. `open_questions` blocks `plan import` unless `--accept-open` is passed; `sources` is written to the ticket frontmatter and shown in the drawer. `covers` is optional and must exactly match a campaign criterion after whitespace normalization; a ticket may cover several criteria, and a criterion may be covered by several tickets. Missing coverage is a warning, not a gate. Duplicate campaign criteria and unknown `covers` entries are plan errors. `touches` may not match `.git/`, `.orchestration/`, `.env*`, `secrets/`, `id_rsa*`, or the campaign's own `orchestration/<slug>/` files; those paths are not a worker's to edit.
 
 Plans are capped at **16 tickets**; above **8** is a review warning. A ticket with one touched path and one acceptance criterion is a *small slice*. Four or more small slices making up at least half the plan is fragmentation: `plan import` refuses unless `--accept-fragmented` is passed. The draft also warns about merge candidates (same or nested paths behind a dependency) and a single serial chain of four or more tickets. Each ticket costs a work run plus a review run, so a 6-ticket plan is at least 12 model runs before retries.
 
@@ -97,7 +100,7 @@ Plans are capped at **16 tickets**; above **8** is a review warning. A ticket wi
 
 Older campaigns imported before `plan.applied.json` existed derive the same audit from the ticket graph; the panel labels it **derived from tickets**, and `plan audit <campaign> --write` persists it.
 
-`plan draft` and `plan import` are refused while a campaign is running, delivered or archived; there is no `--force`. Pausing is the only route. A plan change to a paused campaign still needs a fresh `approve`, and `approve` refuses while a draft is unapplied. The plan is frozen at approval: editing the brief or tickets under live work changes the shared worker prompt prefix and invalidates prompt-cache hits. Raw context is not injected into every worker prompt; the agent distills the relevant parts into the brief and each ticket's notes.
+`plan draft` and `plan import` are refused while a campaign is running, delivered or archived; there is no `--force`. Pausing is the only route. A plan change to a paused campaign still needs a fresh `approve`: a clean draft is applied and approved in one command, and an unclean draft writes nothing. The plan is frozen at approval: editing the brief or tickets under live work changes the shared worker prompt prefix and invalidates prompt-cache hits. Raw context is not injected into every worker prompt; the agent distills the relevant parts into the brief and each ticket's notes.
 
 ## A run
 
@@ -134,6 +137,23 @@ ACP harnesses report token usage on the prompt response and no dollar cost. The 
   "run": "r-20261109T1803-03-a1",
   "status": "ready",
   "summary": "One paragraph, in the past tense, of what is now true.",
+  "acceptance": [
+    {
+      "criterion": "add prints added",
+      "status": "passed",
+      "evidence": "ran `node cli.mjs add x`; stdout was `added`"
+    }
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "blocker",
+      "file": "src/cli/add.ts",
+      "line": 42,
+      "problem": "argv is sliced twice, so the final argument is lost.",
+      "requiredFix": "Slice argv once before parsing; add a regression test."
+    }
+  ],
   "question": { "text": "...", "options": ["..."], "default": "..." },
   "checks": [{ "name": "typecheck", "ok": true }],
   "touched": ["src/api/users.ts"],
@@ -143,7 +163,7 @@ ACP harnesses report token usage on the prompt response and no dollar cost. The 
 
 | Status | Requires | Meaning |
 | --- | --- | --- |
-| `ready` | `summary` | The acceptance criteria hold. This is a request for gates, never a claim of done |
+| `ready` | `summary`, and `acceptance` on a v2 work run | The acceptance criteria hold, each with evidence. This is a request for gates, never a claim of done |
 | `needs_answer` | `question.text` | One decision is missing and no written source provides it |
 | `blocked` | `summary` | Something outside the ticket stops it: a missing credential, a broken dependency, an ambiguous requirement |
 | `failed` | `summary` | The worker tried and could not. Its log holds the evidence |
@@ -156,6 +176,10 @@ Rules:
 - `checks` is evidence, not authority. The supervisor runs the campaign's checks itself and ignores the worker's claim when they disagree, which is the point.
 - `touched` may narrow or widen `touches`, and it updates the conflict map for scheduling.
 - A status is never inferred from prose. A run whose final message says "I need you to decide" but whose report says `ready` is `ready`.
+- A new work run has `policyVersion: 2`. Its `ready` report needs exactly one result for every ticket `accept` criterion, matched by exact text after trimming; every result must be `passed`. Missing, duplicate, unknown, or failed-as-ready results invalidate the report, which is collected as `failed` with the validation error attached.
+- A review report has structured `findings`: `id`, `severity` (`low`, `medium`, `high`, `blocker`), `problem`, `requiredFix`, optional `file` and `line`. `ready` may carry low/medium findings; any high/blocker finding means `failed`. A `failed` review needs at least one high/blocker finding.
+- `report.mjs --acceptance-file <path>` and `--findings-file <path>` read JSON arrays from the system temp directory; the files are read, not copied into the worktree.
+- Runs started before the upgrade have no `policyVersion`; their old report shape remains valid. The compatibility path never retroactively fails a parked campaign.
 
 ## Slots
 
@@ -200,17 +224,20 @@ Standing decisions are the third source: the campaign's `decisions.jsonl` plus t
 
 ## Gates
 
-A `ready` report triggers three gates, in order, before a ticket can reach `done`.
+A `ready` report triggers four gates, in order, before a ticket can reach `done`.
 
-1. **Checks.** The supervisor runs every entry in the campaign's `checks` in the ticket's worktree, capturing exit code and the last lines of output. One failure is enough to send the ticket to `needs_changes`, with the failing output as the findings.
-2. **Drift.** The supervisor lists the files the ticket branch changed against the integration branch. With `landing: directory` there is no branch, so the ticket's first run snapshots the tree and each later run compares against that snapshot. No files means the work was never committed. A file outside the ticket's `touches` means the change escaped the promise the scheduler used to decide what could run beside it. Either sends the ticket back with the file named.
-3. **Review.** A `review` kind run with fresh context reads the diff against `base` (branch landing) or the changed files (directory landing), plus the ticket and the acceptance criteria. It reports `ready` when it has no blocking finding, or `failed` with findings when it does.
+1. **Acceptance.** A v2 work report must carry one passed result for every ticket criterion. Missing or failed evidence is a failed report, not a partial pass.
+2. **Checks.** The supervisor runs every entry in the campaign's `checks` in the ticket's worktree, capturing exit code and the last lines of output. One failure is enough to send the ticket to `needs_changes`, with the failing output as the findings.
+3. **Drift.** The supervisor lists the files the ticket branch changed against the integration branch. With `landing: directory` there is no branch, so the ticket's first run snapshots the tree and each later run compares against that snapshot. No files means the work was never committed. A file outside the ticket's `touches` means the change escaped the promise the scheduler used to decide what could run beside it. Either sends the ticket back with the file named.
+4. **Review.** A `review` kind run with fresh context reads the diff against `base` (branch landing) or the changed files (directory landing), plus the ticket and the acceptance criteria. It reports `ready` with no high/blocker finding, or `failed` with at least one high/blocker finding.
 
-A gate run reports its verdict in its own report: `ready` means no blocking finding; `failed` means the findings are in `summary`, which is attached to the ticket verbatim. A gate run that dies without a report fails the ticket rather than passing it, because a broken reviewer must never be mistaken for a clean one.
+At review start the supervisor records `reviewedHead` (the ticket branch HEAD) and `reviewedBase` (the integration head), and records them on the run and the `gate.review` event. A `ready` report re-reads the branch HEAD before landing and again immediately before the merge; a mismatch parks the ticket as `failed` with one failure item, because a pass applies to a revision, not a ticket id. Directory landing has no commit and records file-based review evidence instead.
 
-A failed gate sets `needs_changes`, attaches the findings, and redispatches in the **same worker session** as the changes request. Three gate cycles without passing escapes to a person, because a loop that fails three times is a spec problem.
+A gate run reports its verdict in its own report. Structured findings are attached to the ticket and used verbatim in the resume prompt; a gate run that dies without a report fails the ticket rather than passing it, because a broken reviewer must never be mistaken for a clean one. A `failed` review without high/blocker findings is invalid and is collected as a failed gate, not a pass.
 
-Bind `review` to a different model than the work kinds. The reviewer that grades its own work is not a gate, and the panel shows which model reviewed what. Approval refuses a review chain whose first model matches a work kind's first model.
+A failed gate sets `needs_changes`, attaches the findings, and redispatches in the **same worker session** as the changes request. Three gate cycles without passing escapes to a person, because a loop that fails three times is a spec problem. No repair ticket is created.
+
+Bind `review` to a different model than the work kinds. The reviewer that grades its own work is not a gate, and the panel shows which model reviewed what. Approval refuses a review chain whose first model matches a work kind's first model. If fallback makes the actual review model equal the actual work model, the supervisor prefers another usable chain entry; if none exists it proceeds and records a warning on the gate, the panel and CLOSE.
 
 ## Landing
 
@@ -218,11 +245,15 @@ Bind `review` to a different model than the work kinds. The reviewer that grades
 
 Once a ticket is `done` or `dropped`, its worktree is removed (`worktree.removed` in the ledger) and its branch is kept. Done is terminal; the branch is the exact pointer and the integration branch already holds the merge. A failed or sent-back ticket keeps its worktree for the retry.
 
-Delivery also writes `orchestration/<campaign>/CLOSE.md`: landed and dropped tickets, per-ticket model, cost and attempts, the decisions, the checks, and what needed more than one try.
+Delivery also writes `orchestration/<campaign>/CLOSE.md`: landed and dropped tickets, per-ticket model, cost and attempts, the decisions, the checks, and what needed more than one try. Its Quality section records the integration result and head, the reviewed commits, finding counts, and coverage.
 
 Delivery removes any remaining ticket worktree checkouts but keeps every `orch/<slug>/<ticket>` branch, `orch/<slug>/integration`, and the `_integration` worktree. The integration branch is the delivery pointer: a manual delivery can be opened as a PR from that branch into `base`, or approved as a local merge. After the integration branch is in `base`, `orchestrate cleanup <campaign> --dry-run` previews the branches and worktree that would be removed; without `--dry-run`, cleanup deletes every ticket branch, the integration branch, and the integration worktree. The base checkout is never removed. A decision whose declared paths no longer exist is retired as `paths-removed`.
 
-A campaign delivers when every ticket is `done` or `dropped`: one result from the integration branch to `base`, by pull request when the base is a protected branch, or by fast-forward when the campaign is `trusted` and the diff is under `max_autoship_lines`.
+A campaign is delivered only when every ticket is `done` or `dropped`, the delivery audit has no blockers, and (branch landing) the campaign checks pass on the final `_integration` tip. The integration check runs once per head, records `state.integration` and a `gate.integration` event, and turns a failure into one paused campaign plus one failure item; it never auto-creates repair work. Resume clears a failed observation so the same head gets one fresh check, and a repeated failure at that head does not spawn a duplicate item.
+
+The delivery audit adds: a done ticket must have a passing review; a v2 pass must match the current ticket branch HEAD; branch landing needs a passing integration check at the current head; plan errors block. Warnings are uncovered campaign criteria, low/medium findings, and a review by the same actual model as the work. A legacy passing review without `reviewedHead` is an `unbound review` warning, not a blocker.
+
+Delivery then makes one result from the integration branch to `base`, by pull request when the base is a protected branch, or by fast-forward when the campaign is `trusted` and the diff is under `max_autoship_lines`. A manual delivery review item includes the audit summary and the reviewed commits.
 
 Approving a delivery item is a merge attempt, not a receipt. If the merge cannot happen — a dirty checkout, a moved base, a conflict — the item stays open, the reason is recorded as `delivery.blocked`, and the same approval can be retried after the cause is fixed.
 
@@ -242,10 +273,10 @@ The close report and History count the human actions a campaign cost: approvals,
 {"ts":"2026-11-09T18:03:11Z","campaign":"pocket-museum-v4","ticket":"03","run":"r-...-a1","type":"run.reported","data":{"status":"ready","cost":0.42,"tokens":18422}}
 ```
 
-Types: `campaign.created`, `plan.drafted`, `campaign.approved`, `campaign.paused`, `campaign.resumed`, `campaign.delivered`, `ticket.added`, `ticket.stage`, `run.dispatched`, `run.reported`, `run.exited`, `run.retried`, `run.stopped`, `gate.check`, `gate.review`, `question.answered`, `inbox.opened`, `inbox.answered`, `merge.done`, `merge.conflict`, `worktree.removed`, `worktrees.pruned`, `branches.cleaned`, `delivery.blocked`, `delivery.rejected`, `dispatch.paused`, `dispatch.resumed`, `spend.recorded`, `error`.
+Types: `campaign.created`, `plan.drafted`, `plan.applied`, `campaign.approved`, `campaign.paused`, `campaign.resumed`, `campaign.delivered`, `ticket.added`, `ticket.stage`, `ticket.amended`, `ticket.edited`, `run.dispatched`, `run.reported`, `run.exited`, `run.retried`, `run.stopped`, `gate.check`, `gate.review`, `gate.integration`, `question.answered`, `inbox.opened`, `inbox.answered`, `merge.done`, `merge.conflict`, `worktree.removed`, `worktrees.pruned`, `branches.cleaned`, `delivery.blocked`, `delivery.rejected`, `dispatch.paused`, `dispatch.resumed`, `spend.recorded`, `error`. `gate.review` carries `reviewedHead` and the finding count; `gate.integration` carries the head, result and check summary; `delivery.blocked` carries the blockers.
 
 Every event carries the campaign and, where it applies, the ticket and run. A system-wide error carries neither. The ledger is never rewritten; a correction is a new event that names what it supersedes.
 
 ## State
 
-`.orchestration/<campaign>/state.json` holds what must survive a restart and must never be hand-edited: each ticket's stage and attempt count, live runs with their pids, session ids and bound model, slot occupancy, spend totals, and the pause reason. It is derived state: if it is lost, it can be rebuilt from the ledger and the reports, and `tick` rebuilds it rather than failing.
+`.orchestration/<campaign>/state.json` holds what must survive a restart and must never be hand-edited: each ticket's stage and attempt count, live runs with their pids, session ids and bound model, slot occupancy, spend totals, and the pause reason. It also stores the ticket's last acceptance results and findings, the reviewed revision and models, and the campaign's `integration` and `deliveryAudit` observations. It is derived state: if it is lost, it can be rebuilt from the ledger and the reports, and `tick` rebuilds it rather than failing.

@@ -17,11 +17,16 @@ A finding names a file, the concrete failure it causes, and what would fix it. S
 
 ## Finishing
 
-- No blocking finding: report `ready` with a one-line summary of what you checked.
-- Any blocking finding: report `failed`, and put a numbered list in `--summary`, each entry naming file, problem, and fix.
+A pass is bound to the revision you reviewed: **{{REVIEWED_HEAD}}**.
+
+{{FINDINGS_RULE}}
+
+- No high/blocker finding: report `ready` with a one-line summary of what you checked.
+- Any high/blocker finding: report `failed` and list every finding in `--findings-file`.
+- Low/medium findings on a pass are recorded as warnings and do not block.
 
 ```
-{{REPORT_CMD}} --status ready --summary "No blocking findings."
+{{REPORT_CMD}} --status ready --summary "No blocking findings." --findings-file /tmp/findings.json
 ```
 
 You do not edit files. You do not commit. The direction is read-only to you.

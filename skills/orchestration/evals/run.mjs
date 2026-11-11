@@ -112,7 +112,11 @@ check("eval 6 — a supervised campaign waits for a person and does not merge", 
   );
   writeTicket(dir, "demo", "01-a.md", { id: "01", kind: "code", touches: ["work-01.txt"] }, "## What to build\n\nA.\n\n## Acceptance criteria\n\n- [ ] A.");
   commitAll(dir);
-  fs.writeFileSync(process.env.FAKE_SCENARIO, JSON.stringify({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] }));
+  const acceptance = [{ criterion: "A.", status: "passed", evidence: "fixture ran the check" }];
+  fs.writeFileSync(
+    process.env.FAKE_SCENARIO,
+    JSON.stringify({ work: [{ status: "ready", summary: "wrote it", acceptance }], review: [{ status: "ready", summary: "clean" }] }),
+  );
   cli(dir, ["tick"]);
   for (let i = 0; i < 40; i++) cli(dir, ["tick"]);
   const status = cli(dir, ["status", "demo"]).out;
@@ -171,6 +175,8 @@ tickets:
   assert(draft.status === 0, draft.out);
   const drafted = JSON.parse(draft.out);
   assert(drafted.hash && drafted.plan.tickets.length === 2, "the draft has a hash and both tickets");
+  assert(drafted.coverage.total === 1 && drafted.coverage.claimed === 0, "the draft reports coverage");
+  assert(/coverage: 0\/1 criteria claimed; missing: notes can be added/.test(drafted.coverageText), "missing coverage is named");
   assert(fs.existsSync(path.join(dir, ".orchestration", "campaigns", "notes", "plan.yml")), "plan.yml was written");
   assert(!fs.existsSync(path.join(dir, "orchestration", "notes", "tickets", "01-storage-slice.md")), "tickets are untouched before apply");
 
@@ -198,6 +204,99 @@ tickets:
   assert(body.tickets[1].blocked_by[0] === body.tickets[0].id, "blocked_by resolves by key");
   assert(fs.existsSync(path.join(dir, ".orchestration", "campaigns", "notes", "plan.applied.json")), "the applied audit was written");
   assert(!fs.existsSync(path.join(dir, ".orchestration", "campaigns", "notes", "plan.yml")), "the draft was cleared after apply");
+});
+
+/* eval 8/9: a one-ticket plan and a four-ticket plan both report coverage */
+check("eval 8 — one ticket and four tickets report their count and coverage", () => {
+  const dir = fresh();
+  writeConsole();
+  cli(dir, ["init"]);
+  cli(dir, ["start", "Coverage", "--campaign", "coverage"]);
+  const box = path.dirname(dir);
+  const one = path.join(box, "one.yml");
+  fs.writeFileSync(
+    one,
+    `version: 1
+goal: One outcome
+brief: B
+criteria: [the outcome holds]
+assumptions: []
+tickets:
+  - key: only
+    title: Only
+    kind: code
+    touches: [src/only/**]
+    what: Do it.
+    accept: [It holds]
+    covers: [the outcome holds]
+`,
+  );
+  const oneDraft = cli(dir, ["plan", "draft", "coverage", "--file", one, "--json"]);
+  assert(oneDraft.status === 0, oneDraft.out);
+  const oneBody = JSON.parse(oneDraft.out);
+  assert(oneBody.plan.tickets.length === 1, "one ticket stays one ticket");
+  assert(oneBody.coverage.claimed === 1 && oneBody.coverage.total === 1, "the one ticket covers the criterion");
+
+  const four = path.join(box, "four.yml");
+  fs.writeFileSync(
+    four,
+    `version: 1
+goal: Four outcomes
+brief: B
+criteria: [the shared outcome holds]
+assumptions: []
+tickets:
+${["a", "b", "c", "d"]
+  .map(
+    (key) => `  - key: ${key}
+    title: ${key.toUpperCase()}
+    kind: code
+    touches: [src/${key}/**]
+    what: Do ${key}.
+    accept: [${key} holds, ${key} stays]
+`,
+  )
+  .join("")}`,
+  );
+  const fourDraft = cli(dir, ["plan", "draft", "coverage", "--file", four, "--json"]);
+  assert(fourDraft.status === 0, fourDraft.out);
+  const fourBody = JSON.parse(fourDraft.out);
+  assert(fourBody.plan.tickets.length === 4, "four tickets stay four tickets");
+  assert(fourBody.coverage.claimed === 0 && fourBody.coverage.total === 1, "missing coverage is visible");
+  assert(/missing: the shared outcome holds/.test(fourBody.coverageText), "the missing criterion is named");
+});
+
+/* eval 10: a ready report without acceptance evidence cannot reach done */
+check("eval 10 — a ready report without acceptance evidence fails the ticket", () => {
+  const dir = fresh();
+  writeConsole();
+  writeCampaign(
+    dir,
+    "demo",
+    {
+      campaign: "demo",
+      stage: "running",
+      autonomy: "trusted",
+      plan_gate: "human",
+      landing: "branch",
+      base: "main",
+      checks: [{ name: "ok", cmd: "true" }],
+      budget: { tokens: null, dollars: null },
+      max_autoship_lines: 200,
+      kinds: { code: { models: [{ model: MODELS.strong, thinking: "high" }] }, review: { models: [{ model: MODELS.backup, thinking: "high" }] } },
+    },
+    BODY,
+  );
+  writeTicket(dir, "demo", "01-a.md", { id: "01", kind: "code", touches: ["work-01.txt"] }, "## What to build\n\nA.\n\n## Acceptance criteria\n\n- [ ] A.");
+  commitAll(dir);
+  fs.writeFileSync(process.env.FAKE_SCENARIO, JSON.stringify({ work: [{ status: "ready", summary: "trust me" }], review: [{ status: "ready", summary: "clean" }] }));
+  cli(dir, ["tick"]);
+  for (let i = 0; i < 20; i++) cli(dir, ["tick"]);
+  const status = cli(dir, ["status", "demo"]).out;
+  assert(/failed/.test(status), `the ticket did not fail: ${status.slice(0, 200)}`);
+  const inbox = cli(dir, ["inbox"]).out;
+  assert(/acceptance is required for a ready report/.test(inbox), "the validation error is attached");
+  assert(!fs.existsSync(path.join(dir, "work-01.txt")), "nothing landed");
 });
 
 for (const result of results) {

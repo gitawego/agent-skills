@@ -1047,12 +1047,12 @@ function openCampaignButton() {
 function nextActionBlock(c) {
   const action = c.nextAction || { actor: "none", text: "", command: null };
   const label = { you: "You", supervisor: "Supervisor", worker: "Worker", none: "Closed" }[action.actor] || action.actor;
-  const approve = c.stage === "awaiting_approval" && !c.draft?.exists && !(c.planErrors || []).length;
+  const approve = c.draft?.clean || (c.stage === "awaiting_approval" && !c.draft?.exists && !(c.planErrors || []).length);
   return `<section class="next-action" data-actor="${esc(action.actor)}">
     <span class="actor">${esc(label)}</span>
     <span class="text">${esc(action.text)}</span>
     ${action.command ? `<code>${esc(action.command)}</code><button class="btn ghost" data-act="copy" data-command="${esc(action.command)}" aria-label="Copy next command">Copy</button>` : ""}
-    ${approve ? `<button class="btn primary" data-act="approve-campaign" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Approve</button>` : ""}
+    ${approve ? `<button class="btn primary" data-act="approve-campaign" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">${c.draft?.exists ? "Approve and run" : "Approve"}</button>` : ""}
   </section>`;
 }
 
@@ -1076,6 +1076,13 @@ function campaignHeader(c) {
   const slots = c.tickets.filter((t) => t.stage === "working").length;
   const meter = Array.from({ length: cap }, (_, i) => `<i class="${i < slots ? "on" : ""}"></i>`).join("");
   const goal = (c.goal || "").trim();
+  const reviewed = c.tickets.filter((ticket) => ticket.reviewedHead);
+  const reviewedChip = reviewed.length
+    ? `<span class="quality-chip" title="${esc(reviewed.map((ticket) => `${ticket.id}@${ticket.reviewedHead}`).join(", "))}">reviewed ${esc(reviewed[reviewed.length - 1].reviewedHead.slice(0, 8))}${reviewed.length > 1 ? ` +${reviewed.length - 1}` : ""}</span>`
+    : "";
+  const integration = c.integration
+    ? `<span class="quality-chip" data-state="${esc(c.integration.status)}">integration ${esc(c.integration.status)}${c.integration.head ? ` ${esc(c.integration.head.slice(0, 8))}` : ""}</span>`
+    : "";
   return `<div class="campaign-head">
       <div class="eyebrow">${esc(c.project)} / ${esc(c.slug)} · ${esc(c.stage)}</div>
       <h1>${esc(goal || c.slug)}</h1>
@@ -1083,6 +1090,8 @@ function campaignHeader(c) {
     <div class="campaign-meta">
       <span class="meter" title="${slots} of ${cap} slots busy">${meter}<b>${slots}/${cap}</b> slots</span>
       <span>${c.tickets.length} ticket${c.tickets.length === 1 ? "" : "s"}${c.draft?.tickets ? ` · ${c.draft.tickets} draft` : ""}</span>
+      ${reviewedChip}
+      ${integration}
       <span>${num(c.spend.tokens)} tok · ${usd(c.spend.dollars)}${c.spend.unmetered ? ` · ${esc(c.spend.unmetered)} unmetered` : ""}</span>
       <span>${c.cacheHit == null ? "cache —" : `${(c.cacheHit * 100).toFixed(1)}% cached`}</span>
       <span class="spacer"></span>
@@ -1118,6 +1127,19 @@ function stageCounts(c) {
     .join("");
 }
 
+function coverageMatrix(coverage) {
+  if (!coverage?.matrix?.length) return `<p class="hint">${esc(coverage?.text || "coverage: no campaign criteria")}</p>`;
+  return `<table class="coverage-table">
+    <thead><tr><th>Criterion</th><th>Tickets</th></tr></thead>
+    <tbody>${coverage.matrix
+      .map(
+        (row) => `<tr data-missing="${row.tickets.length ? "false" : "true"}"><td>${esc(row.criterion)}</td><td class="mono">${esc(row.tickets.join(", ") || "—")}</td></tr>`,
+      )
+      .join("")}</tbody>
+  </table>
+  <p class="hint">${esc(coverage.text)}</p>`;
+}
+
 function draftBlock(c) {
   if (!c.draft?.exists) return "";
   const draft = c.draft;
@@ -1130,11 +1152,15 @@ function draftBlock(c) {
       : merges
         ? `${merges} merge candidate${merges === 1 ? "" : "s"}`
         : "";
+  const blockers = draft.blockers || [];
   return `<section class="draft-plan">
     <div class="eyebrow">draft plan · not applied</div>
     <strong>${draft.error ? "Invalid draft" : `${draft.tickets} ticket${draft.tickets === 1 ? "" : "s"}`}</strong>
     <span class="hint">${esc(draft.hash || "")}${draft.updatedAt ? ` · ${esc(clockOf(draft.updatedAt))}` : ""}${draft.openQuestions ? ` · ${draft.openQuestions} open question${draft.openQuestions === 1 ? "" : "s"}` : ""}</span>
     ${sizing ? `<span class="warn">${esc(sizing)}</span>` : ""}
+    ${blockers.length ? `<p class="warn">${esc(blockers.join("; "))}</p>` : ""}
+    ${coverageMatrix(draft.coverage)}
+    ${draft.clean ? `<button class="btn primary" data-act="approve-campaign" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Approve and run</button>` : ""}
     ${commandRow("Review in your agent", `orchestrate plan diff ${c.slug}`)}
     ${commandRow("Inspect the draft", `orchestrate plan show ${c.slug}`)}
     ${draft.error ? `<p class="hint">${esc(draft.error)}</p>` : ""}
@@ -1162,6 +1188,7 @@ function appliedBriefing(c) {
   return `<div class="briefing">
     ${docBlock("Brief", c.brief)}
     ${docBlock("Acceptance criteria", c.criteria)}
+    <section class="doc-block"><h2>Coverage</h2>${coverageMatrix(c.coverage)}</section>
     ${contextBlock(c)}
     ${docBlock("Assumptions", c.assumptions, "No assumptions recorded.")}
     ${c.openQuestions ? docBlock("Open questions", c.openQuestions) : ""}
@@ -1175,10 +1202,10 @@ function draftTickets(c) {
   return `<section class="draft-tickets">
     <header><span class="eyebrow">draft tickets · not applied</span><span class="hint">${c.draft.ticketsList.length} ticket${c.draft.ticketsList.length === 1 ? "" : "s"} · key is the stable identity</span></header>
     <table class="ticket-table">
-      <thead><tr><th>Key</th><th>Title</th><th>Kind</th><th>Blocked by</th></tr></thead>
+      <thead><tr><th>Key</th><th>Title</th><th>Kind</th><th>Blocked by</th><th>Covers</th></tr></thead>
       <tbody>${c.draft.ticketsList
         .map(
-          (ticket) => `<tr><td class="mono" data-label="Key">${esc(ticket.key)}</td><td class="title" data-label="Title">${esc(ticket.title)}</td><td class="mono" data-label="Kind">${esc(ticket.kind)}</td><td class="mono" data-label="Blocked by">${esc((ticket.blocked_by || []).join(", ") || "—")}</td></tr>`,
+          (ticket) => `<tr><td class="mono" data-label="Key">${esc(ticket.key)}</td><td class="title" data-label="Title">${esc(ticket.title)}</td><td class="mono" data-label="Kind">${esc(ticket.kind)}</td><td class="mono" data-label="Blocked by">${esc((ticket.blocked_by || []).join(", ") || "—")}</td><td class="mono" data-label="Covers">${esc((ticket.covers || []).join("; ") || "—")}</td></tr>`,
         )
         .join("")}</tbody>
     </table>
@@ -1887,6 +1914,36 @@ function openTicket(root, slug, ticketId) {
   startLog(c, t);
 }
 
+function findingsHtml(findings) {
+  if (!findings) return `<p class="hint">No findings recorded.</p>`;
+  if (typeof findings === "string") return `<pre class="log">${esc(findings)}</pre>`;
+  const order = ["blocker", "high", "medium", "low"];
+  return order
+    .map((severity) => {
+      const rows = findings.filter((finding) => finding.severity === severity);
+      if (!rows.length) return "";
+      return `<h3>${esc(severity)} <span class="hint">${rows.length}</span></h3><ul>${rows
+        .map(
+          (finding) =>
+            `<li><span class="mono">[${esc(finding.id)}]</span> ${esc(finding.file || "")}${finding.line ? `:${esc(finding.line)}` : ""}<br>${esc(finding.problem)}<br><em>Required: ${esc(finding.requiredFix)}</em></li>`,
+        )
+        .join("")}</ul>`;
+    })
+    .join("");
+}
+
+function acceptanceHtml(t) {
+  if (!Array.isArray(t.acceptance) || !t.acceptance.length) {
+    return `<p class="hint">No acceptance evidence recorded yet.</p>`;
+  }
+  return `<table class="evidence-table"><thead><tr><th>Criterion</th><th>Status</th><th>Evidence</th></tr></thead><tbody>${t.acceptance
+    .map(
+      (result) =>
+        `<tr data-status="${esc(result.status)}"><td>${esc(result.criterion)}</td><td>${esc(result.status)}</td><td>${esc(result.evidence || "—")}</td></tr>`,
+    )
+    .join("")}</tbody></table>`;
+}
+
 function drawerHtml(c, t) {
   const runs = (c.runs || []).filter((r) => r.ticket === t.id).reverse();
   const latest = runs[0];
@@ -1920,7 +1977,20 @@ function drawerHtml(c, t) {
     ${(t.attachments || []).length ? `<h2>Attached files</h2><div class="doc">${(t.attachments || []).map((p) => `· ${esc(p)}`).join("\n")}</div>` : ""}
     ${(t.sources || []).length ? `<h2>Sources</h2><div class="doc">${(t.sources || []).map((p) => `· ${esc(p)}`).join("\n")}</div>` : ""}
     ${t.answer ? `<h2>Last answer</h2><div class="doc">${esc(t.answer.text)}${t.answer.citation ? `\n${esc(t.answer.citation)}` : ""}</div>` : ""}
-    ${t.findings ? `<h2>Findings</h2><pre class="log">${esc(t.findings)}</pre>` : ""}
+    <details class="evidence">
+      <summary>Evidence <span class="hint">acceptance, findings, reviewed revision</span></summary>
+      <h3>Acceptance</h3>
+      ${acceptanceHtml(t)}
+      <h3>Findings</h3>
+      ${findingsHtml(t.findings)}
+      <dl class="evidence-meta">
+        <dt>gate cycles</dt><dd>${esc(t.gateCycles || 0)}</dd>
+        <dt>review model</dt><dd class="mono">${esc(t.reviewModel || "—")}</dd>
+        <dt>worker model</dt><dd class="mono">${esc(t.workerModel || "—")}</dd>
+        <dt>reviewed</dt><dd class="mono">${esc(t.reviewedHead ? t.reviewedHead.slice(0, 8) : "—")}${t.reviewStale ? " (stale)" : ""}</dd>
+        <dt>integration</dt><dd>${esc(c.integration ? `${c.integration.status}${c.integration.head ? ` ${c.integration.head.slice(0, 8)}` : ""}` : "not run")}</dd>
+      </dl>
+    </details>
     <h2>Runs</h2>
     <table><thead><tr><th>Run</th><th>Role</th><th>Model</th><th>Report</th><th class="num">Cost</th></tr></thead><tbody>
       ${runs

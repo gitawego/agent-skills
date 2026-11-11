@@ -26,6 +26,8 @@ if (entry.question) report.question = entry.question;
 if (entry.next) report.next = entry.next;
 if (entry.touched) report.touched = entry.touched;
 if (entry.checks) report.checks = entry.checks;
+if (entry.acceptance) report.acceptance = entry.acceptance;
+if (entry.findings) report.findings = entry.findings;
 
 if (report.status === "ready" && role === "work") {
   const ticket = process.env.ORCH_TICKET;

@@ -5,6 +5,7 @@ import { UserError, campaignPlanDir, ensureDir, exists, git, isGitRepo, pad2, re
 import { loadConsole, readCampaign, resolveKinds } from "./config.mjs";
 import { asArray, loadPlan, ticketsDir, ticketTitle } from "./plan.mjs";
 import { joinFrontmatter } from "./yaml.mjs";
+import { normalizeCovers } from "./evidence.mjs";
 
 export function slugify(text) {
   return (
@@ -96,6 +97,27 @@ function writeTicketFile(file, data, body) {
   fs.writeFileSync(file, joinFrontmatter(data, body));
 }
 
+function campaignCriteria(root, slug) {
+  const campaign = readCampaign(root, slug);
+  return String(campaign.sections["acceptance criteria"] || "")
+    .split("\n")
+    .map((line) => line.match(/^\s*-\s*\[( |x|X)\]\s*(.+)$/))
+    .filter(Boolean)
+    .map((match) => match[2].trim());
+}
+
+function checkedCovers(root, slug, value, label = "ticket") {
+  if (value === undefined) return null;
+  const checked = normalizeCovers(value, campaignCriteria(root, slug), label);
+  if (checked.errors.length) {
+    throw new UserError(`Invalid coverage claim`, [
+      ...checked.errors,
+      "Every `covers` entry must exactly match a campaign criterion after whitespace normalization.",
+    ]);
+  }
+  return checked.covers;
+}
+
 function ticketBody({ title, what, criteria }) {
   return [
     `# ${title}`,
@@ -143,6 +165,11 @@ export function editTicket({ root, slug, id, patch = {} }) {
     if (images.length) data.attachments = images;
     else delete data.attachments;
   }
+  if (patch.covers !== undefined) {
+    const covers = checkedCovers(root, slug, patch.covers);
+    if (covers.length) data.covers = covers;
+    else delete data.covers;
+  }
   delete data.title;
   const title = String(patch.title || ticketTitle(ticket)).trim();
   const what = patch.what !== undefined ? patch.what : ticket.what;
@@ -175,7 +202,18 @@ export function removeTicket({ root, slug, id }) {
   return { id: ticket.data.id, file: ticket.file };
 }
 
-export function addTicket({ root, slug, title, kind, blockedBy = [], touches = [], attachments = [], what, criteria = [] }) {
+export function addTicket({
+  root,
+  slug,
+  title,
+  kind,
+  blockedBy = [],
+  touches = [],
+  attachments = [],
+  what,
+  criteria = [],
+  covers = [],
+}) {
   const campaign = readCampaign(root, slug);
   const name = String(title || "").trim();
   if (!name) throw new UserError("A ticket needs a title");
@@ -193,6 +231,7 @@ export function addTicket({ root, slug, title, kind, blockedBy = [], touches = [
   const images = (Array.isArray(attachments) ? attachments : String(attachments).split(","))
     .map((a) => String(a).trim())
     .filter(Boolean);
+  const claimed = checkedCovers(root, slug, covers, `ticket "${name}"`);
 
   const id = nextTicketId(root, slug);
   const dir = ticketsDir(root, slug);
@@ -201,6 +240,7 @@ export function addTicket({ root, slug, title, kind, blockedBy = [], touches = [
   const data = { id, kind, touches: paths };
   if (blockers.length) data.blocked_by = blockers;
   if (images.length) data.attachments = images;
+  if (claimed.length) data.covers = claimed;
   const body = [
     `# ${name}`,
     "",

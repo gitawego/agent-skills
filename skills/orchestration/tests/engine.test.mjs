@@ -4,9 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { sandbox, project, writeConsole, writeCampaign, writeTicket, commitAll, scenario, sleep, gitOut, MODELS } from "./helpers.mjs";
-import { tick, applyCommand } from "../scripts/lib/engine.mjs";
+import { tick, applyCommand, deliveryAudit } from "../scripts/lib/engine.mjs";
 import { campaignView } from "../scripts/lib/view.mjs";
 import { loadState, saveState } from "../scripts/lib/state.mjs";
+import { loadPlan } from "../scripts/lib/plan.mjs";
 import { loadConsole, readCampaign } from "../scripts/lib/config.mjs";
 import { listItems, createItem } from "../scripts/lib/inbox.mjs";
 import { loadDispatch, setDispatch } from "../scripts/lib/dispatch.mjs";
@@ -34,7 +35,22 @@ Touch nothing shared.
 - **Files:** README.md
 `;
 
-function setup({ autonomy = "trusted", tickets = 3, codeModels = null } = {}) {
+/* Test data states its evidence explicitly. The fixture worker writes exactly
+   this array, so a missing or invented criterion is a test failure, not a
+   convenient pass. */
+function ready(summary, criteria = ["The file exists."]) {
+  return {
+    status: "ready",
+    summary,
+    acceptance: criteria.map((criterion) => ({
+      criterion,
+      status: "passed",
+      evidence: `fixture: ${criterion}`,
+    })),
+  };
+}
+
+function setup({ autonomy = "trusted", tickets = 3, codeModels = null, checks = null } = {}) {
   const box = sandbox();
   const dir = project(path.join(box, "repo"));
   writeConsole();
@@ -45,7 +61,7 @@ function setup({ autonomy = "trusted", tickets = 3, codeModels = null } = {}) {
     plan_gate: "human",
     landing: "branch",
     base: "main",
-    checks: [{ name: "always", cmd: "true" }],
+    checks: checks || [{ name: "always", cmd: "true" }],
     budget: { tokens: null, dollars: null },
     max_autoship_lines: 200,
     kinds: {
@@ -86,7 +102,7 @@ async function until(root, slug, predicate, { ticks = 120, wait = 60 } = {}) {  
 
 test("three parallel tickets reach done, land on an integration branch, and deliver", async () => {
   const { dir, slug } = setup();
-  scenario({ work: [{ status: "ready", summary: "wrote it" }, { status: "ready", summary: "wrote it" }, { status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }, { status: "ready", summary: "clean" }, { status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("wrote it"), ready("wrote it"), ready("wrote it")], review: [ready("clean"), ready("clean"), ready("clean")] });
 
   const view = await until(dir, slug, (v) => v.tickets.every((t) => t.stage === "done"));
   assert.equal(view.stage, "delivered");
@@ -101,7 +117,7 @@ test("three parallel tickets reach done, land on an integration branch, and deli
 
 test("a supervised campaign leaves the delivery for a person", async () => {
   const { dir, slug } = setup({ autonomy: "supervised", tickets: 1 });
-  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("wrote it")], review: [ready("clean")] });
   const view = await until(dir, slug, (v) => v.stage === "delivered");
   const item = view.inbox.find((i) => i.kind === "review");
   assert.ok(item, "a review item is filed");
@@ -126,7 +142,7 @@ test("a supervised campaign leaves the delivery for a person", async () => {
 
 test("approve with cleanup merges, removes the worktree and branches, and counts the action", async () => {
   const { dir, slug } = setup({ autonomy: "supervised", tickets: 1 });
-  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("wrote it")], review: [ready("clean")] });
   const view = await until(dir, slug, (v) => v.stage === "delivered");
   const item = view.inbox.find((i) => i.kind === "review");
   applyCommand(dir, { type: "review.approve", campaign: slug, item: item.id, cleanup: true }, loadConsole());
@@ -142,7 +158,7 @@ test("approve with cleanup merges, removes the worktree and branches, and counts
 
 test("a manual delivery still merges after the base has moved", async () => {
   const { dir, slug } = setup({ autonomy: "supervised", tickets: 1 });
-  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("wrote it")], review: [ready("clean")] });
   await until(dir, slug, (v) => v.stage === "delivered");
   assert.ok(!fs.existsSync(path.join(dir, "work-01.txt")));
   fs.writeFileSync(path.join(dir, "NOTE.md"), "the human was busy\n");
@@ -157,7 +173,7 @@ test("a manual delivery still merges after the base has moved", async () => {
 test("an uncommitted plan does not block the delivery", async () => {
   const { dir, slug } = setup({ autonomy: "trusted", tickets: 1 });
   fs.writeFileSync(path.join(dir, "orchestration", slug, "campaign.md"), fs.readFileSync(path.join(dir, "orchestration", slug, "campaign.md"), "utf8").replace("Ship three small things.", "Ship one thing."));
-  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("wrote it")], review: [ready("clean")] });
   const view = await until(dir, slug, (v) => v.stage === "delivered");
   assert.equal(view.delivery.mode, "merged", JSON.stringify(view.delivery));
   assert.ok(fs.existsSync(path.join(dir, "work-01.txt")));
@@ -167,7 +183,7 @@ test("machine state never blocks a delivery, even without a gitignore", async ()
   const { dir, slug } = setup({ autonomy: "trusted", tickets: 1 });
   fs.writeFileSync(path.join(dir, ".gitignore"), "");
   commitAll(dir, "drop the state ignore line");
-  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("wrote it")], review: [ready("clean")] });
   const view = await until(dir, slug, (v) => v.stage === "delivered");
   assert.equal(view.delivery.mode, "merged", JSON.stringify(view.delivery));
   assert.ok(fs.existsSync(path.join(dir, "work-01.txt")));
@@ -183,7 +199,7 @@ test("a blocking edge holds a ticket until its blocker is done", async () => {
     "## What to build\n\nFile 2.\n\n## Acceptance criteria\n\n- [ ] The file exists.",
   );
   commitAll(dir, "add blocked ticket");
-  scenario({ work: [{ status: "ready", summary: "first" }, { status: "ready", summary: "second" }], review: [{ status: "ready", summary: "clean" }, { status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("first"), ready("second")], review: [ready("clean"), ready("clean")] });
 
   tick({ root: dir });
   let view = campaignView(dir, slug);
@@ -199,7 +215,7 @@ test("tickets whose touches overlap never run at once", async () => {
     const file = path.join(dir, "orchestration", slug, "tickets", name);
     fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(/"work-0[12]\.txt"/, '"**"'));
   }
-  scenario({ work: [{ status: "ready", summary: "a" }, { status: "ready", summary: "b" }], review: [{ status: "ready", summary: "clean" }, { status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("a"), ready("b")], review: [ready("clean"), ready("clean")] });
   tick({ root: dir });
   const state = loadState(dir, slug);
   assert.equal(Object.values(state.runs).filter((r) => r.status === "live").length, 1, "one run, not two");
@@ -215,10 +231,10 @@ test("a question is judged, escalates to the inbox, and an answer resumes the sa
         summary: "built half",
         question: { text: "Which migration order?", options: ["up first", "down first"] },
       },
-      { status: "ready", summary: "built the rest" },
+      ready("built the rest"),
     ],
     judge: [{ status: "blocked", summary: "no source answers this" }],
-    review: [{ status: "ready", summary: "clean" }],
+    review: [ready("clean")],
   });
 
   let view = await until(dir, slug, (v) => v.tickets[0].stage === "needs_answer");
@@ -263,7 +279,7 @@ test("a person's answer takes its own slot above the cap", async () => {
   tick({ root: dir });
   assert.equal(Object.values(loadState(dir, "demo").runs).filter((r) => r.status === "live").length, 1, "the cap holds at one");
   applyCommand(dir, { type: "answer", campaign: "demo", item: item.id, text: "A first" }, loadConsole());
-  scenario({ work: [{ status: "ready", summary: "a" }, { status: "ready", summary: "b" }], review: [{ status: "ready", summary: "ok" }, { status: "ready", summary: "ok" }] });
+  scenario({ work: [ready("a", ["A."]), ready("b", ["B."])], review: [ready("ok"), ready("ok")] });
   tick({ root: dir });
   const live = Object.values(loadState(dir, "demo").runs).filter((r) => r.status === "live");
   assert.equal(live.length, 2, "the human's answer is above the cap");
@@ -274,9 +290,9 @@ test("the orchestrator answers from a written source and never reaches the inbox
   const body = fs.readFileSync(path.join(dir, "orchestration", slug, "campaign.md"), "utf8").replace("Touch nothing shared.", "Touch nothing shared. Migration order is up first.");
   fs.writeFileSync(path.join(dir, "orchestration", slug, "campaign.md"), body);
   scenario({
-    work: [{ status: "needs_answer", summary: "half", question: { text: "Which migration order?" } }, { status: "ready", summary: "rest" }],
+    work: [{ status: "needs_answer", summary: "half", question: { text: "Which migration order?" } }, ready("rest")],
     judge: [{ status: "ready", summary: "Up first.", next: "cite: campaign.md § Constraints" }],
-    review: [{ status: "ready", summary: "clean" }],
+    review: [ready("clean")],
   });
   const view = await until(dir, slug, (v) => v.tickets[0].stage === "done");
   assert.equal(view.inbox.filter((i) => i.kind === "question").length, 0);
@@ -288,8 +304,8 @@ test("the orchestrator answers from a written source and never reaches the inbox
 test("a rejected review sends the ticket back to the same worker session", async () => {
   const { dir, slug } = setup({ tickets: 1 });
   scenario({
-    work: [{ status: "ready", summary: "first try" }, { status: "ready", summary: "fixed" }],
-    review: [{ status: "failed", summary: "1. src/a.ts has no null check" }, { status: "ready", summary: "clean" }],
+    work: [ready("first try"), ready("fixed")],
+    review: [{ status: "failed", summary: "1. src/a.ts has no null check" }, ready("clean")],
   });
   const view = await until(dir, slug, (v) => v.tickets[0].stage === "done");
   const state = loadState(dir, slug);
@@ -340,7 +356,7 @@ test("the console adapter and spend persist through settings.save", () => {
 
 test("stop and retry refuse a ticket that has nothing to act on", async () => {
   const { dir, slug } = setup({ tickets: 1 });
-  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("wrote it")], review: [ready("clean")] });
   await until(dir, slug, (v) => v.tickets[0].stage === "done");
   assert.throws(
     () => applyCommand(dir, { type: "stop", campaign: slug, ticket: "01" }, loadConsole()),
@@ -356,9 +372,9 @@ test("three failed gate cycles park the ticket and file a failure", async () => 
   const { dir, slug } = setup({ tickets: 1 });
   scenario({
     work: [
-      { status: "ready", summary: "1" },
-      { status: "ready", summary: "2" },
-      { status: "ready", summary: "3" },
+      ready("1"),
+      ready("2"),
+      ready("3"),
     ],
     review: [
       { status: "failed", summary: "still wrong" },
@@ -375,7 +391,7 @@ test("a budget ceiling pauses the campaign instead of stalling it", async () => 
   const { dir, slug } = setup({ tickets: 1 });
   const campaignFile = path.join(dir, "orchestration", slug, "campaign.md");
   fs.writeFileSync(campaignFile, fs.readFileSync(campaignFile, "utf8").replace('"tokens":null', '"tokens":1'));
-  scenario({ work: [{ status: "ready", summary: "spent" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("spent")], review: [ready("clean")] });
   const view = await until(dir, slug, (v) => v.stage === "paused");
   assert.match(view.reason || "", /budget/);
   assert.ok(view.inbox.some((i) => /budget/.test(i.title)));
@@ -398,7 +414,7 @@ test("a failed report retries to the attempt cap, then parks", async () => {
 
 test("an approval that cannot merge stays open and can be retried", async () => {
   const { dir, slug } = setup({ autonomy: "supervised", tickets: 1 });
-  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("wrote it")], review: [ready("clean")] });
   const view = await until(dir, slug, (v) => v.stage === "delivered");
   const item = view.inbox.find((i) => i.kind === "review");
   assert.ok(item, "a delivery review item is filed");
@@ -420,7 +436,7 @@ test("an approval that cannot merge stays open and can be retried", async () => 
 
 test("a campaign-level rejection does not merge the branch", async () => {
   const { dir, slug } = setup({ autonomy: "supervised", tickets: 1 });
-  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("wrote it")], review: [ready("clean")] });
   const view = await until(dir, slug, (v) => v.stage === "delivered");
   const item = view.inbox.find((i) => i.kind === "review");
   const head = gitOut(dir, ["rev-parse", "HEAD"]);
@@ -447,7 +463,7 @@ test("resume dismisses a budget pause item once the ceiling is raised", () => {
 test("cancel stops every live run and pauses, keeping the tickets queued", async () => {
   const { dir, slug } = setup({ tickets: 2 });
   process.env.FAKE_DELAY_MS = "5000";
-  scenario({ work: [{ status: "ready", summary: "one" }, { status: "ready", summary: "two" }], review: [] });
+  scenario({ work: [ready("one"), ready("two")], review: [] });
   tick({ root: dir });
   const live = Object.values(loadState(dir, slug).runs).filter((r) => r.status === "live");
   assert.equal(live.length, 2);
@@ -462,7 +478,7 @@ test("cancel stops every live run and pauses, keeping the tickets queued", async
 
 test("archive is refused while a run is alive, and reached when delivered", async () => {
   const { dir, slug } = setup({ tickets: 1 });
-  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("wrote it")], review: [ready("clean")] });
   await until(dir, slug, (v) => v.stage === "delivered");
   applyCommand(dir, { type: "archive", campaign: slug }, loadConsole());
   assert.equal(campaignView(dir, slug).stage, "archived");
@@ -473,14 +489,14 @@ test("generated paths are allowed outside touches", async () => {
   const file = path.join(dir, "orchestration", slug, "campaign.md");
   fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("checks:", "allow_paths:\n  - work-01.txt\nchecks:"));
   commitAll(dir, "allow the generated file");
-  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("wrote it")], review: [ready("clean")] });
   const view = await until(dir, slug, (v) => v.tickets[0].stage === "done");
   assert.equal(view.stage, "delivered");
 });
 
 test("a finished ticket loses its worktree but keeps its branch", async () => {
   const { dir, slug } = setup({ tickets: 2 });
-  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("wrote it")], review: [ready("clean")] });
   const view = await until(dir, slug, (v) => v.tickets[0].stage === "done");
   assert.equal(view.tickets[0].stage, "done");
   const worktrees = fs.readdirSync(path.join(dir, ".orchestration", "campaigns", slug, "worktrees"));
@@ -495,7 +511,7 @@ test("a finished ticket loses its worktree but keeps its branch", async () => {
 
 test("delivery removes worktrees but keeps ticket and integration branches", async () => {
   const { dir, slug } = setup({ tickets: 1 });
-  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("wrote it")], review: [ready("clean")] });
   await until(dir, slug, (v) => v.stage === "delivered");
   const worktrees = fs.readdirSync(path.join(dir, ".orchestration", "campaigns", slug, "worktrees"));
   assert.deepEqual(worktrees, ["_integration"]);
@@ -506,7 +522,7 @@ test("delivery removes worktrees but keeps ticket and integration branches", asy
 
 test("cleanup removes campaign branches and the integration worktree, keeping the base", async () => {
   const { dir, slug } = setup({ tickets: 1 });
-  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("wrote it")], review: [ready("clean")] });
   await until(dir, slug, (v) => v.stage === "delivered");
   const removed = cleanupCampaignBranches(dir, slug);
   assert.ok(removed.includes(`orch/${slug}/01`));
@@ -518,7 +534,7 @@ test("cleanup removes campaign branches and the integration worktree, keeping th
 
 test("a lost state file is rebuilt from the runs, attempts and spend included", async () => {
   const { dir, slug } = setup({ tickets: 1 });
-  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("wrote it")], review: [ready("clean")] });
   await until(dir, slug, (v) => v.stage === "delivered");
   const before = loadState(dir, slug);
   fs.unlinkSync(path.join(dir, ".orchestration", "campaigns", slug, "state.json"));
@@ -532,9 +548,9 @@ test("a lost state file is rebuilt from the runs, attempts and spend included", 
 test("a parked ticket resumes after its worktree is gone", async () => {
   const { dir, slug } = setup({ tickets: 1 });
   scenario({
-    work: [{ status: "needs_answer", summary: "half", question: { text: "Which order?" } }, { status: "ready", summary: "rest" }],
+    work: [{ status: "needs_answer", summary: "half", question: { text: "Which order?" } }, ready("rest")],
     judge: [{ status: "blocked", summary: "no source" }],
-    review: [{ status: "ready", summary: "clean" }],
+    review: [ready("clean")],
   });
   let view = await until(dir, slug, (v) => v.tickets[0].stage === "needs_answer");
   const first = Object.values(loadState(dir, slug).runs).find((r) => r.role === "work");
@@ -579,7 +595,7 @@ test("plan_gate auto dispatches without a person", async () => {
   );
   writeTicket(dir, "demo", "01-a.md", { id: "01", kind: "code", touches: ["work-01.txt"] }, "## What to build\n\nA.\n\n## Acceptance criteria\n\n- [ ] A.");
   commitAll(dir);
-  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("wrote it", ["A."])], review: [ready("clean")] });
   const view = await until(dir, "demo", (v) => v.stage === "delivered");
   assert.equal(view.tickets[0].stage, "done");
   assert.match(fs.readFileSync(path.join(dir, "orchestration", "demo", "campaign.md"), "utf8"), /stage: delivered/);
@@ -610,9 +626,9 @@ test("directory landing catches a file outside the ticket's paths", async () => 
   writeTicket(dir, "demo", "01-a.md", { id: "01", kind: "code", touches: ["notes/**"] }, "## What to build\n\nNotes.\n\n## Acceptance criteria\n\n- [ ] Exists.");
   scenario({
     work: [
-      { status: "ready", summary: "one" },
-      { status: "ready", summary: "two" },
-      { status: "ready", summary: "three" },
+      ready("one", ["Exists."]),
+      ready("two", ["Exists."]),
+      ready("three", ["Exists."]),
     ],
     review: [],
   });
@@ -623,7 +639,7 @@ test("directory landing catches a file outside the ticket's paths", async () => 
 
 test("a global pause stops new dispatch, names the reason, and leaves the campaign running", async () => {
   const { dir, slug } = setup({ tickets: 1 });
-  scenario({ work: [{ status: "ready", summary: "did it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("did it")], review: [ready("clean")] });
   setDispatch("paused", { reason: "quota exhausted", by: "test" });
   tick({ root: dir });
   const paused = campaignView(dir, slug);
@@ -640,7 +656,7 @@ test("a global pause stops new dispatch, names the reason, and leaves the campai
 
 test("an exhausted provider window holds the ticket and the queue says which window", async () => {
   const { dir, slug } = setup({ tickets: 1 });
-  scenario({ work: [{ status: "ready", summary: "did it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("did it")], review: [ready("clean")] });
   const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
   writeConsole({
     quotas: [
@@ -681,7 +697,7 @@ test("an exhausted provider window holds the ticket and the queue says which win
 
 test("an exhausted first model falls through to the next chain entry", async () => {
   const { dir, slug } = setup({ tickets: 1, codeModels: [MODELS.strong, MODELS.backup] });
-  scenario({ work: [{ status: "ready", summary: "did it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("did it")], review: [ready("clean")] });
   writeConsole({
     quotas: [
       {
@@ -705,7 +721,7 @@ test("an exhausted first model falls through to the next chain entry", async () 
 
 test("telemetry labels actual, estimated and included costs without pretending an estimate is a bill", async () => {
   const { dir, slug } = setup({ tickets: 1 });
-  scenario({ work: [{ status: "ready", summary: "did it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("did it")], review: [ready("clean")] });
   const done = await until(dir, "demo", (v) => v.stage === "delivered");
   const work = done.runs.find((run) => run.role === "work");
   assert.ok(work, "a work run exists");
@@ -755,7 +771,7 @@ test("harness-reported child runs are observed, with rolled-up usage, and never 
 
 test("a stale quota is visible but never blocks dispatch", async () => {
   const { dir, slug } = setup({ tickets: 1 });
-  scenario({ work: [{ status: "ready", summary: "did it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("did it")], review: [ready("clean")] });
   writeConsole({
     quotas: [
       {
@@ -774,6 +790,192 @@ test("a stale quota is visible but never blocks dispatch", async () => {
   assert.equal(view.tickets[0].stage, "working", "a stale window does not hold the fleet");
   assert.equal(view.quotas[0].source, "stale");
   await until(dir, "demo", (v) => v.stage === "delivered");
+});
+
+test("a ready report without acceptance evidence cannot reach done", async () => {
+  const { dir, slug } = setup({ tickets: 1 });
+  scenario({ work: [{ status: "ready", summary: "trust me" }], review: [ready("clean")] });
+  const view = await until(dir, slug, (v) => v.tickets[0].stage === "failed");
+  assert.ok(!view.tickets.some((ticket) => ticket.stage === "done"));
+  const failure = view.inbox.find((item) => item.kind === "failure");
+  assert.match(failure.findings, /acceptance is required for a ready report/);
+});
+
+test("a failed acceptance result cannot be reported as ready", async () => {
+  const { dir, slug } = setup({ tickets: 1 });
+  const file = path.join(dir, "orchestration", slug, "tickets", "01-t1.md");
+  fs.writeFileSync(
+    file,
+    fs.readFileSync(file, "utf8").replace("- [ ] The file exists.", "- [ ] A.\n- [ ] B."),
+  );
+  commitAll(dir, "two criteria");
+  scenario({
+    work: [
+      {
+        status: "ready",
+        summary: "half",
+        acceptance: [
+          { criterion: "A.", status: "passed", evidence: "fixture" },
+          { criterion: "B.", status: "failed", evidence: "fixture" },
+        ],
+      },
+    ],
+    review: [ready("clean")],
+  });
+  const view = await until(dir, slug, (v) => v.tickets[0].stage === "failed");
+  assert.match(view.inbox.find((item) => item.kind === "failure").findings, /ready requires every acceptance result to be passed/);
+});
+
+test("structured review findings reach the resume prompt and the ticket drawer state", async () => {
+  const { dir, slug } = setup({ tickets: 1 });
+  scenario({
+    work: [ready("first try"), ready("fixed")],
+    review: [
+      {
+        status: "failed",
+        summary: "one blocker",
+        findings: [
+          {
+            id: "F1",
+            severity: "blocker",
+            file: "src/cli.ts",
+            line: 42,
+            problem: "argv is sliced twice",
+            requiredFix: "slice argv once before parsing",
+          },
+        ],
+      },
+      ready("clean"),
+    ],
+  });
+  let view = await until(dir, slug, (v) => v.tickets[0].gateCycles >= 1);
+  let state = loadState(dir, slug);
+  assert.equal(state.tickets["01"].findings[0].id, "F1");
+  assert.equal(state.tickets["01"].findings[0].requiredFix, "slice argv once before parsing");
+  assert.equal(view.tickets[0].gateCycles, 1);
+
+  let workRuns = [];
+  for (let i = 0; i < 80; i++) {
+    tick({ root: dir });
+    state = loadState(dir, slug);
+    workRuns = Object.values(state.runs)
+      .filter((run) => run.role === "work")
+      .sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)));
+    if (workRuns.length >= 2) break;
+    await sleep(20);
+  }
+  assert.equal(workRuns.length, 2, "the same worker started a second attempt");
+  const prompt = fs.readFileSync(
+    path.join(dir, ".orchestration", "campaigns", slug, "runs", workRuns[1].id, "prompt.md"),
+    "utf8",
+  );
+  assert.match(prompt, /\[F1\] blocker src\/cli\.ts:42/);
+  assert.match(prompt, /required fix: slice argv once before parsing/);
+  view = await until(dir, slug, (v) => v.tickets[0].stage === "done");
+  assert.equal(view.tickets[0].gateCycles, 1);
+});
+
+test("a ready review carrying a blocker is invalid and cannot land", async () => {
+  const { dir, slug } = setup({ tickets: 1 });
+  const blocker = {
+    status: "ready",
+    summary: "looks fine to me",
+    findings: [{ id: "F1", severity: "blocker", problem: "off by one", requiredFix: "use the right index" }],
+  };
+  scenario({ work: [ready("one"), ready("two"), ready("three")], review: [blocker, blocker, blocker] });
+  const view = await until(dir, slug, (v) => v.tickets[0].stage === "failed");
+  assert.ok(!fs.existsSync(path.join(dir, "work-01.txt")), "nothing landed");
+  assert.match(view.inbox.find((item) => item.kind === "failure").findings, /ready cannot carry high or blocker/);
+});
+
+test("a review pass stops applying when the branch changed while it ran", async () => {
+  const { dir, slug } = setup({ tickets: 1 });
+  process.env.FAKE_DELAY_MS = "400";
+  scenario({ work: [ready("wrote it")], review: [ready("clean")] });
+  let reviewRun = null;
+  for (let i = 0; i < 80; i++) {
+    tick({ root: dir });
+    const state = loadState(dir, slug);
+    reviewRun = Object.values(state.runs).find((run) => run.role === "review" && run.status === "live");
+    if (reviewRun) break;
+    await sleep(20);
+  }
+  assert.ok(reviewRun, "the review run started");
+  const workdir = reviewRun.workdir;
+  fs.writeFileSync(path.join(workdir, "work-01.txt"), "changed during review\n");
+  gitOut(workdir, ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-am", "branch moved during review"]);
+  const view = await until(dir, slug, (v) => v.tickets[0].stage === "failed");
+  delete process.env.FAKE_DELAY_MS;
+  assert.ok(!fs.existsSync(path.join(dir, "work-01.txt")), "the stale review did not merge");
+  const failure = view.inbox.find((item) => item.kind === "failure");
+  assert.match(failure.title, /branch changed after review/);
+  assert.match(failure.findings, /reviewed [0-9a-f]+, branch is now [0-9a-f]+/);
+});
+
+test("a failed integration check pauses once, and a resume at a passing head delivers", async () => {
+  const { dir, slug } = setup({
+    tickets: 1,
+    checks: [{ name: "ticket-only", cmd: 'test "$(git rev-parse --abbrev-ref HEAD)" != "orch/demo/integration"' }],
+  });
+  scenario({ work: [ready("wrote it")], review: [ready("clean")] });
+  let view = await until(dir, slug, (v) => v.stage === "paused");
+  assert.match(view.reason, /integration checks failed/);
+  assert.equal(view.tickets[0].stage, "done");
+  assert.equal(view.integration.status, "failed");
+  assert.ok(!fs.existsSync(path.join(dir, "work-01.txt")), "nothing delivered");
+  const firstItems = view.inbox.filter((item) => item.kind === "failure" && /integration checks failed/.test(item.title));
+  assert.equal(firstItems.length, 1);
+
+  applyCommand(dir, { type: "resume", campaign: slug }, loadConsole());
+  tick({ root: dir });
+  const second = campaignView(dir, slug);
+  assert.equal(second.stage, "paused");
+  const secondItems = second.inbox.filter((item) => item.kind === "failure" && /integration checks failed/.test(item.title));
+  assert.equal(secondItems.length, 1, "a repeated failure does not spawn a duplicate item");
+
+  const campaignFile = path.join(dir, "orchestration", slug, "campaign.md");
+  fs.writeFileSync(campaignFile, fs.readFileSync(campaignFile, "utf8").replace(/cmd: ".*"/, 'cmd: "true"'));
+  applyCommand(dir, { type: "resume", campaign: slug }, loadConsole());
+  view = await until(dir, slug, (v) => v.stage === "delivered");
+  assert.equal(view.integration.status, "passed");
+  assert.ok(fs.existsSync(path.join(dir, "work-01.txt")), "the passing integration tip delivered");
+  assert.equal(
+    view.inbox.filter((item) => item.status === "open" && item.kind === "failure").length,
+    0,
+    "the recovered integration failure no longer sits in the inbox",
+  );
+});
+
+test("the delivery audit blocks a stale v2 review and warns for an unbound legacy one", () => {
+  const { dir, slug } = setup({ tickets: 1 });
+  gitOut(dir, ["branch", "orch/demo/01"]);
+  gitOut(dir, ["branch", "orch/demo/integration"]);
+  const plan = loadPlan(dir, slug);
+  const data = readCampaign(dir, slug).data;
+  const head = gitOut(dir, ["rev-parse", "HEAD"]);
+  const base = {
+    campaign: slug,
+    stage: "running",
+    tickets: { "01": { stage: "done", reviewedHead: "0000000" } },
+    runs: {
+      review: { ticket: "01", role: "review", reportStatus: "ready", policyVersion: 2, startedAt: "2026-01-01T00:00:00Z" },
+    },
+    integration: { status: "passed", head },
+  };
+  const stale = deliveryAudit({ root: dir, slug, state: base, plan, data });
+  assert.equal(stale.ok, false);
+  assert.ok(stale.blockers.some((blocker) => /changed after review/.test(blocker)));
+
+  const legacy = {
+    ...base,
+    tickets: { "01": { stage: "done" } },
+    runs: {
+      review: { ticket: "01", role: "review", reportStatus: "ready", startedAt: "2026-01-01T00:00:00Z" },
+    },
+  };
+  const unbound = deliveryAudit({ root: dir, slug, state: legacy, plan, data });
+  assert.equal(unbound.ok, true);
+  assert.ok(unbound.warnings.some((warning) => /unbound review/.test(warning)));
 });
 
 test("bulk acceptance is refused over the autoship line and accepted under it", () => {

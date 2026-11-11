@@ -3,9 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { UserError, exists, pad2, readText } from "./util.mjs";
 import { splitFrontmatter } from "./yaml.mjs";
-import { sections } from "./config.mjs";
+import { readCampaign, sections } from "./config.mjs";
+import { canonicalCriterion, normalizeCriteria, protectedPathReason } from "./evidence.mjs";
 
-const TICKET_FIELDS = new Set(["id", "key", "kind", "blocked_by", "touches", "attachments", "sources"]);
+const TICKET_FIELDS = new Set(["id", "key", "kind", "blocked_by", "touches", "covers", "attachments", "sources"]);
 
 export function ticketsDir(root, slug) {
   return path.join(root, "orchestration", slug, "tickets");
@@ -59,7 +60,7 @@ export function asArray(value) {
   return Array.isArray(value) ? value : [value];
 }
 
-export function validateTickets(tickets) {
+export function validateTickets(tickets, slug = null) {
   const errors = [];
   const byId = new Map();
   for (const ticket of tickets) {
@@ -82,6 +83,10 @@ export function validateTickets(tickets) {
     if (!ticket.criteria.length) errors.push(`${id}: no acceptance criteria`);
     const touches = asArray(ticket.data.touches);
     if (!touches.length) errors.push(`${id}: no touches; declare the paths this ticket may modify`);
+    for (const touch of touches) {
+      const reason = protectedPathReason(touch, slug);
+      if (reason) errors.push(`${id}: ${reason}`);
+    }
     for (const attachment of asArray(ticket.data.attachments)) {
       const file = String(attachment);
       if (path.isAbsolute(file) || file.split(/[\\/]/).includes(".."))
@@ -125,9 +130,26 @@ export function validateTickets(tickets) {
 
 export function loadPlan(root, slug) {
   const tickets = loadTickets(root, slug);
-  const { errors, byId, ordered } = validateTickets(tickets);
+  const { errors, byId, ordered } = validateTickets(tickets, slug);
   if (!tickets.length) errors.push("the campaign has no tickets");
-  return { tickets, byId, ordered, errors };
+  const campaign = readCampaign(root, slug);
+  const rawCriteria = String(campaign.sections["acceptance criteria"] || "")
+    .split("\n")
+    .map((line) => line.match(/^\s*-\s*\[( |x|X)\]\s*(.+)$/))
+    .filter(Boolean)
+    .map((match) => match[2].trim());
+  const normalized = normalizeCriteria(rawCriteria);
+  if (normalized.duplicates.length) {
+    errors.push(`duplicate campaign criterion: ${normalized.duplicates.join("; ")}`);
+  }
+  const known = new Set(normalized.criteria);
+  for (const ticket of ordered) {
+    for (const criterion of asArray(ticket.data.covers)) {
+      const value = canonicalCriterion(criterion);
+      if (!known.has(value)) errors.push(`${ticket.data.id}: covers unknown campaign criterion "${value}"`);
+    }
+  }
+  return { tickets, byId, ordered, errors, criteria: normalized.criteria };
 }
 
 export function requirePlan(root, slug) {

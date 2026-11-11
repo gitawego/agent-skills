@@ -70,6 +70,7 @@ import { validateQuotas } from "./lib/quotas.mjs";
 import { joinFrontmatter } from "./lib/yaml.mjs";
 import { addTicket, createCampaign, ensureGitignore } from "./lib/create.mjs";
 import { loadState } from "./lib/state.mjs";
+import { formatCoverage } from "./lib/evidence.mjs";
 
 function parseArgs(argv) {
   const positional = [];
@@ -372,6 +373,7 @@ const commands = {
         attachments: flags.attachments,
         what: flags.what,
         criteria: flags.accept,
+        covers: flags.covers,
       });
       console.log(`${created.id}  ${created.title}  (${created.kind})`);
       console.log(created.file);
@@ -379,7 +381,7 @@ const commands = {
     }
     if (sub === "edit" || sub === "remove") {
       const id = rest[0] || flags.ticket;
-      if (!id) throw new UserError(`Usage: orchestrate ticket ${sub} <id> [--title ...] [--kind ...] [--touches ...] [--blocked-by ...] [--what ...] [--accept ...]`);
+      if (!id) throw new UserError(`Usage: orchestrate ticket ${sub} <id> [--title ...] [--kind ...] [--touches ...] [--blocked-by ...] [--what ...] [--accept ...] [--covers ...] [--reason ...]`);
       if (sub === "remove") {
         enqueue(root, { type: "ticket.remove", campaign: slug, ticket: id });
         console.log(`removed ${id}`);
@@ -394,8 +396,11 @@ const commands = {
       if (flags.attachments !== undefined) patch.attachments = flags.attachments;
       if (flags.what) patch.what = flags.what;
       if (flags.accept) patch.criteria = flags.accept;
-      if (!Object.keys(patch).length) throw new UserError("Nothing to change: pass --title, --kind, --touches, --blocked-by, --what or --accept");
-      enqueue(root, { type: "ticket.edit", campaign: slug, ticket: id, patch });
+      if (flags.covers !== undefined) patch.covers = flags.covers;
+      if (!Object.keys(patch).length) {
+        throw new UserError("Nothing to change: pass --title, --kind, --touches, --blocked-by, --what, --accept or --covers");
+      }
+      enqueue(root, { type: "ticket.edit", campaign: slug, ticket: id, patch, reason: flags.reason || null });
       console.log(`edited ${id}: ${Object.keys(patch).join(", ")}`);
       tickNow(root);
       return;
@@ -612,6 +617,7 @@ const commands = {
       console.log(`${slug} · ${(audit.tickets || []).length} tickets · ${audit.hash || "hash unknown"}`);
       console.log(`applied   ${audit.appliedAt || "unknown"}${audit.derived ? " (derived from tickets)" : ""}`);
       for (const ticket of audit.tickets || []) console.log(`  ${ticket.id}  ${ticket.key.padEnd(18)} ${ticket.kind.padEnd(9)} ${ticket.title}`);
+      if (audit.coverage) console.log(`  ${formatCoverage(audit.coverage)}`);
       if (audit.assumptions?.length) {
         console.log("assumptions");
         for (const item of audit.assumptions) console.log(`  - ${item}`);
@@ -766,6 +772,7 @@ const commands = {
       );
       console.log(`plan    ${result.file}`);
       console.log(`audit   ${audit.hash} · ${audit.appliedAt}`);
+      console.log(`        ${result.coverageText || formatCoverage(audit.coverage)}`);
       if (context.bytes) console.log(`context ${context.file} (${context.bytes} bytes)`);
       if (flags.submit) {
         tickNow(root, { quiet: true });
@@ -957,16 +964,9 @@ const commands = {
   approve({ flags, positional }) {
     const root = rootDir(flags);
     const slug = resolveCampaign(root, flags.campaign || positional[0]);
-    const draft = readDraft(root, slug);
-    if (draft.exists) {
-      throw new UserError(`Campaign "${slug}" has an unapplied draft plan`, [
-        `Review it: orchestrate plan diff ${slug}`,
-        `Apply it: orchestrate plan import ${slug}`,
-        `Or abandon it: orchestrate plan discard ${slug}`,
-      ]);
-    }
+    const hadDraft = readDraft(root, slug).exists;
     approveCampaign(root, slug, loadConsole());
-    console.log(`approved ${slug}`);
+    console.log(`approved ${slug}${hadDraft ? " (clean draft applied)" : ""}`);
     tickNow(root);
   },
 
@@ -1010,6 +1010,16 @@ const commands = {
         `  spend ${view.spend.tokens} tokens, ${money(view.spend.dollars)}; ` +
           `${view.inbox.filter((i) => i.status === "open").length} open inbox items`,
       );
+      if (view.coverage) console.log(`  ${view.coverageText}`);
+      if (view.integration) {
+        console.log(
+          `  integration ${view.integration.status}${view.integration.head ? ` at ${view.integration.head.slice(0, 8)}` : ""} (${(view.integration.checks || []).length} checks)`,
+        );
+      }
+      for (const ticket of view.tickets) {
+        if (ticket.reviewStale) console.log(`  ! ${ticket.id} review no longer matches the branch`);
+        if (ticket.reviewSameAsWorker) console.log(`  warning ${ticket.id} reviewed by the same actual model as the work`);
+      }
       for (const error of view.planErrors) {
         if (view.draft?.exists && /no tickets/i.test(error)) continue;
         console.log(`  ! ${error}`);
@@ -1061,6 +1071,15 @@ const commands = {
       const stats = view.delivery?.stats;
       console.log(`${item.id}  ${item.campaign}  ${item.title}`);
       if (stats) console.log(`  ${stats.added} added, ${stats.removed} removed · limit ${view.maxAutoshipLines}`);
+      if (view.deliveryAudit) {
+        console.log(
+          `  audit ${view.deliveryAudit.ok ? "passed" : "blocked"}${view.deliveryAudit.warnings?.length ? ` · ${view.deliveryAudit.warnings.length} warning${view.deliveryAudit.warnings.length === 1 ? "" : "s"}` : ""}`,
+        );
+      }
+      const reviewed = view.tickets.filter((ticket) => ticket.reviewedHead);
+      if (reviewed.length) {
+        console.log(`  reviewed ${reviewed.map((ticket) => `${ticket.id}@${ticket.reviewedHead.slice(0, 8)}`).join(", ")}`);
+      }
       if (item.brief) console.log(`  ${item.brief.split("\n")[0]}`);
     }
   },
@@ -1080,6 +1099,18 @@ const commands = {
     if (!["approve", "reject"].includes(decision)) throw new UserError("Usage: orchestrate review <item> approve|reject [text]");
     const found = findItem(root, id);
     if (!found) throw new UserError(`No inbox item "${id}"`);
+    const view = campaignView(root, found.slug);
+    console.log(`${found.item.title || id} · ${found.slug}`);
+    if (found.item.brief) console.log(found.item.brief);
+    if (view.deliveryAudit) {
+      console.log(`audit ${view.deliveryAudit.ok ? "passed" : "blocked"}`);
+      for (const blocker of view.deliveryAudit.blockers || []) console.log(`  ! ${blocker}`);
+      for (const warning of view.deliveryAudit.warnings || []) console.log(`  warning ${warning}`);
+    }
+    const reviewed = view.tickets.filter((ticket) => ticket.reviewedHead);
+    if (reviewed.length) {
+      console.log(`reviewed ${reviewed.map((ticket) => `${ticket.id}@${ticket.reviewedHead.slice(0, 8)}`).join(", ")}`);
+    }
     enqueue(root, {
       type: decision === "approve" ? "review.approve" : "review.reject",
       campaign: found.slug,
@@ -1407,8 +1438,8 @@ const commands = {
   init                                  scaffold this project, register it, write console defaults
   start "<goal>"                        create a draft campaign
   plan [campaign] [--json]              list tickets and validation errors
-  plan draft <campaign> --file f        save a draft, show both deltas; tickets untouched; --verbose
-  plan diff <campaign> [--verbose]      reprint the draft deltas
+  plan draft <campaign> --file f        save a draft, show both deltas and coverage; tickets untouched; --verbose
+  plan diff <campaign> [--verbose]      reprint the draft deltas and coverage
   plan show <campaign> [--ticket k]     full draft ticket text; --applied
   plan import <campaign> [--file f]      apply the draft or a file atomically; --prune, --accept-open, --accept-fragmented, --submit
   plan discard <campaign>               abandon the draft
@@ -1417,7 +1448,7 @@ const commands = {
   context append <campaign> --from f   append free-form human context to context.md
   decisions [campaign] [--all]          list decisions, with ids
   promote <decision-id> [campaign]      share one decision with every campaign
-  ticket add|edit|remove ...            change the plan: add, edit a ticket, remove one
+  ticket add|edit|remove ...            change the plan; edit accepts --covers and --reason
   cancel [campaign]                     stop every live run and pause
   archive [campaign]                    close a delivered campaign
   cleanup <campaign> [--dry-run]        preview or remove ticket/integration branches and the integration worktree
@@ -1427,7 +1458,7 @@ const commands = {
   adapter <id> [--spend mode]            set the console adapter and spend mode
   defaults [campaign] [--apply]          resolve the newest default family per kind; --force rebinds
   bind <campaign> <kind> <model>[:t]    set a kind's chain; --fallback for the next entry
-  approve <campaign>                    approve plan and bindings, then dispatch
+  approve <campaign>                    apply a clean draft, approve bindings, then dispatch
   up                                    start the panel if needed, open it, print the URL
   down                                  stop the panel
   link                                  put an orchestrate command in ~/.local/bin

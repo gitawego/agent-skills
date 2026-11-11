@@ -135,6 +135,70 @@ test("plan import refuses a running campaign", () => {
   assert.match(refused.stderr, /running/);
 });
 
+test("covers is written to ticket frontmatter and coverage is reported", () => {
+  const { dir } = setup();
+  const plan = {
+    ...PLAN,
+    criteria: ["notes can be added", "notes can be listed", "no new dependency"],
+    tickets: [
+      { ...PLAN.tickets[0], covers: ["notes can be added"] },
+      { ...PLAN.tickets[1], covers: ["notes can be listed"] },
+    ],
+  };
+  const result = importPlan({ root: dir, slug: "demo", plan, allowedKinds: ["code"] });
+  assert.equal(result.coverage.total, 3);
+  assert.equal(result.coverage.claimed, 2);
+  assert.deepEqual(result.coverage.missing, ["no new dependency"]);
+  assert.match(result.coverageText, /coverage: 2\/3 criteria claimed/);
+  const tickets = loadTickets(dir, "demo");
+  assert.deepEqual(tickets[0].data.covers, ["notes can be added"]);
+  assert.deepEqual(tickets[1].data.covers, ["notes can be listed"]);
+});
+
+test("duplicate criteria, unknown covers, and protected paths are plan errors", () => {
+  const { dir } = setup();
+  assert.throws(
+    () =>
+      importPlan({
+        root: dir,
+        slug: "demo",
+        plan: { ...PLAN, criteria: ["same", "same"] },
+        allowedKinds: ["code"],
+      }),
+    /duplicate campaign criterion/,
+  );
+  assert.throws(
+    () =>
+      importPlan({
+        root: dir,
+        slug: "demo",
+        plan: { ...PLAN, tickets: [{ ...PLAN.tickets[0], covers: ["not a campaign criterion"] }] },
+        allowedKinds: ["code"],
+      }),
+    /unknown campaign criterion/,
+  );
+  assert.throws(
+    () =>
+      importPlan({
+        root: dir,
+        slug: "demo",
+        plan: { ...PLAN, tickets: [{ ...PLAN.tickets[0], touches: ["orchestration/demo/tickets/01.md"] }] },
+        allowedKinds: ["code"],
+      }),
+    /protected path/,
+  );
+  assert.throws(
+    () =>
+      importPlan({
+        root: dir,
+        slug: "demo",
+        plan: { ...PLAN, tickets: [{ ...PLAN.tickets[0], touches: [".env.local"] }] },
+        allowedKinds: ["code"],
+      }),
+    /environment file/,
+  );
+});
+
 test("the CLI imports a YAML plan and appends context", () => {
   const { box, dir } = setup();
   const contextFile = path.join(box, "notes.md");

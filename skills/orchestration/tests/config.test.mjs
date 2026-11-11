@@ -133,6 +133,13 @@ test("allow_paths must be a list", () => {
   assert.ok(errors.some((e) => /allow_paths must be a list/.test(e)));
 });
 
+test("protected allow_paths are refused", () => {
+  const { dir, config, data, plan } = setup({}, { allow_paths: [".env.local", "orchestration/demo/tickets/01-work.md"] });
+  const { errors } = validateCampaign({ root: dir, consoleConfig: config, data, tickets: plan.ordered });
+  assert.ok(errors.some((e) => /environment file/.test(e)), errors.join("\n"));
+  assert.ok(errors.some((e) => /campaign's own plan and tickets/.test(e)), errors.join("\n"));
+});
+
 test("a check without a command is refused", () => {
   const { dir, config, data, plan } = setup({}, { checks: [{ name: "lint" }] });
   const { errors } = validateCampaign({ root: dir, consoleConfig: config, data, tickets: plan.ordered });

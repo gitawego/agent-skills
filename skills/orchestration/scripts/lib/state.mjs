@@ -28,6 +28,8 @@ export function emptyState(slug) {
     approvedAt: null,
     deliveredAt: null,
     planErrors: [],
+    integration: null,
+    deliveryAudit: null,
   };
 }
 
@@ -62,6 +64,22 @@ function rebuild(root, slug) {
         updated: event.ts,
       };
     }
+    if (event.type === "gate.integration") {
+      state.integration = {
+        head: event.data?.head || null,
+        status: event.data?.result === "pass" ? "passed" : "failed",
+        at: event.ts,
+        checks: event.data?.checks || [],
+      };
+    }
+    if (event.type === "delivery.blocked") {
+      state.deliveryAudit = {
+        ok: false,
+        blockers: event.data?.blockers || [],
+        warnings: event.data?.warnings || [],
+        at: event.ts,
+      };
+    }
   }
   recoverFromRuns(root, slug, state);
   return state;
@@ -93,6 +111,11 @@ function recoverFromRuns(root, slug, state) {
       if (record.ticket && record.role === "review") {
         const ticket = (state.tickets[record.ticket] = state.tickets[record.ticket] || { stage: "queued" });
         ticket.gateCycles = (ticket.gateCycles || 0) + 1;
+        ticket.reviewModel = record.model || ticket.reviewModel;
+        ticket.workerModel = record.workerModel || ticket.workerModel;
+        ticket.reviewedHead = record.reviewedHead || ticket.reviewedHead;
+        ticket.reviewedBase = record.reviewedBase || ticket.reviewedBase;
+        if (record.report?.findings) ticket.findings = record.report.findings;
       }
       continue;
     }
@@ -100,8 +123,10 @@ function recoverFromRuns(root, slug, state) {
     ticket.attempts = (ticket.attempts || 0) + 1;
     ticket.run = id;
     ticket.model = record.model || ticket.model;
+    ticket.workerModel = record.model || ticket.workerModel;
     ticket.workdir = record.workdir || ticket.workdir;
     ticket.sessionId = record.sessionId || ticket.sessionId;
+    if (record.report?.acceptance) ticket.acceptance = record.report.acceptance;
   }
 }
 

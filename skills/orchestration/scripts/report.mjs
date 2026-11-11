@@ -2,6 +2,7 @@
 // The only way a worker finishes: one schema-validated report file.
 import fs from "node:fs";
 import path from "node:path";
+import { normalizeAcceptance, normalizeFindings } from "./lib/evidence.mjs";
 
 const STATUSES = ["progress", "ready", "needs_answer", "blocked", "failed", "dropped"];
 
@@ -26,9 +27,22 @@ function die(message) {
   console.error(`report: ${message}`);
   console.error("");
   console.error("  report.mjs --status ready --summary \"What is now true.\"");
+  console.error("  report.mjs --status ready --summary \"...\" --acceptance-file /tmp/acceptance.json");
+  console.error("  report.mjs --status failed --summary \"...\" --findings-file /tmp/findings.json");
   console.error("  report.mjs --status needs_answer --summary \"...\" --question \"Which of these two?\" --option A --option B --default A");
-  console.error("  report.mjs --status failed --summary \"What blocked it, precisely.\"");
   process.exit(1);
+}
+
+function readJsonArray(file, label) {
+  if (!file) die(`${label} needs a file path`);
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (err) {
+    die(`${label}: ${err.message}`);
+  }
+  if (!Array.isArray(parsed)) die(`${label} must be a JSON array`);
+  return parsed;
 }
 
 const args = parse(process.argv.slice(2));
@@ -50,6 +64,16 @@ if (args.question) {
 if (args.next) report.next = args.next;
 if (args.touched.length) report.touched = args.touched;
 if (args.checks.length) report.checks = args.checks;
+if (args["acceptance-file"]) {
+  const acceptance = normalizeAcceptance(readJsonArray(args["acceptance-file"], "acceptance-file"));
+  if (acceptance.errors.length) die(`invalid acceptance: ${acceptance.errors.join("; ")}`);
+  report.acceptance = acceptance.results;
+}
+if (args["findings-file"]) {
+  const findings = normalizeFindings(readJsonArray(args["findings-file"], "findings-file"));
+  if (findings.errors.length) die(`invalid findings: ${findings.errors.join("; ")}`);
+  report.findings = findings.findings;
+}
 
 const file = args.file || process.env.ORCH_REPORT;
 if (!file) die("no report path: set ORCH_REPORT (the supervisor does) or pass --file");

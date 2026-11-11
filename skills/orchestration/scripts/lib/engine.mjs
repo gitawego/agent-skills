@@ -11,6 +11,7 @@ import {
   ensureDir,
   git,
   nowIso,
+  pad2,
   readJson,
   readJsonl,
   readText,
@@ -47,7 +48,15 @@ import {
   validateCampaign,
 } from "./config.mjs";
 import { boundFirstModels, pendingDefaultKinds, resolveDefaultChains } from "./defaults.mjs";
-import { readDraft } from "./plan-draft.mjs";
+import { discardDraft, draftReadiness, readDraft, writeApplied } from "./plan-draft.mjs";
+import { importPlan, planCoverage } from "./plan-import.mjs";
+import {
+  findingCounts,
+  formatCoverage,
+  renderFindings,
+  validateAcceptance,
+  validateReviewReport,
+} from "./evidence.mjs";
 import { adapterIds, getAdapter, readCatalogCache, refreshCatalog, rowsFor } from "./catalogs.mjs";
 import { ADAPTER_IDS, SPEND_MODES } from "./adapter-ids.mjs";
 import { joinFrontmatter, splitFrontmatter, updateFrontmatter } from "./yaml.mjs";
@@ -78,6 +87,7 @@ import {
   pruneWorktrees,
   removeTicketWorktree,
   snapshotDir,
+  ticketBranch,
   writeManifest,
 } from "./landing.mjs";
 import { drainCommands } from "./commands.mjs";
@@ -95,6 +105,39 @@ import {
 } from "./memory.mjs";
 
 const DONE = new Set(["done", "dropped"]);
+const POLICY_VERSION = 2;
+
+function policyOf(run) {
+  return Number(run?.policyVersion || 0);
+}
+
+function branchHead(root, slug, ticketId) {
+  const res = git(root, ["rev-parse", ticketBranch(slug, ticketId)]);
+  return res.ok ? res.stdout.trim() : null;
+}
+
+function integrationHead(root, slug) {
+  const res = git(root, ["rev-parse", integrationBranch(slug)]);
+  return res.ok ? res.stdout.trim() : null;
+}
+
+/* The same failure must not spawn a second inbox item when a tick repeats.
+   Identity is the human-readable title, which names the blocked thing. */
+function ensureFailureItem(root, slug, { ticket = null, title, brief, findings = "" }) {
+  const existing = listItems(root, slug, { status: "open" }).find(
+    (item) => item.kind === "failure" && item.title === title,
+  );
+  if (existing) return existing;
+  return createItem(root, slug, { kind: "failure", ticket, title, brief, findings });
+}
+
+function dismissFailure(root, slug, titlePrefix) {
+  for (const item of listItems(root, slug, { status: "open" })) {
+    if (item.kind === "failure" && String(item.title || "").startsWith(titlePrefix)) {
+      updateItem(root, slug, item.id, { status: "dismissed" });
+    }
+  }
+}
 
 function blockersOf(ticket) {
   return asArray(ticket.data.blocked_by).map((b) => String(b).padStart(2, "0"));
@@ -344,8 +387,9 @@ function failedRun({ root, slug, state, plan, run, summary, consoleConfig, kinds
   const ticketId = run.ticket;
   const entry = ticketState(state, ticketId);
   const attempts = entry.attempts || 0;
-  const reason = summary.errors?.length
-    ? summary.errors.join("; ")
+  const reported = summary.errors?.length ? summary.errors : entry.lastEvidenceErrors || [];
+  const reason = reported.length
+    ? reported.join("; ")
     : `run ended as ${summary.report?.status || "no report"}`;
   const canRetry = attempts < consoleConfig.limits.max_attempts;
   const nextIndex = nextChainIndex(run);
@@ -364,16 +408,18 @@ function failedRun({ root, slug, state, plan, run, summary, consoleConfig, kinds
   }
 
   setStage(root, slug, state, ticketId, "failed", { reason });
-  if (!openItemForTicket(root, slug, ticketId, "failure")) {
-    createItem(root, slug, {
-      kind: "failure",
-      ticket: ticketId,
-      run: run.id,
-      title: `${ticketId} failed: ${firstLine(reason)}`,
-      brief: summary.report?.summary || reason,
-      findings: String(summary.logTail || "").split("\n").slice(-60).join("\n"),
-    });
-  }
+  const evidence = [
+    ...reported,
+    String(summary.logTail || "").split("\n").slice(-60).join("\n"),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  ensureFailureItem(root, slug, {
+    ticket: ticketId,
+    title: `${ticketId} failed: ${firstLine(reason)}`,
+    brief: [summary.report?.summary, ...reported].filter(Boolean).join("\n") || reason,
+    findings: evidence,
+  });
 }
 
 function collectWork({ root, slug, state, plan, kinds, consoleConfig, run, summary, data }) {
@@ -386,14 +432,47 @@ function collectWork({ root, slug, state, plan, kinds, consoleConfig, run, summa
   }
 
   const report = summary.report;
+  const criteria = ticket.criteria.map((criterion) => criterion.text);
   entry.actualTouches = [...new Set([...(entry.actualTouches || []), ...(report.touched || [])])];
   entry.summary = report.summary;
   entry.sessionId = run.sessionId;
   entry.model = run.model;
+  entry.workerModel = run.model;
   entry.workdir = run.workdir;
+
+  /* A failed report may be partial; the failure is evidence. Any other report
+     that volunteers acceptance results gets them recorded when they are
+     structurally valid. The ready gate below is the strict check. */
+  if (report.acceptance != null) {
+    const shape = validateAcceptance({ criteria, acceptance: report.acceptance, allowPartial: true });
+    if (shape.ok) {
+      entry.acceptance = shape.results;
+      entry.acceptanceAt = nowIso();
+    }
+  }
 
   switch (report.status) {
     case "ready": {
+      if (policyOf(run) >= POLICY_VERSION) {
+        const evidence = validateAcceptance({ criteria, acceptance: report.acceptance });
+        if (!evidence.ok) {
+          entry.lastEvidenceErrors = evidence.errors;
+          return failedRun({
+            root,
+            slug,
+            state,
+            plan,
+            run,
+            summary: { ...summary, errors: [...(summary.errors || []), ...evidence.errors] },
+            consoleConfig,
+            kinds,
+            data,
+          });
+        }
+        entry.acceptance = evidence.results;
+        entry.acceptanceAt = nowIso();
+        delete entry.lastEvidenceErrors;
+      }
       const checks = runChecks(root, slug, run.workdir, data.checks || []);
       const failed = checks.filter((c) => !c.ok);
       if (failed.length) {
@@ -468,63 +547,127 @@ function collectReview({ root, slug, state, plan, kinds, consoleConfig, run, sum
     return;
   }
   const report = summary.report;
+  const verification = validateReviewReport({ status: report.status, findings: report.findings });
+  if (!verification.ok) {
+    const structured = verification.findings.length > 0;
+    return sendBack({
+      root,
+      slug,
+      state,
+      run,
+      findings: structured ? verification.findings : verification.errors.join("; "),
+      note: structured ? verification.errors.join("; ") : null,
+      review: true,
+    });
+  }
+  entry.findings = verification.findings;
   if (report.status === "ready") {
-    const land = landTicket({ root, slug, ticketId, data });
+    if ((data.landing || "branch") === "branch" && entry.reviewedHead) {
+      const head = branchHead(root, slug, ticketId);
+      if (!head || head !== entry.reviewedHead) {
+        return staleReview({ root, slug, state, ticketId, run, entry });
+      }
+    }
+    const land = landTicket({ root, slug, ticketId, data, reviewedHead: entry.reviewedHead });
     if (land.ok) {
+      entry.reviewStale = false;
       setStage(root, slug, state, ticketId, "done", { reason: "gates passed" });
+      const counts = findingCounts(verification.findings);
       appendEvent(root, {
         campaign: slug,
         ticket: ticketId,
         run: run.id,
         type: "gate.review",
-        data: { result: "pass", detail: report.summary },
+        data: {
+          result: "pass",
+          detail: report.summary,
+          reviewedHead: entry.reviewedHead || undefined,
+          findings: verification.findings.length,
+          severity: counts,
+        },
       });
       dropTicketWorktree(root, slug, ticketId);
       return;
+    }
+    if (land.stale) {
+      return staleReview({ root, slug, state, ticketId, run, entry });
     }
     if (land.conflict) {
       return startMerge({ root, slug, state, ticketId, run, conflict: land.output, kinds, consoleConfig });
     }
     setStage(root, slug, state, ticketId, "failed", { reason: land.output });
-    if (!openItemForTicket(root, slug, ticketId, "failure")) {
-      createItem(root, slug, {
-        kind: "failure",
-        ticket: ticketId,
-        run: run.id,
-        title: `${ticketId}: could not land`,
-        brief: land.output,
-      });
-    }
+    ensureFailureItem(root, slug, {
+      ticket: ticketId,
+      title: `${ticketId}: could not land`,
+      brief: land.output,
+    });
     return;
   }
-  return sendBack({ root, slug, state, run, findings: report.summary });
+  return sendBack({
+    root,
+    slug,
+    state,
+    run,
+    findings: verification.findings.length ? verification.findings : report.summary,
+    review: true,
+  });
 }
 
-function sendBack({ root, slug, state, run, findings }) {
+function staleReview({ root, slug, state, ticketId, run, entry }) {
+  const reason = "the branch changed after review; the review no longer applies";
+  entry.reviewStale = true;
+  setStage(root, slug, state, ticketId, "failed", { reason });
+  ensureFailureItem(root, slug, {
+    ticket: ticketId,
+    title: `${ticketId}: the branch changed after review`,
+    brief: `The branch changed after review; the review no longer applies. Re-review the current revision.`,
+    findings: entry.reviewedHead ? `reviewed ${entry.reviewedHead}, branch is now ${branchHead(root, slug, ticketId) || "missing"}` : "",
+  });
+  appendEvent(root, {
+    campaign: slug,
+    ticket: ticketId,
+    run: run.id,
+    type: "gate.review",
+    data: { result: "fail", reviewedHead: entry.reviewedHead || undefined, reason },
+  });
+}
+
+function sendBack({ root, slug, state, run, findings, note = null, review = false }) {
   const ticketId = run.ticket;
   const entry = ticketState(state, ticketId);
   entry.gateCycles = (entry.gateCycles || 0) + 1;
-  entry.findings = findings;
+  entry.findings = Array.isArray(findings) ? findings : String(findings ?? "");
+  const rendered = Array.isArray(findings) ? renderFindings(findings) : String(findings ?? "");
+  const text = [rendered, note].filter(Boolean).join("\n\n");
   setStage(root, slug, state, ticketId, "needs_changes", { reason: "gates failed" });
   appendEvent(root, {
     campaign: slug,
     ticket: ticketId,
     run: run.id,
     type: "gate.check",
-    data: { result: "fail", findings: firstLine(findings) },
+    data: { result: "fail", findings: firstLine(text) },
   });
+  if (review) {
+    appendEvent(root, {
+      campaign: slug,
+      ticket: ticketId,
+      run: run.id,
+      type: "gate.review",
+      data: {
+        result: "fail",
+        reviewedHead: entry.reviewedHead || undefined,
+        findings: Array.isArray(findings) ? findings.length : 0,
+      },
+    });
+  }
   if (entry.gateCycles >= 3) {
     setStage(root, slug, state, ticketId, "failed", { reason: "three gate cycles" });
-    if (!openItemForTicket(root, slug, ticketId, "failure")) {
-      createItem(root, slug, {
-        kind: "failure",
-        ticket: ticketId,
-        run: run.id,
-        title: `${ticketId}: three gate cycles`,
-        brief: "The ticket failed its gates three times. That is a spec problem, not an execution one.",
-        findings,
-      });
-    }
+    ensureFailureItem(root, slug, {
+      ticket: ticketId,
+      title: `${ticketId}: three gate cycles`,
+      brief: "The ticket failed its gates three times. That is a spec problem, not an execution one.",
+      findings: text,
+    });
   }
 }
 
@@ -655,8 +798,20 @@ function dirDrift({ root, ticket, data, before }) {
   ].join("\n");
 }
 
-function landTicket({ root, slug, ticketId, data }) {
+function landTicket({ root, slug, ticketId, data, reviewedHead = null }) {
   if ((data.landing || "branch") === "directory") return { ok: true };
+  /* Re-read immediately before the merge: a pass is bound to a revision, not
+     a ticket id. A changed branch must be reviewed again. */
+  if (reviewedHead) {
+    const head = branchHead(root, slug, ticketId);
+    if (!head || head !== reviewedHead) {
+      return {
+        ok: false,
+        stale: true,
+        output: "the branch changed after review; the review no longer applies",
+      };
+    }
+  }
   return mergeTicket(root, slug, ticketId);
 }
 
@@ -819,6 +974,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
   const systemPrompts = systemPromptFiles(ticket.data.kind);
   const run = {
     id: runId,
+    policyVersion: POLICY_VERSION,
     campaign: slug,
     ticket: id,
     role: "work",
@@ -950,25 +1106,48 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
     current = reviewInfo(alt);
     modelEntry = current.model;
   }
+  /* The approval rule compares declared chains; fallback can still make the
+     actual models equal. Prefer another usable chain entry, then warn. */
+  if (modelKey(modelEntry) === run.model) {
+    const alternative = kind.models.findIndex((_, i) => {
+      const info = reviewInfo(i);
+      return info.model && modelKey(info.model) !== run.model;
+    });
+    if (alternative >= 0) {
+      index = alternative;
+      current = reviewInfo(alternative);
+      modelEntry = current.model;
+    }
+  }
+  const landing = campaign.data.landing || "branch";
+  const reviewedHead =
+    landing === "branch" ? (git(run.workdir, ["rev-parse", "HEAD"]).stdout || "").trim() || null : null;
+  const reviewedBase = landing === "branch" ? integrationHead(root, slug) : null;
   const prompt = reviewPrompt({
     campaign: slug,
     ticket: id,
     ticketTitle: ticketTitle(ticket),
     runId,
     workdir: run.workdir,
-    base: (campaign.data.landing || "branch") === "branch" ? integrationBranch(slug) : (campaign.data.base || "main"),
+    base: landing === "branch" ? integrationBranch(slug) : campaign.data.base || "main",
     kind: ticket.data.kind,
     data: ticket,
-    landing: campaign.data.landing || "branch",
+    landing,
     attachments: attached.items.map((item) => item.path),
+    reviewedHead,
   });
   writePrompt(root, slug, runId, prompt);
   const systemPrompts = systemPromptFiles("review");
   const gateRun = {
     id: runId,
+    policyVersion: POLICY_VERSION,
     campaign: slug,
     ticket: id,
     role: "review",
+    reviewedHead,
+    reviewedBase,
+    reviewedModel: modelKey(modelEntry),
+    workerModel: run.model,
     kind: "review",
     adapter: current.adapterId,
     ...adapterAudit(getAdapter(current.adapterId)),
@@ -1010,6 +1189,13 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
   state.runs[runId] = record;
   entry.gateRun = runId;
   entry.run = runId;
+  entry.reviewedHead = reviewedHead;
+  entry.reviewedBase = reviewedBase;
+  entry.reviewModel = gateRun.model;
+  entry.workerModel = run.model;
+  entry.reviewSameAsWorker = gateRun.model === run.model;
+  entry.reviewStale = false;
+  entry.reviewRound = (entry.gateCycles || 0) + 1;
   state.slots[id] = runId;
   setStage(root, slug, state, id, "working", { run: runId, reason: "reviewing" });
   appendEvent(root, {
@@ -1017,7 +1203,7 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
     ticket: id,
     run: runId,
     type: "run.dispatched",
-    data: { role: "review", model: gateRun.model },
+    data: { role: "review", model: gateRun.model, reviewedHead: reviewedHead || undefined },
   });
   return record;
 }
@@ -1339,12 +1525,138 @@ function dispatchFrontier(root, slug, state, plan, kinds, consoleConfig, data) {
 
 // --- delivery --------------------------------------------------------------
 
+function runIntegrationCheck({ root, slug, state, data }) {
+  const { dir } = ensureIntegration(root, slug, data.base || "main");
+  const head = (git(dir, ["rev-parse", "HEAD"]).stdout || "").trim() || null;
+  const checks = runChecks(root, slug, dir, data.checks || []);
+  const ok = checks.every((check) => check.ok);
+  state.integration = { head, status: ok ? "passed" : "failed", at: nowIso(), checks };
+  if (ok) dismissFailure(root, slug, "Campaign paused: integration checks failed");
+  appendEvent(root, {
+    campaign: slug,
+    type: "gate.integration",
+    data: {
+      result: ok ? "pass" : "fail",
+      head,
+      checks: checks.map((check) => ({ name: check.name, ok: check.ok, ms: check.ms })),
+    },
+  });
+  return { ok, head, dir, checks };
+}
+
+function pauseForBlockers({ root, slug, state, reason, title, brief, blockers = [], findings = "" }) {
+  campaignStage(root, slug, state, "paused", reason);
+  ensureFailureItem(root, slug, { title, brief, findings });
+  appendEvent(root, { campaign: slug, type: "delivery.blocked", data: { blockers } });
+  return false;
+}
+
+/* Delivery is a computed audit over the evidence, not "all tickets done".
+   A legacy pass without a bound commit is a warning: it predates the
+   contract and the panel says so. A v2 pass is bound to the revision. */
+export function deliveryAudit({ root, slug, state, plan, data }) {
+  const blockers = [];
+  const warnings = [];
+  const landing = data.landing || "branch";
+  for (const error of plan.errors || []) blockers.push(error);
+  for (const ticket of plan.ordered) {
+    const id = ticket.data.id;
+    const entry = state.tickets[id] || {};
+    if (!DONE.has(entry.stage)) {
+      blockers.push(`${id} is ${entry.stage || "queued"}, not done`);
+      continue;
+    }
+    if (entry.stage === "dropped" || landing !== "branch") continue;
+    const reviewRuns = Object.values(state.runs || {})
+      .filter((run) => run.ticket === id && run.role === "review")
+      .sort((a, b) => String(a.startedAt || "").localeCompare(String(b.startedAt || "")));
+    const review = reviewRuns[reviewRuns.length - 1];
+    if (!review) {
+      blockers.push(`${id} has no review run`);
+      continue;
+    }
+    if (review.reportStatus !== "ready") {
+      blockers.push(`${id} has no passing review (last outcome: ${review.reportStatus || "missing"})`);
+      continue;
+    }
+    if (policyOf(review) >= POLICY_VERSION) {
+      if (!entry.reviewedHead) {
+        blockers.push(`${id} review is not bound to a commit`);
+      } else {
+        const head = branchHead(root, slug, id);
+        if (!head) blockers.push(`${id} branch is missing`);
+        else if (head !== entry.reviewedHead) {
+          blockers.push(`${id} changed after review (${entry.reviewedHead.slice(0, 8)} -> ${head.slice(0, 8)})`);
+        }
+      }
+    } else {
+      warnings.push(`${id} has an unbound review from before the evidence contract`);
+    }
+    const findings = Array.isArray(entry.findings) ? entry.findings : [];
+    const low = findings.filter((finding) => finding.severity === "low" || finding.severity === "medium").length;
+    if (low) warnings.push(`${id} carries ${low} non-blocking review finding${low === 1 ? "" : "s"}`);
+    if (entry.reviewSameAsWorker) warnings.push(`${id} was reviewed by the same actual model as the work`);
+  }
+  if (landing === "branch") {
+    const head = integrationHead(root, slug);
+    if (!head) blockers.push("the integration branch is missing");
+    else if (state.integration?.status !== "passed" || state.integration.head !== head) {
+      blockers.push(`integration checks have not passed at ${head.slice(0, 8)}`);
+    }
+  }
+  const coverage = planCoverage({
+    criteria: plan.criteria || [],
+    tickets: plan.ordered.map((ticket) => ({
+      key: ticket.data.key || ticket.data.id,
+      covers: asArray(ticket.data.covers),
+    })),
+  });
+  for (const criterion of coverage.missing) warnings.push(`criterion is not claimed by a ticket: ${criterion}`);
+  return { ok: blockers.length === 0, blockers, warnings, coverage };
+}
+
 function maybeDeliver(root, slug, state, plan, data) {
   if (state.stage !== "running") return false;
   if (!plan.ordered.length) return false;
   const allDone = plan.ordered.every((t) => DONE.has(state.tickets[t.data.id]?.stage));
   if (!allDone) return false;
   const landing = data.landing || "branch";
+  if (landing === "branch") {
+    const head = integrationHead(root, slug);
+    const needsCheck =
+      !state.integration || state.integration.status !== "passed" || state.integration.head !== head;
+    if (needsCheck) {
+      const result = runIntegrationCheck({ root, slug, state, data });
+      if (!result.ok) {
+        const failing = result.checks.filter((check) => !check.ok);
+        return pauseForBlockers({
+          root,
+          slug,
+          state,
+          reason: "integration checks failed",
+          title: "Campaign paused: integration checks failed",
+          brief: `The final integration tip ${result.head || "(unknown)"} failed ${failing.length} check${failing.length === 1 ? "" : "s"}.`,
+          blockers: failing.map((check) => `${check.name}: ${check.output}`),
+          findings: failing.map((check) => `${check.name}:\n${check.output}`).join("\n\n"),
+        });
+      }
+    }
+  }
+  const audit = deliveryAudit({ root, slug, state, plan, data });
+  state.deliveryAudit = { ...audit, at: nowIso() };
+  if (audit.ok) dismissFailure(root, slug, "Campaign paused: delivery audit failed");
+  if (!audit.ok) {
+    return pauseForBlockers({
+      root,
+      slug,
+      state,
+      reason: "delivery audit failed",
+      title: "Campaign paused: delivery audit failed",
+      brief: audit.blockers.join("\n"),
+      blockers: audit.blockers,
+      findings: audit.blockers.join("\n"),
+    });
+  }
   if (landing === "directory") {
     const file = writeManifest(
       root,
@@ -1363,11 +1675,20 @@ function maybeDeliver(root, slug, state, plan, data) {
   const res = deliverBranch(root, slug, { base, allowMerge });
   state.delivery = { ...res, stats, at: nowIso() };
   if (res.mode === "manual") {
+    const reviewed = plan.ordered
+      .map((ticket) => {
+        const entry = state.tickets[ticket.data.id] || {};
+        if (!entry.reviewedHead) return null;
+        return `${ticket.data.id}@${entry.reviewedHead.slice(0, 8)}`;
+      })
+      .filter(Boolean)
+      .join(", ");
+    const warnings = audit.warnings.length ? ` Warnings: ${audit.warnings.join("; ")}.` : "";
     if (!openItemForTicket(root, slug, null, "review")) {
       createItem(root, slug, {
         kind: "review",
         title: `Campaign ready: ${slug}`,
-        brief: `${stats.added} added, ${stats.removed} removed. ${res.detail}`,
+        brief: `${stats.added} added, ${stats.removed} removed. ${res.detail}. Audit: passed.${warnings} Reviewed: ${reviewed || "directory evidence"}.`,
       });
     }
   }
@@ -1400,6 +1721,26 @@ export function writeClose(root, slug, state, plan, data) {
   const attention = attentionOf(readEvents(root).filter((event) => event.campaign === slug));
   const checks = (data.checks || []).map((check) => check.name).join(", ") || "none";
   const rough = rows.filter((row) => row.attempts > 1 || row.gateCycles > 0);
+  const reviewed = plan.ordered
+    .map((ticket) => {
+      const entry = state.tickets[ticket.data.id] || {};
+      return entry.reviewedHead ? `${ticket.data.id} at ${entry.reviewedHead.slice(0, 8)}` : null;
+    })
+    .filter(Boolean);
+  const allFindings = plan.ordered.flatMap((ticket) =>
+    Array.isArray(state.tickets[ticket.data.id]?.findings) ? state.tickets[ticket.data.id].findings : [],
+  );
+  const counts = findingCounts(allFindings);
+  const coverage = planCoverage({
+    criteria: plan.criteria || [],
+    tickets: plan.ordered.map((ticket) => ({
+      key: ticket.data.key || ticket.data.id,
+      covers: asArray(ticket.data.covers),
+    })),
+  });
+  const integrationText = state.integration
+    ? `${state.integration.status}${state.integration.head ? ` at ${state.integration.head.slice(0, 8)}` : ""} (${(state.integration.checks || []).length} check${(state.integration.checks || []).length === 1 ? "" : "s"})`
+    : "not run";
   const lines = [
     `# ${slug} — close`,
     "",
@@ -1423,6 +1764,17 @@ export function writeClose(root, slug, state, plan, data) {
     ),
     "",
     `Checks: ${checks}. Spend: ${state.spend.tokens} tokens, $${state.spend.dollars.toFixed(4)}.`,
+    "",
+    "## Quality",
+    "",
+    `- integration: ${integrationText}`,
+    `- reviewed: ${(data.landing || "branch") === "directory" ? "file-based (directory landing)" : reviewed.length ? reviewed.join(", ") : "none bound"}`,
+    `- findings: ${counts.low} low, ${counts.medium} medium, ${counts.high} high, ${counts.blocker} blocker`,
+    `- ${formatCoverage(coverage)}`,
+    "",
+    "| criterion | tickets |",
+    "| --- | --- |",
+    ...coverage.matrix.map((row) => `| ${row.criterion} | ${row.tickets.join(", ") || "—"} |`),
     "",
     "## Decisions",
     "",
@@ -1467,17 +1819,20 @@ export function writeClose(root, slug, state, plan, data) {
 
 // --- approval and commands -------------------------------------------------
 
+/* `approve` is the single human decision for the common path: a clean draft is
+   applied atomically, then the applied plan is approved. `plan import` stays
+   apply-only. The command is idempotent once the campaign is running. */
 export function approveCampaign(root, slug, consoleConfig, { automatic = false, state: given = null } = {}) {
-  const draft = readDraft(root, slug);
-  if (draft.exists) {
-    throw new UserError(`Cannot approve "${slug}": a draft plan is not applied`, [
-      `Review it: orchestrate plan diff ${slug}`,
-      `Apply it: orchestrate plan import ${slug}`,
-      `Or abandon it: orchestrate plan discard ${slug}`,
-    ]);
-  }
   const campaign = readCampaign(root, slug);
-  const plan = loadPlan(root, slug);
+  const state = given || loadState(root, slug);
+  const draft = readDraft(root, slug, { allowedKinds: Object.keys(resolveKinds(consoleConfig, campaign.data)) });
+  if (draft.exists && state.stage === "running") {
+    throw new UserError(`Cannot apply a draft while "${slug}" is running`, [`Pause it first: orchestrate pause ${slug}`]);
+  }
+  if (!draft.exists && ["running", "delivered", "archived"].includes(state.stage) && state.approvedAt) {
+    return state;
+  }
+
   const catalog = catalogRowsFor(root, campaign.data, consoleConfig);
   const map = {};
   try {
@@ -1491,6 +1846,49 @@ export function approveCampaign(root, slug, consoleConfig, { automatic = false, 
       err.hint || "Check that the harness is installed and signed in.",
     ]);
   }
+
+  if (draft.exists) {
+    const readiness = draftReadiness(draft);
+    if (!readiness.clean) {
+      throw new UserError(`Cannot approve "${slug}": the draft is not ready`, readiness.blockers);
+    }
+    const allowedKinds = Object.keys(resolveKinds(consoleConfig, campaign.data));
+    const preview = draft.plan.tickets.map((ticket, index) => ({
+      data: {
+        id: pad2(index + 1),
+        key: ticket.key,
+        kind: ticket.kind,
+        touches: ticket.touches,
+        attachments: ticket.attachments,
+      },
+    }));
+    const preflight = validateCampaign({
+      root,
+      consoleConfig,
+      data: campaign.data,
+      tickets: preview,
+      catalogRows: map,
+    });
+    if (preflight.errors.length) {
+      throw new UserError(`Cannot approve "${slug}": the draft does not bind`, preflight.errors);
+    }
+    const imported = importPlan({ root, slug, plan: draft.plan, allowedKinds });
+    const audit = writeApplied({ root, slug, plan: imported.plan, result: imported });
+    discardDraft(root, slug);
+    appendEvent(root, {
+      campaign: slug,
+      type: "plan.applied",
+      data: {
+        hash: audit.hash,
+        tickets: audit.tickets.length,
+        openQuestions: audit.openQuestions.length,
+        coverage: audit.coverage?.claimed || 0,
+        source: "approve",
+      },
+    });
+  }
+
+  const plan = loadPlan(root, slug);
   const { errors } = validateCampaign({
     root,
     consoleConfig,
@@ -1500,12 +1898,11 @@ export function approveCampaign(root, slug, consoleConfig, { automatic = false, 
   });
   const all = [...plan.errors, ...errors];
   if (all.length) throw new UserError(`Cannot approve "${slug}"`, all);
-  const state = given || loadState(root, slug);
   ensureTickets(state, plan);
   state.approvedAt = nowIso();
   campaignStage(root, slug, state, "running");
   saveState(root, slug, state);
-  appendEvent(root, { campaign: slug, type: "campaign.approved", data: { automatic } });
+  appendEvent(root, { campaign: slug, type: "campaign.approved", data: { automatic, drafted: draft.exists } });
   writeStageToPlan(root, slug, "running");
   return state;
 }
@@ -1683,6 +2080,9 @@ export function applyCommand(root, command, consoleConfig) {
   if (type === "pause" || type === "resume") {
     const state = loadState(root, slug);
     const next = type === "pause" ? "paused" : "running";
+    /* A resume asks for one fresh observation at the current head. The old
+       failure item stays as the record, so a repeat cannot spawn a duplicate. */
+    if (next === "running" && state.integration?.status === "failed") delete state.integration;
     campaignStage(root, slug, state, next, command.reason || null);
     saveState(root, slug, state);
     writeStageToPlan(root, slug, next);
@@ -1729,6 +2129,11 @@ export function applyCommand(root, command, consoleConfig) {
     entry.chainIndex = 0;
     entry.gateCycles = 0;
     delete entry.pendingResume;
+    delete entry.lastEvidenceErrors;
+    delete entry.reviewedHead;
+    delete entry.reviewedBase;
+    entry.reviewStale = false;
+    entry.reviewRound = 0;
     for (const item of listItems(root, slug, { status: "open" })) {
       if (item.ticket === id && item.kind === "failure") updateItem(root, slug, item.id, { status: "dismissed" });
     }
@@ -1869,7 +2274,12 @@ export function applyCommand(root, command, consoleConfig) {
     const id = String(command.ticket).padStart(2, "0");
     if (state.tickets[id]?.stage === "working") throw new UserError(`Ticket ${id} is running`, ["Pause it first."]);
     const edited = editTicket({ root, slug, id, patch: command.patch || {} });
-    appendEvent(root, { campaign: slug, ticket: id, type: "ticket.edited", data: { fields: Object.keys(command.patch || {}) } });
+    appendEvent(root, {
+      campaign: slug,
+      ticket: id,
+      type: "ticket.amended",
+      data: { fields: Object.keys(command.patch || {}), reason: command.reason || undefined },
+    });
     return { ok: true, ticket: edited };
   }
 
@@ -1936,6 +2346,7 @@ export function applyCommand(root, command, consoleConfig) {
       attachments: command.attachments,
       what: command.what,
       criteria: command.criteria,
+      covers: command.covers,
     });
     appendEvent(root, { campaign: slug, ticket: ticket.id, type: "ticket.added", data: { file: ticket.file } });
     return { ok: true, ticket };

@@ -49,13 +49,13 @@ The human invokes `/orchestration start <goal>`. Scaffold if this project has no
 
 Take the human's free-form context — notes, links, constraints, prior attempts, screenshots — and persist it with `orchestrate context append <campaign> --from notes.md`. It lands in `orchestration/<campaign>/context.md` as raw, timestamped input; the brief is your synthesis, the context is the source.
 
-Then write a **draft** plan: goal, brief, acceptance criteria, constraints, assumptions, open questions, reading list, and the **tickets**. Each ticket is a vertical slice, sized to one fresh context window, declaring the tickets that **block** it, the paths it **touches**, and the **sources** it came from.
+Then write a **draft** plan: goal, brief, acceptance criteria, constraints, assumptions, open questions, reading list, and the **tickets**. Each ticket is a vertical slice, sized to one fresh context window, declaring the tickets that **block** it, the paths it **touches**, the campaign criteria it **covers**, and the **sources** it came from.
 
-Save the draft with `orchestrate plan draft <campaign> --file plan.yml`. It validates the plan, snapshots the previous draft, and prints the table, the delta since the last draft, the delta apply will make, assumptions, open questions and actionable warnings. Show that in chat; revisions are another `plan draft`, and you present the delta. Nothing enters `tickets/` until apply.
+Save the draft with `orchestrate plan draft <campaign> --file plan.yml`. It validates the plan, snapshots the previous draft, and prints the table, the delta since the last draft, the delta apply will make, coverage, assumptions, open questions and actionable warnings. Show that in chat; revisions are another `plan draft`, and you present the delta. Nothing enters `tickets/` until apply.
 
-If the human asked to run the campaign and `plan_gate: auto`, present a compact draft once and run `plan import --submit`; do not ask for a second approval. With `plan_gate: human`, ask once.
+If the human asked to run the campaign and `plan_gate: auto`, present a compact draft once and run `plan import --submit`; do not ask for a second approval. With `plan_gate: human`, the clean draft is approved in one action: `orchestrate approve <campaign>` applies the draft atomically and starts dispatch. It refuses if the draft has an error, an open question, blocking fragmentation, or a binding preflight failure, and writes nothing in that case.
 
-`orchestrate plan import <campaign>` applies the current draft. It stops before approval, refuses while anything is running, requires `assumptions`, and blocks on open questions unless `--accept-open` is passed. Re-import is idempotent by ticket `key`. `approve` refuses while a draft is unapplied; apply or `plan discard` first.
+`orchestrate plan import <campaign>` remains the apply-only command. It refuses while anything is running, requires `assumptions`, and blocks on open questions unless `--accept-open` is passed. Re-import is idempotent by ticket `key`. `approve` on an already running plan is idempotent too: no duplicate tickets or events.
 
 Grill the human first on the frontier (scope, the shape of the deliverable, what "verified" means, hard constraints). Ask one concrete question at a time, stop at seven, and ask only what changes the tickets; facts are yours to look up.
 
@@ -65,7 +65,7 @@ Grill the human first on the frontier (scope, the shape of the deliverable, what
 
 Read the catalog for the campaign's adapter (`node scripts/orchestrate.mjs catalog --adapter <id>`) and confirm the chain for every kind the plan uses: a first model that matches the kind's work, a fallback from another family where one exists, and a thinking level. A new console already resolved the newest DeepSeek Flash, Muse Spark Contributor and MiMo Flash releases into the kinds (the reviewer stays on a different first model); `orchestrate defaults <campaign> --apply` fills empty chains against the live catalog. If a family is absent, bind by hand. The picker is cheapest first; the human still chooses.
 
-If the draft is clean and `plan_gate: auto`, `plan import --submit` applies it and lets the supervisor approve. Otherwise, ask once: “apply or adjust?”
+If the draft is clean and `plan_gate: auto`, `plan import --submit` applies it and lets the supervisor approve. Otherwise, the human reviews the compact draft and makes one decision: **Approve and run** (`orchestrate approve <campaign>`), which applies the clean draft and dispatches.
 
 The panel is a flight deck: it shows the plan, the tickets, the next action and the telemetry, and it configures the fleet. It never hosts the conversation. It has one manual **Tickets → New ticket** form for a single one-off slice; do not send the whole plan there. Approvals, answers and delivery reviews happen in this session, with a copyable command shown in the panel. The supervisor never invents tickets.
 
@@ -91,7 +91,9 @@ Run the supervisor (`run`) or let a timer drive it (`tick`). From here the loop 
 
 Answer questions with a decision, not with advice. A worker resumes from the answer in its own session, so it already knows what it asked — and the answer is written to the campaign's decision log, so the next worker on those paths inherits it instead of asking again.
 
-**Done when:** every ticket is `done` or `dropped`, the integration result is delivered, and the campaign stage is `delivered`.
+A `ready` report carries one passed acceptance result for every ticket criterion, each with the evidence that proves it. A review pass is bound to the commit it judged; a branch that changes afterwards is parked for a fresh review. When every ticket is done, the campaign checks run once on the final integration tip, and delivery is a computed audit over that evidence. Failed acceptance, a stale review, or a failed integration check becomes one failure item, never a silent delivery.
+
+**Done when:** every ticket is `done` or `dropped`, the integration checks pass at the delivered tip, the delivery audit has no blockers, and the campaign stage is `delivered`.
 
 ### 5. Close
 
@@ -110,20 +112,20 @@ The script is the source of truth; the skill's slash commands are conveniences o
 | `init` | Scaffold `orchestration/`, register the project in the console, write defaults |
 | `start <goal>` | Create a `draft` campaign |
 | `plan [campaign] [--json]` | Validate the plan and list every ticket |
-| `plan draft <campaign> --file plan.yml [--verbose]` | Save a draft; print the table, deltas, assumptions, open questions and actionable warnings |
+| `plan draft <campaign> --file plan.yml [--verbose]` | Save a draft; print the table, deltas, coverage, assumptions, open questions and actionable warnings |
 | `plan diff <campaign> [--verbose]` | Reprint the draft deltas without writing |
 | `plan show <campaign> [--ticket <key>]` | Full draft ticket text; `--applied` shows the applied plan |
 | `plan import <campaign> [--file plan.yml] [--prune] [--accept-open] [--accept-fragmented] [--submit]` | Apply the draft atomically; `--submit` runs a tick so an auto plan can approve |
 | `plan discard <campaign>` | Abandon the draft without touching tickets |
 | `plan audit <campaign> [--write]` | Show or persist the applied-plan audit; legacy campaigns derive it from the ticket graph |
 | `context append <campaign> --from notes.md` | Append free-form human input to `context.md` |
-| `ticket add "<title>" --kind code --touches "<globs>" [--attachments img.png] [--blocked-by 01] [--what ...] [--accept ...]` | Add one ticket with the next number |
-| `ticket edit <id> [--title ...] [--kind ...] [--touches ...] [--blocked-by ...] [--what ...] [--accept ...]` | Change a ticket; a change that would break the plan is rolled back |
+| `ticket add "<title>" --kind code --touches "<globs>" [--attachments img.png] [--blocked-by 01] [--what ...] [--accept ...] [--covers ...]` | Add one ticket with the next number |
+| `ticket edit <id> [--title ...] [--kind ...] [--touches ...] [--blocked-by ...] [--what ...] [--accept ...] [--covers ...] [--reason ...]` | Change a ticket; a change that would break the plan is rolled back, and the ledger records why |
 | `ticket remove <id>` | Delete a ticket, refused while it still blocks another |
 | `cancel [campaign]` | Stop every live run and pause, keeping the branches |
 | `archive [campaign]` | Close a delivered campaign |
 | `cleanup <campaign> [--dry-run]` | After the integration branch is merged, remove ticket/integration branches and the integration worktree; keep the base checkout |
-| `approve <campaign>` | Approve plan and bindings; allow dispatch |
+| `approve <campaign>` | Apply a clean draft, then approve plan and bindings; one human decision |
 | `bind <campaign> <kind> <model>[:thinking] [--fallback ...] [--adapter <id>]` | Set one kind's chain; refused while the campaign is running |
 | `defaults [campaign] [--apply] [--force]` | Resolve the newest default family per kind from the live catalog; `--apply` fills empty chains, `--force` replaces |
 | `up` | Start the supervisor and panel if they are not running, open the panel, print its URL |
@@ -157,12 +159,12 @@ Every panel action has a CLI equivalent; the agent also has CLI-only verbs (answ
 ## Invariants
 
 1. **One writer.** Only the supervisor mutates state. The panel and the CLI enqueue commands; they never edit files behind it.
-2. **Structured reports.** A run ends by writing `report.json` through `scripts/report.mjs`. Prose never counts as a status, and "it probably needs a human" is never inferred from a summary.
+2. **Structured reports.** A run ends by writing `report.json` through `scripts/report.mjs`. Prose never counts as a status, and "it probably needs a human" is never inferred from a summary. A `ready` report for a new run also carries one passed, evidenced acceptance result per ticket criterion; review findings are structured by severity and required fix.
 3. **Push right.** A worker does the maximum before it asks. The orchestrator answers from written sources when it can, and cites the source. Anything else becomes one inbox item.
 4. **One question per run.** A run that needs a person asks once, with the work it already did attached, so the human answers once, late, with everything prepared.
-5. **A trace is checked, not trusted.** A `ready` report is accepted only if the supervisor's own checks pass and the diff stays inside the paths the ticket declared. A worker's claim of "ready" is a request for review, not a result.
+5. **A trace is checked, not trusted.** A `ready` report is accepted only if acceptance is evidenced, the supervisor's own checks pass, and the diff stays inside the paths the ticket declared. A worker's claim of "ready" is a request for review, not a result. A review pass is bound to the commit it judged, and the final integration tip gets one more check before delivery.
 6. **Memory is written by the supervisor alone.** Workers read decisions; answers become decisions; promotion to the console log is deliberate. The one thing worth more than a fast answer is an answer that never has to be given twice.
-7. **A plan is drafted before it is applied.** `plan draft` writes only the draft; `tickets/` is untouched until `plan import`. Approval refuses while a draft is unapplied. The supervisor never invents or edits tickets.
+7. **A plan is drafted before it is applied.** `plan draft` writes only the draft; `tickets/` is untouched until `plan import` or `approve`. `approve` applies a clean draft and approves it in one decision; an unclean draft writes nothing. The supervisor never invents or edits tickets.
 
 ## Layout
 

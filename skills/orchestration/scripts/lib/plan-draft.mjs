@@ -19,11 +19,12 @@ import {
 } from "./util.mjs";
 import { readCampaign, sections } from "./config.mjs";
 import { asArray, loadTickets, ticketTitle, touchesOverlap } from "./plan.mjs";
-import { PLAN_LIMITS, normalizePlan, parsePlanText, planFragmentation } from "./plan-import.mjs";
+import { PLAN_LIMITS, normalizePlan, parsePlanText, planCoverage, planFragmentation } from "./plan-import.mjs";
+import { canonicalCriterion, formatCoverage, planCoverageWarning } from "./evidence.mjs";
 import { stringifyYaml } from "./yaml.mjs";
 
 const CAMPAIGN_COMPARE = ["goal", "brief", "criteria", "constraints", "assumptions", "open_questions", "reading"];
-const TICKET_COMPARE = ["title", "kind", "blocked_by", "touches", "what", "accept", "attachments", "sources", "notes"];
+const TICKET_COMPARE = ["title", "kind", "blocked_by", "touches", "what", "accept", "covers", "attachments", "sources", "notes"];
 
 const RISK_PATHS = [
   /(^|\/)(auth|authn|authz|payments?|billing|migrations?|secrets?|infra|terraform|helm|k8s)(?=$|[/_.-])/i,
@@ -67,6 +68,7 @@ export function canonicalPlan(plan) {
       touches: ticket.touches,
       what: ticket.what,
       accept: ticket.accept,
+      covers: ticket.covers || [],
       attachments: ticket.attachments,
       sources: ticket.sources,
       notes: ticket.notes,
@@ -78,12 +80,12 @@ export function canonicalText(plan) {
   return stringifyYaml(canonicalPlan(plan));
 }
 
-function readDoc(file, { allowedKinds = null, strict = true } = {}) {
+function readDoc(file, { allowedKinds = null, strict = true, slug = null } = {}) {
   if (!exists(file)) return null;
   const text = readText(file, "");
   try {
     const parsed = parsePlanText(text);
-    const plan = normalizePlan(parsed, { allowedKinds, requireAssumptions: false });
+    const plan = normalizePlan(parsed, { allowedKinds, requireAssumptions: false, slug });
     return { file, text, plan, hash: planHash(text), error: null };
   } catch (err) {
     if (strict) throw err;
@@ -93,7 +95,11 @@ function readDoc(file, { allowedKinds = null, strict = true } = {}) {
 
 export function readDraft(root, slug, options = {}) {
   const file = draftFile(root, slug);
-  const doc = readDoc(file, { allowedKinds: options.allowedKinds || null, strict: Boolean(options.strict) });
+  const doc = readDoc(file, {
+    allowedKinds: options.allowedKinds || null,
+    strict: Boolean(options.strict),
+    slug,
+  });
   if (!doc) return { exists: false, file, text: "", plan: null, hash: null, error: null, updatedAt: null };
   const stat = fs.statSync(file);
   return {
@@ -109,7 +115,7 @@ export function readDraft(root, slug, options = {}) {
 
 export function readPreviousDraft(root, slug, options = {}) {
   const file = previousDraftFile(root, slug);
-  const doc = readDoc(file, { allowedKinds: options.allowedKinds || null, strict: false });
+  const doc = readDoc(file, { allowedKinds: options.allowedKinds || null, strict: false, slug });
   if (!doc) return { exists: false, file, text: "", plan: null, hash: null, error: null };
   return { exists: true, file, text: doc.text, plan: doc.plan, hash: doc.hash, error: doc.error };
 }
@@ -143,7 +149,7 @@ export function currentPlan(root, slug) {
     version: 1,
     goal: (campaign.sections.goal || "").trim(),
     brief: (campaign.sections.brief || "").trim(),
-    criteria: criteriaFromSection(campaign.sections["acceptance criteria"]),
+    criteria: [...new Set(criteriaFromSection(campaign.sections["acceptance criteria"]).map(canonicalCriterion))],
     constraints: (campaign.sections.constraints || "").trim(),
     assumptions: cleanSection(campaign.sections.assumptions),
     open_questions: cleanSection(campaign.sections["open questions"]),
@@ -156,12 +162,13 @@ export function currentPlan(root, slug) {
       touches: asArray(ticket.data.touches),
       what: ticket.what,
       accept: ticket.criteria.map((criterion) => criterion.text),
+      covers: asArray(ticket.data.covers),
       attachments: asArray(ticket.data.attachments),
       sources: asArray(ticket.data.sources),
       notes: ticket.notes,
     })),
   };
-  return normalizePlan(plan, { requireAssumptions: false, allowEmpty: true });
+  return normalizePlan(plan, { requireAssumptions: false, allowEmpty: true, slug });
 }
 
 export function readAppliedBase(root, slug) {
@@ -194,6 +201,7 @@ export function deriveAppliedAudit(root, slug, { appliedAt = null } = {}) {
       key: ticket.key,
       title: actual ? ticketTitle(actual) : ticket.title,
       kind: actual?.data.kind || ticket.kind,
+      covers: ticket.covers || asArray(actual?.data.covers),
     };
   });
   const seen = new Set(rows.map((ticket) => ticket.key));
@@ -203,6 +211,7 @@ export function deriveAppliedAudit(root, slug, { appliedAt = null } = {}) {
     rows.push({ id: ticket.data.id, key, title: ticketTitle(ticket), kind: ticket.data.kind });
   }
   const text = applied.text || canonicalText(applied.plan);
+  const coverage = planCoverage(applied.plan);
   return {
     version: 1,
     hash: planHash(text),
@@ -211,6 +220,7 @@ export function deriveAppliedAudit(root, slug, { appliedAt = null } = {}) {
     tickets: rows,
     assumptions: applied.plan.assumptions || [],
     openQuestions: applied.plan.open_questions || [],
+    coverage,
   };
 }
 
@@ -347,6 +357,9 @@ export function planWarnings({ plan, contextBytes = 0, maxConcurrent = 4 }) {
       text: `${plan.open_questions.length} open question${plan.open_questions.length === 1 ? "" : "s"} block import until answered or --accept-open is passed.`,
     });
   }
+  const coverage = planCoverage(plan);
+  const coverageWarning = planCoverageWarning(coverage);
+  if (coverageWarning) warnings.push(coverageWarning);
   return warnings;
 }
 
@@ -358,10 +371,11 @@ function writePrevious(root, slug, text) {
 }
 
 export function draftPlan({ root, slug, plan, allowedKinds = null, maxConcurrent = 4, contextBytes = 0 }) {
-  const normalized = normalizePlan(plan, { allowedKinds });
+  const normalized = normalizePlan(plan, { allowedKinds, slug });
   const previous = readDraft(root, slug, { allowedKinds });
   const applied = readAppliedBase(root, slug);
   const warnings = planWarnings({ plan: normalized, contextBytes, maxConcurrent });
+  const coverage = planCoverage(normalized);
   const text = canonicalText(normalized);
   const file = draftFile(root, slug);
   ensureDir(path.dirname(file));
@@ -380,6 +394,8 @@ export function draftPlan({ root, slug, plan, allowedKinds = null, maxConcurrent
     deltaPrevious,
     deltaApplied: diffPlans(applied.plan, normalized),
     fragmentation: planFragmentation(normalized),
+    coverage,
+    coverageText: formatCoverage(coverage),
     warnings,
   };
 }
@@ -390,6 +406,7 @@ export function refreshDraft(root, slug, { allowedKinds = null, maxConcurrent = 
   if (draft.error) throw new UserError(`The draft plan is invalid: ${draft.error}`);
   const previous = readPreviousDraft(root, slug, { allowedKinds });
   const applied = readAppliedBase(root, slug);
+  const coverage = planCoverage(draft.plan);
   return {
     ...draft,
     previous: previous.plan,
@@ -397,8 +414,34 @@ export function refreshDraft(root, slug, { allowedKinds = null, maxConcurrent = 
     deltaPrevious: previous.plan ? diffPlans(previous.plan, draft.plan) : null,
     deltaApplied: diffPlans(applied.plan, draft.plan),
     fragmentation: planFragmentation(draft.plan),
+    coverage,
+    coverageText: formatCoverage(coverage),
     warnings: planWarnings({ plan: draft.plan, contextBytes, maxConcurrent }),
   };
+}
+
+/* One decision means the draft must be safe to apply as-is. A draft that
+   still asks a question, fragments the graph, or fails to normalize is not
+   clean, and `approve` must refuse it with the same reasons the panel shows. */
+export function draftReadiness(draft) {
+  if (!draft?.exists) return { clean: false, blockers: ["no draft plan"], coverage: null };
+  const blockers = [];
+  if (draft.error) blockers.push(draft.error);
+  if (!draft.plan) return { clean: false, blockers, coverage: null };
+  if (!draft.plan.tickets.length) blockers.push("the draft has no tickets");
+  if (draft.plan.open_questions.length) {
+    blockers.push(
+      `${draft.plan.open_questions.length} open question${draft.plan.open_questions.length === 1 ? "" : "s"}: ${draft.plan.open_questions.join("; ")}`,
+    );
+  }
+  const fragmentation = planFragmentation(draft.plan);
+  if (fragmentation.blocking) {
+    blockers.push(
+      `the draft is fragmented: ${fragmentation.small.length} of ${draft.plan.tickets.length} tickets are one-path, one-criterion slices`,
+    );
+  }
+  const coverage = planCoverage(draft.plan);
+  return { clean: blockers.length === 0, blockers, coverage };
 }
 
 export function discardDraft(root, slug) {
@@ -417,6 +460,7 @@ export function writeApplied({ root, slug, plan, result }) {
   const text = canonicalText(plan);
   ensureDir(path.dirname(file));
   fs.writeFileSync(file, text);
+  const coverage = planCoverage(plan);
   const audit = {
     version: 1,
     hash: planHash(text),
@@ -426,9 +470,11 @@ export function writeApplied({ root, slug, plan, result }) {
       key: ticket.key,
       title: ticket.title,
       kind: ticket.kind,
+      covers: ticket.covers || [],
     })),
     assumptions: plan.assumptions,
     openQuestions: plan.open_questions,
+    coverage,
   };
   writeJson(appliedAuditFile(root, slug), audit);
   return audit;
@@ -459,6 +505,8 @@ export function formatPlanDiff(result, { label = "Plan draft", verbose = false }
   lines.push(
     `Runs: ~${count * 2} (${count} work + ${count} review) before retries · ${frontier} ready to start · ${fragmentation.small.length} small · ${fragmentation.mergeCandidates.length} merge candidate${fragmentation.mergeCandidates.length === 1 ? "" : "s"}`,
   );
+  const coverage = result.coverage || planCoverage(result.plan);
+  lines.push(formatCoverage(coverage));
   lines.push(deltaLine(result.deltaPrevious, "Since your last draft"));
   lines.push(...deltaDetails(result.deltaPrevious));
   lines.push(deltaLine(result.deltaApplied, "Apply will change"));

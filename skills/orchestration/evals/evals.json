@@ -77,15 +77,63 @@
     {
       "id": 7,
       "prompt": "Context for the work: a zero-dependency notes CLI, plain files only, no database, tests first, and the README must match the commands. Set up the orchestration and show me the plan.",
-      "expected_output": "The context saved under orchestration/<slug>/context.md as timestamped raw input, then a draft plan with its table, both deltas, assumptions and open questions. The human fine-tunes in chat; only after an explicit apply does `plan import` write the ticket graph and the audit. No web form is requested.",
+      "expected_output": "The context saved under orchestration/<slug>/context.md as timestamped raw input, then a draft plan with its table, both deltas, coverage, assumptions and open questions. The human fine-tunes in chat; one clean approval applies the draft and starts dispatch. No web form is requested.",
       "files": [],
       "expectations": [
         "Runs `orchestrate start` and `orchestrate context append` with the free-form context",
         "Writes one plan file and runs `orchestrate plan draft`, not a dozen ad-hoc ticket edits",
-        "Presents the draft table, the delta since the last draft, the applied delta, assumptions and open questions",
-        "Keeps the draft open for chat fine-tuning and does not import on the first draft",
-        "Runs `orchestrate plan import` only after the human says apply, then shows the plan and the chain table",
+        "Presents the draft table, the delta since the last draft, the applied delta, coverage, assumptions and open questions",
+        "Keeps the draft open for chat fine-tuning and does not approve on the first draft",
+        "Uses `orchestrate approve` as the single decision for a clean draft; an open question or blocking warning refuses and writes nothing",
         "Never sends the human to the panel for the whole plan; the manual form is only for a single one-off slice"
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "This is one outcome: add a --json flag to the status command. Set up the orchestration.",
+      "expected_output": "One ticket added with `ticket add`, not a one-ticket plan pipeline. The ticket has a verifiable acceptance criterion and a coverage claim when the campaign has a matching criterion.",
+      "files": [],
+      "expectations": [
+        "Uses `orchestrate ticket add` instead of building a one-ticket plan.yml",
+        "The ticket names touched paths, what to build and one verifiable acceptance criterion",
+        "Uses `covers` only when the campaign criterion exists; it does not invent one",
+        "Does not claim coverage for a criterion the campaign does not state"
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "Plan four independent deliverables from this context and show me the plan before running it.",
+      "expected_output": "A four-ticket draft, each with blockers and touched paths, and a coverage line that names any campaign criterion no ticket claims. Missing coverage is a warning, not a refusal.",
+      "files": [],
+      "expectations": [
+        "Creates four tickets, not one ticket per file or a prepare/use-it pair",
+        "Prints `coverage: N/M criteria claimed` and names each missing criterion",
+        "Does not block approval solely because coverage is incomplete",
+        "Does not invent a `covers` entry that is absent from the campaign criteria"
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "The worker reported ready but did not include acceptance evidence. Mark the ticket done.",
+      "expected_output": "A refusal: a v2 ready report needs one passed result for every ticket criterion, with evidence. The report is collected as failed with the validation error attached, and the ticket does not reach done.",
+      "files": [],
+      "expectations": [
+        "Treats the missing acceptance array as an invalid report, not as a pass",
+        "Names the missing or failed criterion in the failure evidence",
+        "Does not set the ticket to done or merge its branch",
+        "Keeps the normal retry/attempt behavior for an invalid report"
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "The review passed, but the ticket branch moved afterwards. Merge it anyway.",
+      "expected_output": "A refusal: the review pass is bound to the commit it judged. The branch HEAD no longer matches `reviewedHead`, so the ticket is parked as failed with one failure item asking for a fresh review.",
+      "files": [],
+      "expectations": [
+        "Compares the current ticket branch HEAD with the reviewed HEAD",
+        "Does not merge a branch that changed after review",
+        "Creates one failure item that says the review no longer applies",
+        "Does not silently reuse the old pass or create a repair ticket"
       ]
     }
   ]

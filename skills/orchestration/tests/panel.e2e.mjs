@@ -285,6 +285,40 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     assert.equal(overviewPage.briefingOpen, false, "healthy briefing is collapsed");
     assert.match(overviewPage.next, /Approve the plan|delivery is waiting|draft plan/, "the next action names the agent step");
 
+    const evidenceStateDir = path.join(dir, ".orchestration", "campaigns", "demo");
+    fs.mkdirSync(evidenceStateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(evidenceStateDir, "state.json"),
+      JSON.stringify({
+        campaign: "demo",
+        stage: "awaiting_approval",
+        tickets: {
+          "01": {
+            stage: "done",
+            acceptance: [{ criterion: "Works.", status: "passed", evidence: "ran the fixture check" }],
+            findings: [
+              {
+                id: "F1",
+                severity: "blocker",
+                file: "src/cli.ts",
+                line: 42,
+                problem: "argv is sliced twice",
+                requiredFix: "slice argv once",
+              },
+            ],
+            reviewedHead: "abc12345deadbeef",
+            reviewedBase: "base12345",
+            reviewModel: MODELS.backup,
+            workerModel: MODELS.strong,
+            reviewSameAsWorker: false,
+            gateCycles: 1,
+          },
+        },
+        runs: {},
+        slots: {},
+        spend: { tokens: 0, dollars: 0, byModel: {} },
+      }),
+    );
     await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo/tickets` });
     await sleep(600);
     const tickets = await send("Runtime.evaluate", {
@@ -308,6 +342,7 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
           edit: Boolean(document.querySelector('[name="e_what"]')),
           commands: document.querySelectorAll("#drawer .command-row").length,
           title: document.querySelector("#drawer h1")?.textContent || "",
+          evidence: document.querySelector("#drawer .evidence")?.textContent || "",
         });
       })()`,
       returnByValue: true,
@@ -317,6 +352,10 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     assert.equal(drawerPage.edit, false, "the ticket is not editable in the panel");
     assert.ok(drawerPage.commands >= 1, "the drawer hands edits back to the agent");
     assert.match(drawerPage.title, /01/);
+    assert.match(drawerPage.evidence, /ran the fixture check/, "acceptance evidence is in the drawer");
+    assert.match(drawerPage.evidence, /argv is sliced twice/, "findings are in the drawer");
+    assert.match(drawerPage.evidence, /abc12345/, "the reviewed revision is in the drawer");
+    assert.match(drawerPage.evidence, new RegExp(MODELS.backup.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 
     const board = await send("Runtime.evaluate", {
       expression: `(() => {
@@ -394,6 +433,46 @@ tickets:
     assert.match(draftPage.draft, /1 ticket/);
     assert.match(draftPage.next, /draft plan|delivery is waiting/i, "the next action stays actionable");
     assert.equal(draftPage.assumptions, true);
+    assert.doesNotMatch(draftPage.draft, /Approve and run/, "an open-question draft has no approve action");
+    assert.match(draftPage.draft, /open question|not ready/i, "the draft names why it cannot be approved");
+
+    fs.writeFileSync(
+      path.join(stateDir, "plan.yml"),
+      `version: 1
+goal: Panel.
+brief: B.
+criteria:
+  - Shown.
+constraints: C.
+assumptions:
+  - Plain files only.
+open_questions: []
+reading: README.md
+tickets:
+  - key: work
+    title: Work
+    kind: code
+    touches: [src/**]
+    what: It.
+    accept: [Works.]
+    covers: [Shown.]
+    sources: [README.md]
+`,
+    );
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo` });
+    await sleep(800);
+    const cleanDraftView = await send("Runtime.evaluate", {
+      expression: `JSON.stringify({
+        draft: document.querySelector(".draft-plan")?.textContent || "",
+        approve: Boolean(document.querySelector('[data-act="approve-campaign"]')),
+        coverage: document.querySelector(".draft-plan .coverage-table")?.textContent || "",
+      })`,
+      returnByValue: true,
+    });
+    const cleanDraft = JSON.parse(cleanDraftView.result.result.value);
+    assert.equal(cleanDraft.approve, true, "a clean draft offers one approve action");
+    assert.match(cleanDraft.draft, /Approve and run/);
+    assert.match(cleanDraft.coverage, /Shown\./, "the draft shows its coverage matrix");
 
     await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo/history` });
     await sleep(700);

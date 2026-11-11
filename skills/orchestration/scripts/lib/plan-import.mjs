@@ -11,6 +11,13 @@ import { readCampaign } from "./config.mjs";
 import { asArray, loadPlan, loadTickets, ticketsDir, touchesOverlap } from "./plan.mjs";
 import { joinFrontmatter, parseYaml } from "./yaml.mjs";
 import { slugify } from "./create.mjs";
+import {
+  coverageOf,
+  formatCoverage,
+  normalizeCovers,
+  normalizeCriteria,
+  protectedPathReason,
+} from "./evidence.mjs";
 
 export const PLAN_LIMITS = { warnTickets: 8, maxTickets: 16, warnContextBytes: 100_000 };
 
@@ -33,6 +40,7 @@ const TICKET_FIELDS = new Set([
   "touches",
   "what",
   "accept",
+  "covers",
   "attachments",
   "sources",
   "notes",
@@ -119,7 +127,10 @@ function checkAttachment(value) {
   return file;
 }
 
-export function normalizePlan(plan, { allowedKinds = null, requireAssumptions = true, allowEmpty = false } = {}) {
+export function normalizePlan(
+  plan,
+  { allowedKinds = null, requireAssumptions = true, allowEmpty = false, slug = null } = {},
+) {
   if (!plan || typeof plan !== "object" || Array.isArray(plan))
     throw new UserError("A plan is an object with goal, brief and tickets");
   for (const key of Object.keys(plan)) {
@@ -137,6 +148,14 @@ export function normalizePlan(plan, { allowedKinds = null, requireAssumptions = 
       "Use `assumptions: []` when there is nothing to assume; the list is where the agent states what it inferred.",
     ]);
   }
+  const criteriaResult = normalizeCriteria(plan.criteria);
+  if (criteriaResult.duplicates.length) {
+    throw new UserError(`duplicate campaign criterion: ${criteriaResult.duplicates.join("; ")}`, [
+      ...criteriaResult.duplicates.map((criterion) => `! ${criterion}`),
+      "State each criterion once; tickets may share a criterion through `covers`.",
+    ]);
+  }
+  const criteria = criteriaResult.criteria;
   const specs = Array.isArray(plan.tickets) ? plan.tickets : [];
   if (!specs.length && !allowEmpty) throw new UserError("A plan needs at least one ticket");
   if (specs.length > PLAN_LIMITS.maxTickets)
@@ -158,8 +177,22 @@ export function normalizePlan(plan, { allowedKinds = null, requireAssumptions = 
       throw new UserError(`ticket "${title}" has unknown kind "${kind}"`, [`one of ${allowedKinds.join(", ")}`]);
     const touches = stringList(raw.touches);
     if (!touches.length) throw new UserError(`ticket "${title}" has no touches`);
+    const protectedTouch = touches.map((touch) => [touch, protectedPathReason(touch, slug)]).find(([, reason]) => reason);
+    if (protectedTouch) {
+      throw new UserError(`ticket "${title}" may not touch a protected path: ${protectedTouch[1]}`, [
+        protectedTouch[1],
+        "Campaign plans, supervisor state, git internals, environment files and secrets belong to the plan commands, not a worker.",
+      ]);
+    }
     const accept = stringList(raw.accept);
     if (!accept.length) throw new UserError(`ticket "${title}" has no acceptance criteria`);
+    const coverResult = normalizeCovers(raw.covers, criteria, `ticket "${title}"`);
+    if (coverResult.errors.length) {
+      throw new UserError(`ticket "${title}" has an invalid coverage claim: ${coverResult.errors.join("; ")}`, [
+        ...coverResult.errors,
+        "Every `covers` entry must exactly match a campaign criterion after whitespace normalization.",
+      ]);
+    }
     const attachments = stringList(raw.attachments).map(checkAttachment);
     return {
       key: normalizeKey(raw.key, title, usedKeys),
@@ -169,6 +202,7 @@ export function normalizePlan(plan, { allowedKinds = null, requireAssumptions = 
       touches,
       what: String(raw.what || "").trim() || title,
       accept,
+      covers: coverResult.covers,
       attachments,
       sources: stringList(raw.sources),
       notes: String(raw.notes || "").trim(),
@@ -184,7 +218,7 @@ export function normalizePlan(plan, { allowedKinds = null, requireAssumptions = 
   return {
     goal,
     brief: textBlock(plan.brief),
-    criteria: stringList(plan.criteria),
+    criteria,
     constraints: textBlock(plan.constraints),
     assumptions: stringList(plan.assumptions),
     open_questions: stringList(plan.open_questions),
@@ -196,6 +230,16 @@ export function normalizePlan(plan, { allowedKinds = null, requireAssumptions = 
 /* A slice is “small” when it has one touched path and one acceptance
    criterion. Four or more small slices in a plan is fragmentation, not
    decomposition: each one pays for a worktree, a work run and a review run. */
+/* Coverage is a property of the plan, not of a workflow stage. Missing
+   coverage is visible but never blocks: a criterion can be a global
+   constraint that no single ticket owns. */
+export function planCoverage(plan) {
+  return coverageOf({
+    criteria: plan?.criteria || [],
+    tickets: (plan?.tickets || []).map((ticket) => ({ key: ticket.key, covers: ticket.covers || [] })),
+  });
+}
+
 export function planFragmentation(plan) {
   const tickets = plan.tickets || [];
   const small = tickets.filter((ticket) => ticket.touches.length <= 1 && ticket.accept.length <= 1);
@@ -325,7 +369,8 @@ function restore(snap) {
    new keys get the next ids. `prune` removes keyed tickets missing from the
    plan, but only when `canRemove(id)` agrees (the caller checks runs). */
 export function importPlan({ root, slug, plan, allowedKinds = null, prune = false, canRemove = null, acceptOpen = false, acceptFragmented = false }) {
-  const normalized = normalizePlan(plan, { allowedKinds });
+  const normalized = normalizePlan(plan, { allowedKinds, slug });
+  const coverage = planCoverage(normalized);
   const fragmentation = planFragmentation(normalized);
   if (fragmentation.blocking && !acceptFragmented) {
     throw new UserError("The plan is too fragmented", [
@@ -396,6 +441,7 @@ export function importPlan({ root, slug, plan, allowedKinds = null, prune = fals
       const target = spec.current?.file || path.join(dir, `${spec.id}-${slugify(spec.title)}.md`);
       const data = { id: spec.id, key: spec.key, kind: spec.kind, touches: spec.touches };
       if (spec.blockedBy.length) data.blocked_by = spec.blockedBy;
+      if (spec.covers.length) data.covers = spec.covers;
       if (spec.attachments.length) data.attachments = spec.attachments;
       if (spec.sources.length) data.sources = spec.sources;
       const content = joinFrontmatter(data, ticketBody(spec));
@@ -424,6 +470,7 @@ export function importPlan({ root, slug, plan, allowedKinds = null, prune = fals
         title: spec.title,
         kind: spec.kind,
         blocked_by: spec.blockedBy,
+        covers: spec.covers,
         file: spec.current?.file || path.join(dir, `${spec.id}-${slugify(spec.title)}.md`),
       })),
       created,
@@ -432,6 +479,8 @@ export function importPlan({ root, slug, plan, allowedKinds = null, prune = fals
       idToKey: Object.fromEntries(idToKey),
       assumptions: normalized.assumptions,
       openQuestions: normalized.open_questions,
+      coverage,
+      coverageText: formatCoverage(coverage),
       plan: normalized,
       fragmentation,
     };

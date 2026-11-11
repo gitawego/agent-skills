@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { SKILL_DIR, REPORT_SCRIPT, exists, readText } from "./util.mjs";
 import { asArray } from "./plan.mjs";
+import { renderFindings } from "./evidence.mjs";
 
 const CONTRACT_FILE = path.join(SKILL_DIR, "references", "contract.md");
 const ROLES_DIR = path.join(SKILL_DIR, "references", "roles");
@@ -61,6 +62,13 @@ const QUESTION_RULE = [
   "If you ask, that is the end of this turn: report `needs_answer` and stop. Do not guess and continue.",
 ].join(" ");
 
+const ACCEPTANCE_RULE = [
+  "A `ready` report must carry one result for every acceptance criterion below.",
+  "Write a JSON array to the system temp directory and pass it with `--acceptance-file`:",
+  '  [{"criterion":"<exact criterion text>","status":"passed","evidence":"the command or observation that proves it"}]',
+  "Every result must be `passed`. If one is `failed`, report `failed` instead; the supervisor reruns the checks and will not treat a partial pass as done.",
+].join("\n");
+
 export function workerPrompt({ campaign, ticket, ticketTitle, runId, workdir, base, kind, decisions, sections, data, attachments = [] }) {
   return template("worker-prompt.md", {
     CAMPAIGN: campaign,
@@ -78,12 +86,21 @@ export function workerPrompt({ campaign, ticket, ticketTitle, runId, workdir, ba
     CONSTRAINTS: (sections.constraints || "(none)").trim(),
     DECISIONS: renderDecisions(decisions),
     QUESTION_RULE,
+    ACCEPTANCE_RULE,
     CONTEXT_CMD: `node ${path.join(SKILL_DIR, "scripts", "orchestrate.mjs")} context`,
     REPORT_CMD: `node ${REPORT_SCRIPT}`,
   });
 }
 
-export function reviewPrompt({ campaign, ticket, ticketTitle, runId, workdir, base, kind, data, landing, attachments = [] }) {
+const FINDINGS_RULE = [
+  "Report findings as a JSON array with `--findings-file`; do not bury them in prose:",
+  '  [{"id":"F1","severity":"blocker","file":"src/cli.ts","line":42,"problem":"argv is sliced twice","requiredFix":"slice once and add a regression test"}]',
+  "Severity is `low`, `medium`, `high`, or `blocker`.",
+  "`ready` may carry low/medium findings; any high or blocker finding means `failed`.",
+  "A `failed` review needs at least one high or blocker finding. A failure with only low/medium findings is a `ready` with warnings.",
+].join("\n");
+
+export function reviewPrompt({ campaign, ticket, ticketTitle, runId, workdir, base, kind, data, landing, attachments = [], reviewedHead = null }) {
   const diffInstructions =
     landing === "directory"
       ? [
@@ -105,6 +122,8 @@ export function reviewPrompt({ campaign, ticket, ticketTitle, runId, workdir, ba
     ACCEPTANCE: renderCriteria(data),
     ATTACHMENTS: renderAttachments(attachments),
     DIFF: diffInstructions,
+    FINDINGS_RULE,
+    REVIEWED_HEAD: reviewedHead || "(no commit: directory landing)",
     REPORT_CMD: `node ${REPORT_SCRIPT}`,
   });
 }
@@ -130,7 +149,7 @@ export function judgePrompt({ campaign, ticket, ticketTitle, question, summary, 
 export function resumePrompt({ ticket, answer, citation, findings, attachments = [] }) {
   const lines = [];
   if (findings) {
-    const detail = String(findings).trim();
+    const detail = Array.isArray(findings) ? renderFindings(findings) : String(findings).trim();
     lines.push("Your work was reviewed and sent back. Blocking findings:", "");
     lines.push(detail && detail !== "check \"tests\" failed:" ? detail : "The gate failed and recorded no detail.");
     lines.push("", "Run the campaign's checks yourself now, fix everything they report, then report again.");

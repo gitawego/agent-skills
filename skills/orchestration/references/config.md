@@ -139,7 +139,7 @@ A binding may change at any time while nothing is running: stop the supervisor, 
 
 ## The campaign
 
-`orchestration/<campaign>/campaign.md` is committed: the plan deserves diffs and history. Frontmatter holds config; the body holds the work. `context.md` beside it is the raw, append-only human input (`orchestrate context append`); the brief is the agent's synthesis of that input; `orchestrate plan draft` writes a reviewable draft and `orchestrate plan import` applies the body and ticket graph in one validated pass.
+`orchestration/<campaign>/campaign.md` is committed: the plan deserves diffs and history. Frontmatter holds config; the body holds the work. `context.md` beside it is the raw, append-only human input (`orchestrate context append`); the brief is the agent's synthesis of that input; `orchestrate plan draft` writes a reviewable draft, and `orchestrate approve` applies a clean draft and approves it in one decision. `orchestrate plan import` remains the apply-only path for explicit and auto workflows.
 
 ```markdown
 ---
@@ -243,6 +243,7 @@ id: 03
 kind: design
 blocked_by: [01, 02]
 touches: ["src/api/**", "src/db/migrations/**"]
+covers: ["The shell starts in under 200 ms"]
 attachments: ["refs/shelf.png"]
 sources: ["src/app/router.ts", "docs/architecture.md"]
 ---
@@ -266,7 +267,8 @@ Rules:
 - **Vertical slice.** Each ticket cuts a complete path, and is demoable or verifiable alone.
 - **One context window.** If a competent worker cannot finish it in one session, split it.
 - **Blockers are real edges.** A ticket with no blockers can start immediately. A cycle is a planning error and fails validation.
-- **`touches` is a promise about blast radius.** Globs that the ticket will modify. The scheduler refuses to run two tickets whose `touches` can overlap, so parallelism never manufactures a merge conflict. Over-declaring costs throughput; under-declaring costs a parked ticket.
+- **`touches` is a promise about blast radius.** Globs that the ticket will modify. The scheduler refuses to run two tickets whose `touches` can overlap, so parallelism never manufactures a merge conflict. Over-declaring costs throughput; under-declaring costs a parked ticket. Protected paths (`.git/`, `.orchestration/`, `.env*`, `secrets/`, `id_rsa*`, and the campaign's own `orchestration/<slug>/`) are refused; a worker cannot be authorized to edit supervisor state or the plan.
+- **`covers` maps the ticket to campaign criteria.** Optional; every entry must match a campaign criterion after whitespace normalization. A criterion may be covered by several tickets and a ticket may cover several criteria. Missing coverage is a warning, not a plan error.
 - **`kind` picks the model chain.** The planner sets it; a human may override it in the panel before approval.
 - **`attachments` carries images and PDFs.** Paths are relative to the project, must be png/jpeg/webp/gif/pdf and inside the project. The supervisor sends images as ACP image blocks and PDFs as embedded resource blocks (and both as `@file` context to pi); the run records their hashes, never the payload. A model that cannot read the attachment kind is refused at dispatch (the next capable model in the chain is tried first). Images above 512 KB are downscaled to a 1600 px long edge and WebP when ImageMagick is available.
 - **Editing keeps the file.** `ticket edit` rewrites the heading, frontmatter and body in place: the filename is the ticket's address, and renaming it would churn history for no gain. A ticket can be removed once nothing is blocked by it.

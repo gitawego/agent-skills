@@ -20,6 +20,14 @@ import { listItems } from "../scripts/lib/inbox.mjs";
 
 const BODY = `## Goal\n\nShip it.\n\n## Brief\n\nB.\n\n## Acceptance criteria\n\n- [ ] ok\n\n## Constraints\n\nThe order is oldest first.\n\n## What to read first\n\n- **Files:** README.md\n`;
 
+function ready(summary, criteria = ["The file exists."]) {
+  return {
+    status: "ready",
+    summary,
+    acceptance: criteria.map((criterion) => ({ criterion, status: "passed", evidence: `fixture: ${criterion}` })),
+  };
+}
+
 function setup({ tickets = 1 } = {}) {
   const box = sandbox();
   const dir = project(path.join(box, "repo"));
@@ -157,9 +165,9 @@ test("the engine answers a repeated question without spending a judge run", asyn
     question: "Which backfill order?",
   });
   scenario({
-    work: [{ status: "needs_answer", summary: "half", question: { text: "Which backfill order?" } }, { status: "ready", summary: "rest" }],
+    work: [{ status: "needs_answer", summary: "half", question: { text: "Which backfill order?" } }, ready("rest")],
     judge: [],
-    review: [{ status: "ready", summary: "clean" }],
+    review: [ready("clean")],
   });
   const view = await until(dir, slug, (v) => v.tickets[0].stage === "done");
   assert.equal(view.runs.filter((r) => r.role === "judge").length, 0, "no judge was asked");
@@ -169,9 +177,9 @@ test("the engine answers a repeated question without spending a judge run", asyn
 test("a human answer becomes a decision, so the next ticket can cite it", async () => {
   const { dir, slug } = setup();
   scenario({
-    work: [{ status: "needs_answer", summary: "half", question: { text: "Which backfill order?" } }, { status: "ready", summary: "rest" }],
+    work: [{ status: "needs_answer", summary: "half", question: { text: "Which backfill order?" } }, ready("rest")],
     judge: [{ status: "blocked", summary: "no source" }],
-    review: [{ status: "ready", summary: "clean" }],
+    review: [ready("clean")],
   });
   await until(dir, slug, (v) => v.inbox.some((i) => i.kind === "question"));
   const item = listItems(dir, slug, { status: "open" }).find((i) => i.kind === "question");
@@ -187,9 +195,9 @@ test("a human answer becomes a decision, so the next ticket can cite it", async 
 test("the judge's cited answer is written down too", async () => {
   const { dir, slug } = setup();
   scenario({
-    work: [{ status: "needs_answer", summary: "half", question: { text: "Which backfill order?" } }, { status: "ready", summary: "rest" }],
+    work: [{ status: "needs_answer", summary: "half", question: { text: "Which backfill order?" } }, ready("rest")],
     judge: [{ status: "ready", summary: "Oldest first.", next: "cite: campaign.md § Constraints" }],
-    review: [{ status: "ready", summary: "clean" }],
+    review: [ready("clean")],
   });
   await until(dir, slug, (v) => v.tickets[0].stage === "done");
   const decisions = readDecisions(dir, slug);
@@ -201,7 +209,7 @@ test("the judge's cited answer is written down too", async () => {
 test("delivery leaves a close report with the tickets and the decisions", async () => {
   const { dir, slug } = setup();
   appendDecision(dir, slug, { text: "Oldest first.", cite: "campaign.md", by: "human", paths: [] });
-  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  scenario({ work: [ready("wrote it")], review: [ready("clean")] });
   await until(dir, slug, (v) => v.stage === "delivered");
   const file = path.join(dir, "orchestration", slug, "CLOSE.md");
   assert.ok(fs.existsSync(file));
@@ -243,9 +251,9 @@ test("a diff outside the declared paths is sent back with the file named", async
   commitAll(dir);
   scenario({
     work: [
-      { status: "ready", summary: "one" },
-      { status: "ready", summary: "two" },
-      { status: "ready", summary: "three" },
+      ready("one", ["It exists."]),
+      ready("two", ["It exists."]),
+      ready("three", ["It exists."]),
     ],
     review: [],
   });

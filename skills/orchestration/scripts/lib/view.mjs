@@ -18,8 +18,9 @@ import { campaignDecisionsFile } from "./util.mjs";
 import { resolveQuotas } from "./quotas.mjs";
 import { costOf, summarizeCost, telemetryOf } from "./telemetry.mjs";
 import { usageFromLog } from "./runs.mjs";
-import { planFragmentation, readContext } from "./plan-import.mjs";
-import { deriveAppliedAudit, readAppliedAudit, readDraft } from "./plan-draft.mjs";
+import { planCoverage, planFragmentation, readContext } from "./plan-import.mjs";
+import { deriveAppliedAudit, draftReadiness, readAppliedAudit, readDraft } from "./plan-draft.mjs";
+import { formatCoverage } from "./evidence.mjs";
 import { attentionOf } from "./attention.mjs";
 
 export function projectName(root) {
@@ -29,6 +30,14 @@ export function projectName(root) {
 function cleanSection(value) {
   const text = String(value || "").trim();
   return text === "None." ? "" : text;
+}
+
+function criteriaFromText(value) {
+  return String(value || "")
+    .split("\n")
+    .map((line) => line.match(/^\s*-\s*\[( |x|X)\]\s*(.+)$/))
+    .filter(Boolean)
+    .map((match) => match[2].trim());
 }
 
 /* What the panel should point at next. The panel never decides this with a
@@ -91,6 +100,28 @@ export function deriveNextAction({
       command: "orchestrate inbox",
     };
   }
+  if (draft?.exists && !["running", "delivered", "archived"].includes(stage)) {
+    if (draft.clean) {
+      return {
+        actor: "you",
+        text: "Approve the draft and run it — one decision.",
+        command: `orchestrate approve ${slug}`,
+      };
+    }
+    if (draft.error) {
+      return {
+        actor: "you",
+        text: `The draft plan is invalid: ${draft.error}`,
+        command: `orchestrate plan show ${slug}`,
+      };
+    }
+    const reason = draft.blockers?.[0] || (draft.blocking ? "the draft is fragmented" : null);
+    return {
+      actor: "you",
+      text: reason ? `The draft is not ready: ${reason}` : "Review the draft plan in your agent session.",
+      command: `orchestrate plan diff ${slug}`,
+    };
+  }
   if (stage === "paused") {
     return {
       actor: "you",
@@ -100,27 +131,6 @@ export function deriveNextAction({
   }
   if (stage === "running") {
     return { actor: "supervisor", text: "Supervisor is dispatching the frontier.", command: null };
-  }
-  if (draft?.exists) {
-    if (draft.blocking) {
-      return {
-        actor: "you",
-        text: "The draft is fragmented; merge small slices before importing.",
-        command: `orchestrate plan diff ${slug}`,
-      };
-    }
-    if (draft.error) {
-      return {
-        actor: "you",
-        text: "The draft plan is invalid; fix it in your agent session.",
-        command: `orchestrate plan show ${slug}`,
-      };
-    }
-    return {
-      actor: "you",
-      text: "Review the draft plan in your agent session.",
-      command: `orchestrate plan diff ${slug}`,
-    };
   }
   if (stage === "awaiting_approval") {
     return { actor: "you", text: "Approve the plan and bindings.", command: `orchestrate approve ${slug}` };
@@ -251,7 +261,15 @@ export function campaignView(root, slug) {
   const attention = attentionOf(campaignEvents);
   const context = readContext(root, slug);
   const draft = readDraft(root, slug);
+  const readiness = draftReadiness(draft);
   const planAudit = readAppliedAudit(root, slug) || deriveAppliedAudit(root, slug, { appliedAt: state.approvedAt || null });
+  const coverage = planCoverage({
+    criteria: plan.criteria || criteriaFromText(campaign.sections["acceptance criteria"]),
+    tickets: plan.ordered.map((ticket) => ({
+      key: ticket.data.key || ticket.data.id,
+      covers: asArray(ticket.data.covers),
+    })),
+  });
   const tickets = plan.ordered.map((ticket) => {
     const entry = state.tickets[ticket.data.id] || {};
     const run = entry.run ? state.runs[entry.run] : null;
@@ -291,6 +309,16 @@ export function campaignView(root, slug) {
       updated: entry.updated || null,
       summary: entry.summary || null,
       findings: entry.findings || null,
+      acceptance: entry.acceptance || null,
+      acceptanceAt: entry.acceptanceAt || null,
+      covers: asArray(ticket.data.covers),
+      reviewedHead: entry.reviewedHead || null,
+      reviewedBase: entry.reviewedBase || null,
+      reviewModel: entry.reviewModel || null,
+      workerModel: entry.workerModel || entry.model || null,
+      reviewSameAsWorker: Boolean(entry.reviewSameAsWorker),
+      reviewStale: Boolean(entry.reviewStale),
+      reviewRound: entry.reviewRound || null,
       answer: entry.answer || null,
       sources: asArray(ticket.data.sources),
       model: entry.model || chain[0]?.model || null,
@@ -354,6 +382,10 @@ export function campaignView(root, slug) {
     planErrors: state.planErrors || [],
     spend: state.spend,
     delivery: state.delivery || null,
+    integration: state.integration || null,
+    deliveryAudit: state.deliveryAudit || null,
+    coverage,
+    coverageText: formatCoverage(coverage),
     approvedAt: state.approvedAt || null,
     planAudit,
     draft: {
@@ -377,9 +409,13 @@ export function campaignView(root, slug) {
         title: ticket.title,
         kind: ticket.kind,
         blocked_by: ticket.blocked_by,
+        covers: ticket.covers || [],
         sources: ticket.sources,
       })),
       fragmentation: draft.plan ? planFragmentation(draft.plan) : null,
+      coverage: readiness.coverage,
+      clean: readiness.clean,
+      blockers: readiness.blockers,
     },
     context: {
       file: context.file,
@@ -421,7 +457,13 @@ export function campaignView(root, slug) {
       delivery: state.delivery || null,
       base: campaign.data.base || "main",
       cleaned: attention.cleanups > 0,
-      draft: { exists: draft.exists, error: draft.error, blocking: Boolean(draft.plan && planFragmentation(draft.plan).blocking) },
+      draft: {
+        exists: draft.exists,
+        error: draft.error,
+        clean: readiness.clean,
+        blockers: readiness.blockers,
+        blocking: Boolean(draft.plan && planFragmentation(draft.plan).blocking),
+      },
       unboundKinds: [...new Set(tickets.map((ticket) => ticket.kind))].filter(
         (kind) => !(effectiveKinds[kind]?.models || []).length,
       ),

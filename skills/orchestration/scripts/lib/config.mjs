@@ -16,6 +16,7 @@ import { splitFrontmatter } from "./yaml.mjs";
 import { listPiModels, resetPiCatalog } from "./pi-catalog.mjs";
 import { ADAPTER_IDS, DEFAULT_ADAPTER, DEFAULT_SPEND, SPEND_MODES } from "./adapter-ids.mjs";
 import { validateQuotas } from "./quotas.mjs";
+import { protectedPathReason } from "./evidence.mjs";
 
 export const DEFAULT_KINDS = {
   plan: {
@@ -303,6 +304,11 @@ export function validateCampaign({ root, consoleConfig, data, tickets = [], cata
 
   if (data.allow_paths != null && !Array.isArray(data.allow_paths)) {
     errors.push("allow_paths must be a list of globs");
+  } else {
+    for (const path of data.allow_paths || []) {
+      const reason = protectedPathReason(path, data.campaign || null);
+      if (reason) errors.push(`allow_paths: ${reason}`);
+    }
   }
   for (const check of data.checks || []) {
     if (!check || !check.name) errors.push("a check needs a name");

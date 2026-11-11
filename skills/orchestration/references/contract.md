@@ -28,10 +28,22 @@ looks like for your kind, and the task prompt names the ticket.
 
 - Run the checks the campaign and the ticket name. Report what you actually
   ran; a claim the supervisor can disprove is worse than a missing check.
+- A `ready` report also carries one result for every ticket acceptance
+  criterion, each marked `passed` with the command or observation that proves
+  it. Write the array to the system temp directory and pass it with
+  `--acceptance-file`. If a result is `failed`, report `failed`; a partial pass
+  is not a pass.
+- A review report carries structured findings with `id`, `severity`
+  (`low`/`medium`/`high`/`blocker`), `problem`, `requiredFix`, and optional
+  `file`/`line`. Write them to the system temp directory and pass them with
+  `--findings-file`. High and blocker findings force `failed`; a `failed`
+  review needs at least one of them.
 - Prefer reading the repository over asking. Only a decision a person owns
   becomes a question.
 - Never invent a fact to avoid a question, and never write a secret into a
-  file, a commit, or a log.
+  file, a commit, or a log. Never use a protected path (`.git/`,
+  `.orchestration/`, `.env*`, `secrets/`, `id_rsa*`, or the campaign's own plan
+  and tickets) as a deliverable.
 
 ## Asking
 
