@@ -5,10 +5,10 @@ import { deriveNextAction } from "../scripts/lib/view.mjs";
 const base = { slug: "demo", tickets: [], inbox: [], planErrors: [], unboundKinds: [] };
 const ticket = { id: "01", title: "One", kind: "code", stage: "queued" };
 
-test("a draft with no tickets points at the plan import", () => {
+test("a draft with no tickets points at the plan draft", () => {
   const action = deriveNextAction({ ...base, stage: "draft" });
   assert.equal(action.actor, "you");
-  assert.match(action.command, /plan import demo/);
+  assert.match(action.command, /plan draft demo/);
 });
 
 test("a draft with tickets and no chain points at the defaults", () => {
@@ -26,6 +26,13 @@ test("a planned campaign asks for approval", () => {
   });
   assert.match(action.command, /approve demo/);
   assert.equal(deriveNextAction({ ...base, stage: "awaiting_approval" }).actor, "you");
+});
+
+test("a pending draft points at the draft review", () => {
+  const action = deriveNextAction({ ...base, stage: "draft", draft: { exists: true, error: null } });
+  assert.match(action.command, /plan diff demo/);
+  const broken = deriveNextAction({ ...base, stage: "draft", draft: { exists: true, error: "bad yaml" } });
+  assert.match(broken.text, /invalid/);
 });
 
 test("a running campaign is the supervisor's until a person is needed", () => {

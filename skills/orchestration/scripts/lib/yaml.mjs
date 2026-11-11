@@ -270,6 +270,7 @@ function expandBlockScalars(text) {
 
 function parseNode(rows, i, indent) {
   if (!rows[i]) return [null, i];
+  if (rows[i].text.startsWith("[") || rows[i].text.startsWith("{")) return [parseFlow(rows[i].text), i + 1];
   if (rows[i].text.startsWith("-")) return parseSeq(rows, i, indent);
   return parseMap(rows, i, indent);
 }
@@ -338,8 +339,12 @@ function emit(value, indent, out) {
         if (!nested) emitNested(firstValue, indent + 4, out);
         for (const [key, value2] of entries.slice(1)) {
           const flat = inline(value2);
-          out.push(`${pad}  ${key}:${flat && (value2 === null || typeof value2 !== "object") ? ` ${flat}` : ""}`);
-          if (!(flat && (value2 === null || typeof value2 !== "object"))) emitNested(value2, indent + 4, out);
+          if (flat) {
+            out.push(`${pad}  ${key}: ${flat}`);
+            continue;
+          }
+          out.push(`${pad}  ${key}:`);
+          emitNested(value2, indent + 4, out);
         }
         continue;
       }

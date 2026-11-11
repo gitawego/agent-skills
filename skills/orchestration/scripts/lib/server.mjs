@@ -54,7 +54,7 @@ function readBody(req, limit = 2_000_000) {
   });
 }
 
-export function startServer({ roots = [], getRoots = null, port = 4173, bind = "127.0.0.1", token, onCommand, log = () => {} }) {
+export function startServer({ roots = [], getRoots = null, port = 4173, bind = "127.0.0.1", token, onCommand, publish = port !== 0, log = () => {} }) {
   /* the registry can grow while the panel runs, so read it per request */
   const extraRoots = new Set();
   const currentRoots = () => [...new Set([...(getRoots ? getRoots() : roots), ...extraRoots])];
@@ -351,11 +351,13 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
           roots: currentRoots(),
           startedAt: new Date().toISOString(),
         };
-        ensureDir(consoleStateDir());
-        fs.writeFileSync(globalPanelFile(), JSON.stringify(info, null, 2));
-        for (const root of currentRoots()) {
-          ensureDir(projectStateDir(root));
-          fs.writeFileSync(path.join(projectStateDir(root), "panel.json"), JSON.stringify(info, null, 2));
+        if (publish) {
+          ensureDir(consoleStateDir());
+          fs.writeFileSync(globalPanelFile(), JSON.stringify(info, null, 2));
+          for (const root of currentRoots()) {
+            ensureDir(projectStateDir(root));
+            fs.writeFileSync(path.join(projectStateDir(root), "panel.json"), JSON.stringify(info, null, 2));
+          }
         }
         log(`panel: http://${bind}:${actual}/?token=${secret}`);
         resolve({
@@ -367,11 +369,13 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
             clearInterval(timer);
             for (const client of clients) client.end();
             server.close();
-            try {
-              const current = JSON.parse(fs.readFileSync(globalPanelFile(), "utf8"));
-              if (current.pid === process.pid) fs.unlinkSync(globalPanelFile());
-            } catch {
-              /* already gone */
+            if (publish) {
+              try {
+                const current = JSON.parse(fs.readFileSync(globalPanelFile(), "utf8"));
+                if (current.pid === process.pid) fs.unlinkSync(globalPanelFile());
+              } catch {
+                /* already gone */
+              }
             }
           },
         });

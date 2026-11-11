@@ -6,6 +6,7 @@ import { sandbox, project, writeConsole, writeCampaign, writeTicket, MODELS } fr
 import { startServer } from "../scripts/lib/server.mjs";
 import { enqueue } from "../scripts/lib/commands.mjs";
 import { tick } from "../scripts/lib/engine.mjs";
+import { globalPanelFile } from "../scripts/lib/util.mjs";
 
 const BODY = `## Goal
 
@@ -98,6 +99,18 @@ test("the panel serves state, refuses a missing token, and queues commands", asy
   assert.equal(bad.status, 400);
 
   panel.close();
+});
+
+test("an ephemeral test server does not overwrite the live panel record", async () => {
+  const root = fixture();
+  const file = globalPanelFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const sentinel = { url: "http://127.0.0.1:9/?token=abcdef12", pid: 1 };
+  fs.writeFileSync(file, JSON.stringify(sentinel));
+  const panel = await startServer({ roots: [root], port: 0 });
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), sentinel);
+  panel.close();
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), sentinel);
 });
 
 test("the panel queues the manual new-ticket form and the supervisor writes it", async () => {

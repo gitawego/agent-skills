@@ -34,6 +34,7 @@ A campaign is one paragraph of intent plus a set of tickets with blocking edges.
 | 22 | The panel monitors and configures; the agent converses and decides | A decision that needs a sentence happens in the agent; the panel offers switches that need none, plus one manual New ticket form for a single slice |
 | 23 | Raw context is append-only; the plan is synthesized and imported atomically | `context.md` is evidence, `campaign.md` and `tickets/` are the contract. One validated import replaces a dozen edits and keeps the plan explainable |
 | 24 | Tickets have a dedicated manifest; a manual form is a one-off convenience | The ticket graph is the campaign's center of gravity. The agent is the primary author; the form covers one extra slice without a conversation, never a whole plan |
+| 25 | A plan is drafted and reviewed before it is applied | The draft lives outside `tickets/`; `plan draft` shows the delta since the last message and the delta apply will make, requires assumptions, and blocks on open questions. `plan import` writes and stops; approval is separate |
 
 ## Refinements made while writing
 
@@ -58,14 +59,14 @@ These adjust an earlier answer, and each is deliberate.
 
 ## Build order
 
-Each stage ends when its verification holds. All six are built; `node --test tests/*.test.mjs` runs 83 tests across the YAML subset, the ticket graph, config validation, the engine end to end with a scripted worker, the CLI and the HTTP surface.
+Each stage ends when its verification holds. All six are built; `node --test tests/*.test.mjs` runs the unit suite across the YAML subset, the ticket graph, plan drafts, config validation, the engine end to end with a scripted worker, the CLI and the HTTP surface. `tests/panel.e2e.mjs` covers the browser surface when a Chrome binary is provided.
 
 1. **Foundation.** `scripts/orchestrate.mjs` with `init`, `catalog`, `status`; console and campaign config load and validate; ticket parser and graph validation (acyclic, every criterion claimed, kinds known); ledger append; state derivation. *Verify:* `node:test` fixtures for a valid plan and eight invalid ones, each refused with the right message.
 2. **Tick engine.** Frontier, slots, dispatch of a real `pi` process, report collection, retries, timeouts, stuck detection, restart recovery. *Verify:* a scratch repo with three tickets (one blocked, two parallel) completes unattended, and a killed supervisor resumes once.
 3. **Read-only panel.** `/api/state`, `/api/events`, Fleet, Campaign → Tickets, Inbox, Acceptance. *Verify:* a running campaign renders live, and a page reload loses nothing.
 4. **Writes and judgement.** Command queue, configuration and operational switches, orchestrator judgement with citations, decisions log. Answers, reviews and approvals run through the agent. *Verify:* a worker's question is answered from the brief with a citation and never reaches the inbox; a second question without a source does.
 5. **Gates and landing.** Checks, review run, branch landing with integration branch and serial merges, directory landing, delivery under each autonomy level and the diff-size override. *Verify:* a failing check sends the ticket to `needs_changes` and the same session fixes it; a conflict parks once and is resolved by a chores run.
-6. **Surface and evals.** Campaign workspace (Overview/Tickets/Configure/History), `context append` and `plan import`, `assets/ui` polish, `evals/evals.json` with a fixture campaign, SKILL.md and references re-read against what was built.
+6. **Surface and evals.** Campaign workspace (Overview/Tickets/Configure/History), `context append`, `plan draft` and `plan import`, `assets/ui` polish, `evals/evals.json` with a fixture campaign, SKILL.md and references re-read against what was built.
 
 ## What building it changed
 

@@ -24,6 +24,7 @@ const PLAN = {
   brief: "A small store and a CLI.",
   criteria: ["notes can be added", "notes can be listed"],
   constraints: "No database.",
+  assumptions: [],
   reading: "README.md",
   tickets: [
     {
@@ -116,14 +117,14 @@ test("prune removes a keyed ticket only when the caller allows it", () => {
   assert.equal(loadTickets(dir, "demo").length, 1);
 });
 
-test("plan import refuses a running campaign without --force", () => {
+test("plan import refuses a running campaign", () => {
   const { box, dir } = setup();
   const file = path.join(dir, "orchestration", "demo", "campaign.md");
   fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("stage: draft", "stage: running"));
   const planFile = path.join(box, "plan.yml");
   fs.writeFileSync(
     planFile,
-    "version: 1\ngoal: G\nbrief: B\ntickets:\n  - key: one\n    title: One\n    kind: code\n    touches: [src/**]\n    what: Do it.\n    accept: [Done]\n",
+    "version: 1\ngoal: G\nbrief: B\nassumptions: []\ntickets:\n  - key: one\n    title: One\n    kind: code\n    touches: [src/**]\n    what: Do it.\n    accept: [Done]\n",
   );
   const refused = spawnSync(process.execPath, [CLI, "plan", "import", "demo", "--file", planFile], {
     cwd: dir,
@@ -156,6 +157,7 @@ brief: |
 criteria:
   - notes can be added
 constraints: No database.
+assumptions: []
 reading: README.md
 tickets:
   - key: storage

@@ -45,7 +45,13 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     },
     BODY,
   );
-  writeTicket(dir, "demo", "01-work.md", { id: "01", kind: "code", touches: ["src/**"] }, "## What to build\n\nIt.\n\n## Acceptance criteria\n\n- [ ] Works.");
+  writeTicket(
+    dir,
+    "demo",
+    "01-work.md",
+    { id: "01", kind: "code", touches: ["src/**"], sources: ["README.md"] },
+    "## What to build\n\nIt.\n\n## Acceptance criteria\n\n- [ ] Works.",
+  );
   createItem(dir, "demo", {
     kind: "review",
     title: "Campaign ready: demo",
@@ -273,7 +279,7 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     assert.deepEqual(overviewPage.tabs.slice(0, 3), ["Overview", "Tickets 1", "Configure"], "the campaign has sections");
     assert.equal(overviewPage.briefInput, 0, "the brief is read-only");
     assert.equal(overviewPage.chains, false, "chains are not on the overview");
-    assert.match(overviewPage.next, /Approve the plan|delivery is waiting/, "the next action names the agent step");
+    assert.match(overviewPage.next, /Approve the plan|delivery is waiting|draft plan/, "the next action names the agent step");
 
     await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo/tickets` });
     await sleep(600);
@@ -331,6 +337,85 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
       returnByValue: true,
     });
     assert.match(ticketSearch.result.result.value, /No tickets match/, "ticket search filters without a reload");
+
+    const stateDir = path.join(dir, ".orchestration", "campaigns", "demo");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, "plan.applied.json"),
+      JSON.stringify({
+        version: 1,
+        hash: "abc123def456",
+        appliedAt: "2026-11-10T20:00:00Z",
+        tickets: [{ id: "01", key: "work", title: "Work", kind: "code" }],
+        assumptions: ["Plain files only."],
+        openQuestions: [],
+      }),
+    );
+    fs.writeFileSync(
+      path.join(stateDir, "plan.yml"),
+      `version: 1
+goal: Panel.
+brief: B.
+criteria:
+  - Shown.
+constraints: C.
+assumptions:
+  - Plain files only.
+open_questions:
+  - Which storage format?
+reading: README.md
+tickets:
+  - key: work
+    title: Work
+    kind: code
+    touches: [src/**]
+    what: It.
+    accept: [Works.]
+    sources: [README.md]
+`,
+    );
+
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo` });
+    await sleep(800);
+    const draftView = await send("Runtime.evaluate", {
+      expression: `JSON.stringify({
+        draft: document.querySelector(".draft-plan")?.textContent || "",
+        next: document.querySelector(".next-action")?.textContent || "",
+        assumptions: document.body.innerText.toLowerCase().includes("assumptions"),
+      })`,
+      returnByValue: true,
+    });
+    const draftPage = JSON.parse(draftView.result.result.value);
+    assert.match(draftPage.draft, /Draft plan|draft plan/);
+    assert.match(draftPage.draft, /1 ticket/);
+    assert.match(draftPage.next, /draft plan|delivery is waiting/i, "the next action stays actionable");
+    assert.equal(draftPage.assumptions, true);
+
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo/history` });
+    await sleep(700);
+    const historyPlan = await send("Runtime.evaluate", {
+      expression: `JSON.stringify({
+        plan: document.querySelector(".settings-block")?.textContent || "",
+        hash: document.body.innerText.includes("abc123def456"),
+      })`,
+      returnByValue: true,
+    });
+    const historyPage = JSON.parse(historyPlan.result.result.value);
+    assert.match(historyPage.plan, /1 ticket applied/);
+    assert.equal(historyPage.hash, true, "the applied plan hash is visible");
+
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo/tickets` });
+    await sleep(600);
+    const sources = await send("Runtime.evaluate", {
+      expression: `(() => {
+        document.querySelector(".ticket-table tbody tr[data-act]")?.click();
+        return document.querySelector("#drawer")?.innerText || "";
+      })()`,
+      returnByValue: true,
+    });
+    assert.match(sources.result.result.value, /SOURCES|Sources/);
+    assert.match(sources.result.result.value, /README\.md/);
+    await send("Runtime.evaluate", { expression: `document.querySelector('[data-act="close-drawer"]')?.click()` });
 
     await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#board` });
     await sleep(700);

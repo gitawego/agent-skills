@@ -911,7 +911,8 @@ function renderRail() {
   const rows = allList.map((c) => {
     const open = (c.tickets || []).filter((t) => t.stage === "working").length;
     const waiting = (c.inbox || []).filter((i) => i.status === "open").length;
-    const label = `${c.tickets.length} tickets${open ? ` · ${open} running` : ""}${waiting ? ` · ${waiting} waiting` : ""}`;
+    const draftCount = c.draft?.tickets || 0;
+    const label = `${c.tickets.length} tickets${draftCount ? ` · ${draftCount} draft` : ""}${open ? ` · ${open} running` : ""}${waiting ? ` · ${waiting} waiting` : ""}`;
     const isCur = Boolean(selected.campaign && (!selected.root || c.root === selected.root) && c.slug === selected.campaign);
     return `<button class="campaign-row" data-stage="${esc(c.stage)}" data-act="select-campaign" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" aria-current="${isCur}">
       <span class="name">${esc(c.slug)}</span>
@@ -1055,7 +1056,7 @@ function nextActionBlock(c) {
 function campaignSubnav(c) {
   const items = [
     ["overview", "Overview"],
-    ["tickets", `Tickets ${c.tickets.length}`],
+    ["tickets", `Tickets ${c.tickets.length}${c.draft?.tickets ? ` · ${c.draft.tickets} draft` : ""}`],
     ["configure", "Configure"],
     ["history", "History"],
   ];
@@ -1078,7 +1079,7 @@ function campaignHeader(c) {
     </div>
     <div class="campaign-meta">
       <span class="meter" title="${slots} of ${cap} slots busy">${meter}<b>${slots}/${cap}</b> slots</span>
-      <span>${c.tickets.length} ticket${c.tickets.length === 1 ? "" : "s"}</span>
+      <span>${c.tickets.length} ticket${c.tickets.length === 1 ? "" : "s"}${c.draft?.tickets ? ` · ${c.draft.tickets} draft` : ""}</span>
       <span>${num(c.spend.tokens)} tok · ${usd(c.spend.dollars)}${c.spend.unmetered ? ` · ${esc(c.spend.unmetered)} unmetered` : ""}</span>
       <span>${c.cacheHit == null ? "cache —" : `${(c.cacheHit * 100).toFixed(1)}% cached`}</span>
       <span class="spacer"></span>
@@ -1114,23 +1115,92 @@ function stageCounts(c) {
     .join("");
 }
 
+function draftBlock(c) {
+  if (!c.draft?.exists) return "";
+  const draft = c.draft;
+  return `<section class="draft-plan">
+    <div class="eyebrow">draft plan · not applied</div>
+    <strong>${draft.error ? "Invalid draft" : `${draft.tickets} ticket${draft.tickets === 1 ? "" : "s"}`}</strong>
+    <span class="hint">${esc(draft.hash || "")}${draft.updatedAt ? ` · ${esc(clockOf(draft.updatedAt))}` : ""}${draft.openQuestions ? ` · ${draft.openQuestions} open question${draft.openQuestions === 1 ? "" : "s"}` : ""}</span>
+    ${commandRow("Review in your agent", `orchestrate plan diff ${c.slug}`)}
+    ${commandRow("Inspect the draft", `orchestrate plan show ${c.slug}`)}
+    ${draft.error ? `<p class="hint">${esc(draft.error)}</p>` : ""}
+  </section>`;
+}
+
+function draftBriefing(c) {
+  const draft = c.draft;
+  const criteria = (draft.criteria || []).map((item) => `- [ ] ${item}`).join("\n");
+  const assumptions = (draft.assumptionsList || []).map((item) => `- ${item}`).join("\n");
+  const questions = (draft.openQuestionsList || []).map((item) => `- ${item}`).join("\n");
+  return `<div class="briefing draft-briefing">
+    <div class="eyebrow">draft briefing</div>
+    ${draft.goal ? docBlock("Draft goal", draft.goal) : ""}
+    ${docBlock("Brief", draft.brief)}
+    ${docBlock("Acceptance criteria", criteria)}
+    ${docBlock("Assumptions", assumptions, "None recorded.")}
+    ${questions ? docBlock("Open questions", questions) : ""}
+    ${docBlock("Constraints", draft.constraints)}
+    ${docBlock("What to read first", draft.reading)}
+    <p class="hint">This is the draft reviewed in chat; <span class="mono">campaign.md</span> changes only when your agent runs <span class="mono">plan import</span>.</p>
+  </div>`;
+}
+
+function appliedBriefing(c) {
+  return `<div class="briefing">
+    ${docBlock("Brief", c.brief)}
+    ${docBlock("Acceptance criteria", c.criteria)}
+    ${contextBlock(c)}
+    ${docBlock("Assumptions", c.assumptions, "No assumptions recorded.")}
+    ${c.openQuestions ? docBlock("Open questions", c.openQuestions) : ""}
+    ${docBlock("Constraints", c.constraints)}
+    ${docBlock("What to read first", c.reading)}
+  </div>`;
+}
+
+function draftTickets(c) {
+  if (!c.draft?.exists || !c.draft.ticketsList?.length) return "";
+  return `<section class="draft-tickets">
+    <header><span class="eyebrow">draft tickets · not applied</span><span class="hint">${c.draft.ticketsList.length} ticket${c.draft.ticketsList.length === 1 ? "" : "s"} · key is the stable identity</span></header>
+    <table class="ticket-table">
+      <thead><tr><th>Key</th><th>Title</th><th>Kind</th><th>Blocked by</th></tr></thead>
+      <tbody>${c.draft.ticketsList
+        .map(
+          (ticket) => `<tr><td class="mono" data-label="Key">${esc(ticket.key)}</td><td class="title" data-label="Title">${esc(ticket.title)}</td><td class="mono" data-label="Kind">${esc(ticket.kind)}</td><td class="mono" data-label="Blocked by">${esc((ticket.blocked_by || []).join(", ") || "—")}</td></tr>`,
+        )
+        .join("")}</tbody>
+    </table>
+    <p class="hint">Apply in your agent with <span class="mono">orchestrate plan import ${esc(c.slug)}</span> after review.</p>
+  </section>`;
+}
+
+function planAuditBlock(c) {
+  const audit = c.planAudit;
+  if (!audit) return "";
+  return `<section class="settings-block">
+    <header><h2 class="page">Plan</h2><span class="hint">applied ${esc(clockOf(audit.appliedAt))} · ${esc(audit.hash)}</span></header>
+    <p class="note">${audit.tickets.length} ticket${audit.tickets.length === 1 ? "" : "s"} applied.${audit.assumptions?.length ? ` ${audit.assumptions.length} assumption${audit.assumptions.length === 1 ? "" : "s"} recorded.` : ""}${audit.openQuestions?.length ? ` ${audit.openQuestions.length} open question${audit.openQuestions.length === 1 ? "" : "s"} accepted.` : ""}</p>
+    ${audit.assumptions?.length ? `<ul class="plan-list">${audit.assumptions.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>` : ""}
+    ${audit.openQuestions?.length ? `<ul class="plan-list">${audit.openQuestions.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>` : ""}
+  </section>`;
+}
+
 function campaignOverview(c) {
   const open = (c.inbox || []).filter((item) => item.status === "open").length;
   return `<div class="overview-health">
-      ${stageCounts(c) || `<span class="hint">No tickets yet.</span>`}
+      ${stageCounts(c) || `<span class="hint">${c.draft?.exists ? "No applied tickets." : "No tickets yet."}</span>`}
       <span class="spacer"></span>
       <span>${open} open question${open === 1 ? "" : "s"}</span>
       <span>${c.counts?.working || 0} running</span>
     </div>
     ${c.tickets.length && (c.planErrors || []).length ? `<div class="errors"><strong>Plan needs attention</strong><ul>${c.planErrors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>` : ""}
-    ${!c.tickets.length ? `<div class="agent-prompt"><span class="hint">Ask your agent, in chat:</span><blockquote>“Plan campaign ${esc(c.slug)}: split the work into tickets and show me the table before importing.”</blockquote><button class="btn ghost" data-act="copy" data-command="Plan campaign ${esc(c.slug)}: split the work into tickets and show me the table before importing.">Copy prompt</button></div>` : ""}
-    <div class="briefing">
-      ${docBlock("Brief", c.brief)}
-      ${docBlock("Acceptance criteria", c.criteria)}
-      ${contextBlock(c)}
-      ${docBlock("Constraints", c.constraints)}
-      ${docBlock("What to read first", c.reading)}
-    </div>
+    ${!c.tickets.length && !c.draft?.exists ? `<div class="agent-prompt"><span class="hint">Ask your agent, in chat:</span><blockquote>“Plan campaign ${esc(c.slug)}: split the work into tickets and show me the table before importing.”</blockquote><button class="btn ghost" data-act="copy" data-command="Plan campaign ${esc(c.slug)}: split the work into tickets and show me the table before importing.">Copy prompt</button></div>` : ""}
+    ${draftBlock(c)}
+    ${
+      c.draft?.exists && !c.draft.error
+        ? `${draftBriefing(c)}<details class="applied-doc"><summary>Applied campaign document</summary>${appliedBriefing(c)}</details>`
+        : appliedBriefing(c)
+    }
     ${ledger(c)}`;
 }
 
@@ -1224,13 +1294,13 @@ function ticketList(c, tickets) {
           tickets
             .map(
               (t) => `<tr tabindex="0" role="button" data-act="open-ticket" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" data-ticket="${esc(t.id)}">
-              <td class="mono">${esc(t.id)}</td>
-              <td class="title">${esc(t.title)}</td>
-              <td class="mono">${esc(t.kind)}</td>
-              <td><span class="badge" data-family="${esc((STAGES.find((s) => s.id === t.stage) || {}).family || "idle")}">${esc(t.stage)}</span></td>
-              <td class="mono">${esc(t.model || "—")}</td>
-              <td class="num mono">${esc(t.cost?.text || (t.unmetered ? "included" : "—"))}</td>
-              <td class="mono">${esc((t.blockedBy || []).join(", ") || "—")}</td>
+              <td class="mono" data-label="#">${esc(t.id)}</td>
+              <td class="title" data-label="Title">${esc(t.title)}</td>
+              <td class="mono" data-label="Kind">${esc(t.kind)}</td>
+              <td data-label="Stage"><span class="badge" data-family="${esc((STAGES.find((s) => s.id === t.stage) || {}).family || "idle")}">${esc(t.stage)}</span></td>
+              <td class="mono" data-label="Model">${esc(t.model || "—")}</td>
+              <td class="num mono" data-label="Cost">${esc(t.cost?.text || (t.unmetered ? "included" : "—"))}</td>
+              <td class="mono" data-label="Blocked by">${esc((t.blockedBy || []).join(", ") || "—")}</td>
             </tr>`,
             )
             .join("") || `<tr><td colspan="7" class="hint">No tickets match.</td></tr>`
@@ -1249,7 +1319,7 @@ function ticketBoard(c, tickets) {
 
 function newTicketForm(c) {
   const kinds = Object.keys(c.effectiveKinds || {});
-  return `<details class="new-ticket" ${c.tickets.length ? "" : "open"}>
+  return `<details class="new-ticket" ${c.tickets.length || c.draft?.exists ? "" : "open"}>
     <summary>New ticket</summary>
     <div class="grid">
       <div class="field" style="grid-template-columns:88px 1fr"><label for="t-title">Title</label><input id="t-title" name="t_title" type="text" placeholder="What this slice delivers" /></div>
@@ -1307,9 +1377,9 @@ function campaignTickets(c) {
   const body = ticketView === "board" ? ticketBoard(c, tickets) : ticketList(c, tickets);
   const empty = !c.tickets.length
     ? `<div class="empty">
-      <h2>No tickets yet.</h2>
-      <p>Add one here, or ask your agent to write the plan for you.</p>
-      <div class="agent-prompt">
+      <h2>${c.draft?.exists ? "No applied tickets yet." : "No tickets yet."}</h2>
+      <p>${c.draft?.exists ? "The draft above is not applied; review it in chat, then run plan import." : "Add one here, or ask your agent to write the plan for you."}</p>
+      ${c.draft?.exists ? "" : `<div class="agent-prompt">
         <span class="hint">Ask your agent, in chat:</span>
         <blockquote>“Add a ticket to ${esc(c.slug)} for the CLI slice: kind code, touches src/cli/**, blocked by 01, acceptance: add prints added.”</blockquote>
         <button class="btn ghost" data-act="copy" data-command="Add a ticket to ${esc(c.slug)} for the CLI slice: kind code, touches src/cli/**, blocked by 01, acceptance: add prints added.">Copy prompt</button>
@@ -1317,10 +1387,12 @@ function campaignTickets(c) {
         ${commandRow("Add one ticket", `orchestrate ticket add "CLI slice" --campaign ${c.slug} --kind code --touches "src/cli/**" --blocked-by 01 --what "Add and list commands." --accept "add prints added"`)}
         <span class="hint">Or import a whole graph:</span>
         ${commandRow("Import a plan", `orchestrate plan import ${c.slug} --file plan.yml`)}
-      </div>
+      </div>`}
     </div>`
     : "";
-  return `${ticketFilter(c)}
+  return `${draftBlock(c)}
+    ${draftTickets(c)}
+    ${ticketFilter(c)}
     ${c.tickets.length ? `<div id="ticket-list">${body}</div>` : ""}
     ${empty}
     ${newTicketForm(c)}`;
@@ -1426,7 +1498,9 @@ function campaignConfigure(c) {
 
 function campaignHistory(c) {
   const spend = c.spendByModel || [];
-  return `<section class="history-spend">
+  return `${planAuditBlock(c)}
+    ${draftBlock(c)}
+    <section class="history-spend">
       <header><h2 class="page">Spend and cache</h2><span class="hint">${num(c.spend.tokens)} tokens · ${usd(c.spend.dollars)} · ${c.cacheHit == null ? "cache —" : `${(c.cacheHit * 100).toFixed(1)}% cached read`}</span></header>
       <table class="ticket-table">
         <thead><tr><th>Model</th><th class="num">Runs</th><th class="num">Tokens</th><th class="num">Cached read</th><th class="num">Cache hit</th><th class="num">Cost</th></tr></thead>
@@ -1434,7 +1508,7 @@ function campaignHistory(c) {
           ${
             spend
               .map(
-                (row) => `<tr><td class="mono">${esc(row.model)}</td><td class="num">${row.runs}</td><td class="num">${num(row.tokens)}</td><td class="num">${num(row.cachedReadTokens)}</td><td class="num">${row.cacheHit == null ? "—" : `${(row.cacheHit * 100).toFixed(1)}%`}</td><td class="num">${usd(row.dollars)}</td></tr>`,
+                (row) => `<tr><td class="mono" data-label="Model">${esc(row.model)}</td><td class="num" data-label="Runs">${row.runs}</td><td class="num" data-label="Tokens">${num(row.tokens)}</td><td class="num" data-label="Cached read">${num(row.cachedReadTokens)}</td><td class="num" data-label="Cache hit">${row.cacheHit == null ? "—" : `${(row.cacheHit * 100).toFixed(1)}%`}</td><td class="num" data-label="Cost">${usd(row.dollars)}</td></tr>`,
               )
               .join("") || `<tr><td colspan="6" class="hint">No runs yet.</td></tr>`
           }
@@ -1779,6 +1853,7 @@ function drawerHtml(c, t) {
     <h2>What to build</h2><div class="doc">${esc(t.body || "")}</div>
     <h2>Acceptance</h2><div class="doc">${(t.accepted || []).map((a) => `· ${esc(a.text)}`).join("\n") || "none declared"}</div>
     ${(t.attachments || []).length ? `<h2>Attached files</h2><div class="doc">${(t.attachments || []).map((p) => `· ${esc(p)}`).join("\n")}</div>` : ""}
+    ${(t.sources || []).length ? `<h2>Sources</h2><div class="doc">${(t.sources || []).map((p) => `· ${esc(p)}`).join("\n")}</div>` : ""}
     ${t.answer ? `<h2>Last answer</h2><div class="doc">${esc(t.answer.text)}${t.answer.citation ? `\n${esc(t.answer.citation)}` : ""}</div>` : ""}
     ${t.findings ? `<h2>Findings</h2><pre class="log">${esc(t.findings)}</pre>` : ""}
     <h2>Runs</h2>

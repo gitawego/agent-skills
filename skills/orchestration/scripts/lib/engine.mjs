@@ -46,6 +46,7 @@ import {
   validateCampaign,
 } from "./config.mjs";
 import { boundFirstModels, pendingDefaultKinds, resolveDefaultChains } from "./defaults.mjs";
+import { readDraft } from "./plan-draft.mjs";
 import { adapterIds, getAdapter, readCatalogCache, refreshCatalog, rowsFor } from "./catalogs.mjs";
 import { ADAPTER_IDS, SPEND_MODES } from "./adapter-ids.mjs";
 import { joinFrontmatter, splitFrontmatter, updateFrontmatter } from "./yaml.mjs";
@@ -1445,6 +1446,14 @@ function writeClose(root, slug, state, plan, data) {
 // --- approval and commands -------------------------------------------------
 
 export function approveCampaign(root, slug, consoleConfig, { automatic = false, state: given = null } = {}) {
+  const draft = readDraft(root, slug);
+  if (draft.exists) {
+    throw new UserError(`Cannot approve "${slug}": a draft plan is not applied`, [
+      `Review it: orchestrate plan diff ${slug}`,
+      `Apply it: orchestrate plan import ${slug}`,
+      `Or abandon it: orchestrate plan discard ${slug}`,
+    ]);
+  }
   const campaign = readCampaign(root, slug);
   const plan = loadPlan(root, slug);
   const catalog = catalogRowsFor(root, campaign.data, consoleConfig);

@@ -37,11 +37,24 @@ The agent owns the conversation; the plan files are its output. The supervisor n
 Use plain files. No database. Here is the interview note…
 ```
 
-`campaign.md` holds the synthesized brief, criteria, constraints and reading list. `tickets/` holds the graph. The agent writes both with one command:
+### Draft, review, apply
+
+The agent writes a **draft** first. Nothing enters `tickets/` until the human says apply.
 
 ```bash
-orchestrate plan import <campaign> --file plan.yml
+orchestrate plan draft <campaign> --file plan.yml   # validate, snapshot previous, show deltas
+orchestrate plan diff <campaign>                    # reprint the deltas
+orchestrate plan show <campaign> --ticket store     # full ticket text
+orchestrate plan import <campaign>                  # apply the current draft
+orchestrate plan discard <campaign>                 # abandon the draft
 ```
+
+The draft lives in `.orchestration/campaigns/<slug>/plan.yml`; the previous revision is `plan.prev.yml`; the applied plan is `plan.applied.yml` plus `plan.applied.json` (hash, time, ticket ids). `plan draft` prints two deltas:
+
+- **since your last draft** — what the agent just changed after the human's message;
+- **apply will change** — the draft against the applied graph. A ticket marked `-` remains on disk unless `plan import --prune` is used.
+
+That is the fine-tuning loop: the human says “split 02”, “drop docs”, “block 03 on 01”; the agent edits the draft, runs `plan draft`, and presents only the delta. `plan import` is only run after an explicit “apply”.
 
 ```yaml
 version: 1
@@ -51,6 +64,9 @@ brief: |
 criteria:
   - The shell starts in under 200 ms
 constraints: No new runtime dependency.
+assumptions:
+  - Plain files only; no database.
+open_questions: []
 reading:
   - README.md
 tickets:
@@ -60,6 +76,7 @@ tickets:
     touches: [src/store/**]
     what: Append and read entries.
     accept: [A note survives a restart]
+    sources: [README.md, notes/interview.md]
   - key: cli
     title: CLI slice
     kind: code
@@ -67,11 +84,14 @@ tickets:
     touches: [src/cli/**]
     what: Add and list commands.
     accept: [add prints added]
+    sources: [README.md]
 ```
 
-`import` validates the whole plan first and writes nothing on error. It assigns ids in file order, resolves `blocked_by` by ticket `key` (or by a numeric id already in the plan), and records the `key` on each ticket. Always set `key`: it is the stable identity across re-imports, so a retitled ticket keeps its id and history. Re-import is idempotent by `key`: ids and filenames stay stable, only changed files are rewritten. `--prune` removes keyed tickets missing from the new plan, but refuses when a removed ticket has runs, because deleting history is not a plan edit.
+`assumptions` is required: an empty list is allowed, but the agent must state what it inferred. `open_questions` blocks `plan import` unless `--accept-open` is passed; `sources` is written to the ticket frontmatter and shown in the drawer. Plans are capped at 20 tickets; above 12 is a review warning.
 
-The plan is frozen at approval. Editing the brief or tickets while a campaign is running changes the shared worker prompt prefix and invalidates prompt-cache hits, so `plan import` and `bind` are refused under a live campaign unless a person pauses it first. Raw context is not injected into every worker prompt; the agent distills the relevant parts into the brief and each ticket's notes. That keeps the shared prefix small and stable.
+`import` validates the whole plan first and writes nothing on error. It assigns ids in file order, resolves `blocked_by` by ticket `key` (or a numeric id in the plan), and records the `key` on each ticket. Always set `key`: it is the stable identity across revisions. Re-import is idempotent by `key`: ids and filenames stay stable, only changed files are rewritten. `--prune` removes keyed tickets missing from the plan, but refuses when a removed ticket has runs.
+
+`plan draft` and `plan import` are refused while a campaign is running, delivered or archived; there is no `--force`. Pausing is the only route. A plan change to a paused campaign still needs a fresh `approve`, and `approve` refuses while a draft is unapplied. The plan is frozen at approval: editing the brief or tickets under live work changes the shared worker prompt prefix and invalidates prompt-cache hits. Raw context is not injected into every worker prompt; the agent distills the relevant parts into the brief and each ticket's notes.
 
 ## A run
 

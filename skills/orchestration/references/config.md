@@ -139,7 +139,7 @@ A binding may change at any time while nothing is running: stop the supervisor, 
 
 ## The campaign
 
-`orchestration/<campaign>/campaign.md` is committed: the plan deserves diffs and history. Frontmatter holds config; the body holds the work. `context.md` beside it is the raw, append-only human input (`orchestrate context append`); the brief is the agent's synthesis of that input, and `orchestrate plan import` writes both the body and the ticket graph in one validated pass.
+`orchestration/<campaign>/campaign.md` is committed: the plan deserves diffs and history. Frontmatter holds config; the body holds the work. `context.md` beside it is the raw, append-only human input (`orchestrate context append`); the brief is the agent's synthesis of that input; `orchestrate plan draft` writes a reviewable draft and `orchestrate plan import` applies the body and ticket graph in one validated pass.
 
 ```markdown
 ---
@@ -180,6 +180,14 @@ Why this exists, what came before, what the shape of the answer is. Keep it to w
 
 What must not change, what must stay compatible, house style, deadlines, frozen surfaces.
 
+## Assumptions
+
+- What the agent inferred: plain files only, no database, no new runtime dependency. Use `None.` when it inferred nothing.
+
+## Open questions
+
+None. Open questions block `plan import` until answered or explicitly accepted.
+
 ## What to read first
 
 - **Files:** `src/app/router.ts`, `docs/architecture.md`
@@ -189,7 +197,7 @@ What must not change, what must stay compatible, house style, deadlines, frozen 
 Empty is allowed: the plan then decides what is worth reading.
 ```
 
-The campaign document is the intake: goal first and required, then brief, acceptance criteria, constraints and reading, then budget and the per-kind model chains in Configure. The agent writes the document from free-form context; the panel renders it read-only and configures the runtime.
+The campaign document is the intake: goal first and required, then brief, acceptance criteria, assumptions, open questions, constraints and reading, then budget and the per-kind model chains in Configure. `assumptions` is required in the plan file (an empty list is allowed); `open_questions` blocks import unless accepted. The agent writes the document from free-form context and a draft reviewed in chat; the panel renders it read-only and configures the runtime.
 
 ### Fields
 
@@ -236,6 +244,7 @@ kind: design
 blocked_by: [01, 02]
 touches: ["src/api/**", "src/db/migrations/**"]
 attachments: ["refs/shelf.png"]
+sources: ["src/app/router.ts", "docs/architecture.md"]
 ---
 
 ## What to build

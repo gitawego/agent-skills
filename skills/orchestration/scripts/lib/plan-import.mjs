@@ -12,7 +12,19 @@ import { asArray, loadPlan, loadTickets, ticketsDir } from "./plan.mjs";
 import { joinFrontmatter, parseYaml } from "./yaml.mjs";
 import { slugify } from "./create.mjs";
 
-const PLAN_FIELDS = new Set(["version", "goal", "brief", "criteria", "constraints", "reading", "tickets"]);
+export const PLAN_LIMITS = { warnTickets: 12, maxTickets: 20, warnContextBytes: 100_000 };
+
+const PLAN_FIELDS = new Set([
+  "version",
+  "goal",
+  "brief",
+  "criteria",
+  "constraints",
+  "assumptions",
+  "open_questions",
+  "reading",
+  "tickets",
+]);
 const TICKET_FIELDS = new Set([
   "key",
   "title",
@@ -22,6 +34,7 @@ const TICKET_FIELDS = new Set([
   "what",
   "accept",
   "attachments",
+  "sources",
   "notes",
 ]);
 const STANDARD_SECTIONS = new Set([
@@ -29,6 +42,8 @@ const STANDARD_SECTIONS = new Set([
   "brief",
   "acceptance criteria",
   "constraints",
+  "assumptions",
+  "open questions",
   "what to read first",
 ]);
 
@@ -104,18 +119,30 @@ function checkAttachment(value) {
   return file;
 }
 
-export function normalizePlan(plan, { allowedKinds = null } = {}) {
+export function normalizePlan(plan, { allowedKinds = null, requireAssumptions = true, allowEmpty = false } = {}) {
   if (!plan || typeof plan !== "object" || Array.isArray(plan))
     throw new UserError("A plan is an object with goal, brief and tickets");
   for (const key of Object.keys(plan)) {
-    if (!PLAN_FIELDS.has(key)) throw new UserError(`Unknown plan field "${key}"`, ["version, goal, brief, criteria, constraints, reading, tickets"]);
+    if (!PLAN_FIELDS.has(key))
+      throw new UserError(`Unknown plan field "${key}"`, [
+        "version, goal, brief, criteria, constraints, assumptions, open_questions, reading, tickets",
+      ]);
   }
   if (plan.version != null && Number(plan.version) !== 1)
     throw new UserError(`Unsupported plan version "${plan.version}"`, ["Use version: 1."]);
   const goal = String(plan.goal || "").trim();
   if (!goal) throw new UserError("A plan needs a goal");
+  if (requireAssumptions && plan.assumptions == null) {
+    throw new UserError("A plan needs an assumptions list", [
+      "Use `assumptions: []` when there is nothing to assume; the list is where the agent states what it inferred.",
+    ]);
+  }
   const specs = Array.isArray(plan.tickets) ? plan.tickets : [];
-  if (!specs.length) throw new UserError("A plan needs at least one ticket");
+  if (!specs.length && !allowEmpty) throw new UserError("A plan needs at least one ticket");
+  if (specs.length > PLAN_LIMITS.maxTickets)
+    throw new UserError(`A plan may contain at most ${PLAN_LIMITS.maxTickets} tickets`, [
+      `Split it into smaller campaigns, or merge tickets until it is under ${PLAN_LIMITS.maxTickets}.`,
+    ]);
   const usedKeys = new Set();
   const tickets = specs.map((raw, index) => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw))
@@ -143,14 +170,24 @@ export function normalizePlan(plan, { allowedKinds = null } = {}) {
       what: String(raw.what || "").trim() || title,
       accept,
       attachments,
+      sources: stringList(raw.sources),
       notes: String(raw.notes || "").trim(),
     };
   });
+  /* Numeric blockers are assigned ids in file order. Normalize them to the
+     stable ticket key so a later revision can reorder the file without
+     silently re-pointing a dependency. */
+  const byId = new Map(tickets.map((ticket, index) => [pad2(index + 1), ticket.key]));
+  for (const ticket of tickets) {
+    ticket.blocked_by = ticket.blocked_by.map((ref) => byId.get(pad2(ref)) || ref);
+  }
   return {
     goal,
     brief: textBlock(plan.brief),
     criteria: stringList(plan.criteria),
     constraints: textBlock(plan.constraints),
+    assumptions: stringList(plan.assumptions),
+    open_questions: stringList(plan.open_questions),
     reading: textBlock(plan.reading),
     tickets,
   };
@@ -185,6 +222,12 @@ function campaignBody(previousBody, plan) {
     `## Brief\n\n${plan.brief}`,
     `## Acceptance criteria\n\n${plan.criteria.map((item) => `- [ ] ${item}`).join("\n")}`,
     `## Constraints\n\n${plan.constraints}`,
+    `## Assumptions\n\n${
+      plan.assumptions.length ? plan.assumptions.map((item) => `- ${item}`).join("\n") : "None."
+    }`,
+    `## Open questions\n\n${
+      plan.open_questions.length ? plan.open_questions.map((item) => `- ${item}`).join("\n") : "None."
+    }`,
     `## What to read first\n\n${plan.reading}`,
   ];
   for (const section of extras) blocks.push(`## ${section.heading}\n\n${sectionText(section.lines)}`);
@@ -232,8 +275,14 @@ function restore(snap) {
 /* Import a plan atomically. Existing keyed tickets keep their id and file;
    new keys get the next ids. `prune` removes keyed tickets missing from the
    plan, but only when `canRemove(id)` agrees (the caller checks runs). */
-export function importPlan({ root, slug, plan, allowedKinds = null, prune = false, canRemove = null }) {
+export function importPlan({ root, slug, plan, allowedKinds = null, prune = false, canRemove = null, acceptOpen = false }) {
   const normalized = normalizePlan(plan, { allowedKinds });
+  if (normalized.open_questions.length && !acceptOpen) {
+    throw new UserError("The plan still has open questions", [
+      ...normalized.open_questions.map((question) => `! ${question}`),
+      "Answer them in the agent session, or pass --accept-open to import with them recorded.",
+    ]);
+  }
   const campaign = readCampaign(root, slug);
   const existing = loadTickets(root, slug);
   const byKey = new Map();
@@ -292,6 +341,7 @@ export function importPlan({ root, slug, plan, allowedKinds = null, prune = fals
       const data = { id: spec.id, key: spec.key, kind: spec.kind, touches: spec.touches };
       if (spec.blockedBy.length) data.blocked_by = spec.blockedBy;
       if (spec.attachments.length) data.attachments = spec.attachments;
+      if (spec.sources.length) data.sources = spec.sources;
       const content = joinFrontmatter(data, ticketBody(spec));
       const before = spec.current ? readText(target, null) : null;
       if (before !== content) fs.writeFileSync(target, content);
@@ -324,6 +374,9 @@ export function importPlan({ root, slug, plan, allowedKinds = null, prune = fals
       updated,
       removed: removed.map((ticket) => ({ id: ticket.data.id, key: ticket.data.key })),
       idToKey: Object.fromEntries(idToKey),
+      assumptions: normalized.assumptions,
+      openQuestions: normalized.open_questions,
+      plan: normalized,
     };
   } catch (err) {
     restore(snap);

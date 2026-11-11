@@ -77,14 +77,15 @@
     {
       "id": 7,
       "prompt": "Context for the work: a zero-dependency notes CLI, plain files only, no database, tests first, and the README must match the commands. Set up the orchestration and show me the plan.",
-      "expected_output": "The context saved under orchestration/<slug>/context.md as timestamped raw input, then one validated plan import that writes the brief and a blocked ticket graph, followed by the plan table and the chain table. No web form is requested.",
+      "expected_output": "The context saved under orchestration/<slug>/context.md as timestamped raw input, then a draft plan with its table, both deltas, assumptions and open questions. The human fine-tunes in chat; only after an explicit apply does `plan import` write the ticket graph and the audit. No web form is requested.",
       "files": [],
       "expectations": [
         "Runs `orchestrate start` and `orchestrate context append` with the free-form context",
-        "Writes one plan file and runs `orchestrate plan import`, not a dozen ad-hoc ticket edits",
-        "Shows the plan table (ids, titles, kinds, blockers) and the model chain table",
-        "Leaves approval as a chat decision and names `orchestrate approve`",
-        "Does not send the human to the panel for the whole plan; the manual form is only for a single one-off slice"
+        "Writes one plan file and runs `orchestrate plan draft`, not a dozen ad-hoc ticket edits",
+        "Presents the draft table, the delta since the last draft, the applied delta, assumptions and open questions",
+        "Keeps the draft open for chat fine-tuning and does not import on the first draft",
+        "Runs `orchestrate plan import` only after the human says apply, then shows the plan and the chain table",
+        "Never sends the human to the panel for the whole plan; the manual form is only for a single one-off slice"
       ]
     }
   ]

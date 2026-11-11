@@ -645,6 +645,40 @@ textarea.doc:focus { border-bottom-color: var(--ink); }
 .errors { border: 1px solid var(--signal); color: var(--signal); padding: 0.62rem 0.75rem; margin: 0 0 1.12rem; font: 0.82rem/1.5 var(--ui); }
 .errors ul { margin: 0.38rem 0 0; padding-left: 1.12rem; }
 .ticket-head { display: grid; grid-template-columns: 2.1rem minmax(0, 1fr) 4.2rem minmax(0, 18rem); gap: 0.75rem; padding: 0.38rem 0 0.38rem 0.62rem; font: 0.7rem/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--rule); }
+.draft-plan {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0.9rem 0 0;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--warn);
+  background: var(--surface);
+}
+.draft-plan strong { font: 500 0.95rem/1.3 var(--display); }
+.draft-plan .hint { display: block; }
+.draft-plan .command-row { border-top: 0; padding-top: 0.25rem; }
+.applied-doc { margin-top: 1.2rem; border-top: 1px solid var(--rule-soft); padding-top: 0.6rem; }
+.applied-doc summary {
+  font: 500 0.7rem/1 var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: pointer;
+}
+.applied-doc[open] summary { margin-bottom: 0.6rem; }
+.draft-briefing { border-top: 3px solid var(--warn); margin-top: 1rem; padding-top: 0.8rem; }
+.draft-briefing .eyebrow { color: var(--warn); }
+.draft-tickets { margin: 1rem 0 1.2rem; border-top: 1px solid var(--rule); padding-top: 0.5rem; }
+.draft-tickets > header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; margin-bottom: 0.35rem; }
+.draft-tickets .eyebrow { color: var(--warn); margin: 0; }
+.draft-tickets .hint { margin: 0.45rem 0 0; }
+.plan-list {
+  margin: 0.45rem 0 0;
+  padding-left: 1.1rem;
+  font: 0.82rem/1.5 var(--ui);
+  color: var(--ink-2);
+}
+.plan-list li { margin: 0.15rem 0; }
 .agent-prompt {
   margin-top: 1rem;
   padding: 0.75rem 0.9rem;
@@ -1170,6 +1204,15 @@ pre.log {
   .ticket-table tr { border-bottom: 1px solid var(--rule); padding: 0.4rem 0; }
   .ticket-table td { border: 0; padding: 0.12rem 0.3rem; }
   .ticket-table td.num { text-align: left; }
+  .ticket-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font: 500 0.6rem/1.2 var(--mono);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.08rem;
+  }
   .fleet-filters { grid-template-columns: 1fr; }
   .fleet-filters .hint { text-align: left; }
   .quota-editor-head { display: none; }

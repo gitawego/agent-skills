@@ -122,8 +122,8 @@ check("eval 6 — a supervised campaign waits for a person and does not merge", 
   assert(!fs.existsSync(path.join(dir, "work-01.txt")), "main is untouched until approval");
 });
 
-/* eval 7: free-form context becomes a validated plan in one import */
-check("eval 7 — free-form context becomes a validated plan in one import", () => {
+/* eval 7: free-form context becomes a reviewed draft, then one import */
+check("eval 7 — free-form context becomes a reviewed draft and one import", () => {
   const dir = fresh();
   writeConsole({ unbound: true });
   cli(dir, ["init"]);
@@ -145,6 +145,9 @@ brief: |
 criteria:
   - notes can be added
 constraints: No database.
+assumptions:
+  - Plain files only.
+open_questions: []
 reading: README.md
 tickets:
   - key: store
@@ -153,6 +156,7 @@ tickets:
     touches: [src/store/**]
     what: Append and read entries.
     accept: [A note survives a restart]
+    sources: [README.md]
   - key: cli
     title: CLI slice
     kind: code
@@ -160,13 +164,40 @@ tickets:
     touches: [src/cli/**]
     what: Add and list commands.
     accept: [add prints added]
+    sources: [README.md]
 `,
   );
-  const imported = cli(dir, ["plan", "import", "notes", "--file", plan, "--json"]);
+  const draft = cli(dir, ["plan", "draft", "notes", "--file", plan, "--json"]);
+  assert(draft.status === 0, draft.out);
+  const drafted = JSON.parse(draft.out);
+  assert(drafted.hash && drafted.plan.tickets.length === 2, "the draft has a hash and both tickets");
+  assert(fs.existsSync(path.join(dir, ".orchestration", "campaigns", "notes", "plan.yml")), "plan.yml was written");
+  assert(!fs.existsSync(path.join(dir, "orchestration", "notes", "tickets", "01-storage-slice.md")), "tickets are untouched before apply");
+
+  fs.appendFileSync(
+    plan,
+    `  - key: docs
+    title: Docs
+    kind: chores
+    blocked_by: [cli]
+    touches: [README.md]
+    what: Document the commands.
+    accept: [README matches]
+    sources: [README.md]
+`,
+  );
+  const revised = cli(dir, ["plan", "draft", "notes", "--file", plan, "--json"]);
+  assert(revised.status === 0, revised.out);
+  const second = JSON.parse(revised.out);
+  assert(second.deltaPrevious.added.length === 1 && second.deltaPrevious.added[0].key === "docs", "the revision delta names only the new ticket");
+
+  const imported = cli(dir, ["plan", "import", "notes", "--json"]);
   assert(imported.status === 0, imported.out);
   const body = JSON.parse(imported.out);
-  assert(body.tickets.length === 2, "both tickets imported");
+  assert(body.tickets.length === 3, "all three tickets imported");
   assert(body.tickets[1].blocked_by[0] === body.tickets[0].id, "blocked_by resolves by key");
+  assert(fs.existsSync(path.join(dir, ".orchestration", "campaigns", "notes", "plan.applied.json")), "the applied audit was written");
+  assert(!fs.existsSync(path.join(dir, ".orchestration", "campaigns", "notes", "plan.yml")), "the draft was cleared after apply");
 });
 
 for (const result of results) {

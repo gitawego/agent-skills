@@ -38,12 +38,23 @@ import {
 } from "./lib/config.mjs";
 import { boundFirstModels, pendingDefaultKinds, resolveDefaultChains } from "./lib/defaults.mjs";
 import { appendContext, importPlan, parsePlanText, readContext } from "./lib/plan-import.mjs";
+import {
+  discardDraft,
+  draftPlan,
+  canonicalText,
+  formatPlanDiff,
+  readAppliedBase,
+  readAppliedAudit,
+  readDraft,
+  refreshDraft,
+  writeApplied,
+} from "./lib/plan-draft.mjs";
 import { refreshCatalog, rowsFor, adaptersView } from "./lib/catalogs.mjs";
 import { ADAPTER_IDS, DEFAULT_SPEND, SPEND_MODES } from "./lib/adapter-ids.mjs";
 import { bwrapAvailable } from "./lib/sandbox.mjs";
 import { asArray, loadPlan, ticketTitle } from "./lib/plan.mjs";
 import { decisionsFor, promoteDecision, readDecisions, summaryLine } from "./lib/memory.mjs";
-import { readEvents } from "./lib/ledger.mjs";
+import { appendEvent, readEvents } from "./lib/ledger.mjs";
 import { diffStats, integrationBranch } from "./lib/landing.mjs";
 import { priceLabel } from "./lib/pricing.mjs";
 import { approveCampaign, tick } from "./lib/engine.mjs";
@@ -191,7 +202,11 @@ function printTickets(root, slug) {
       );
     }
   }
-  for (const error of plan.errors) console.log(`  ! ${error}`);
+  const draft = readDraft(root, slug);
+  for (const error of plan.errors) {
+    if (draft.exists && /no tickets/i.test(error)) continue;
+    console.log(`  ! ${error}`);
+  }
   return plan;
 }
 
@@ -501,51 +516,182 @@ const commands = {
 
   plan({ flags, positional }) {
     const root = rootDir(flags);
-    if (positional[0] === "import") {
-      const slug = resolveCampaign(root, positional[1] || flags.campaign);
-      const campaign = readCampaign(root, slug);
-      const file = flags.file || (flags.stdin ? "-" : null);
-      if (!file) throw new UserError("Usage: orchestrate plan import <campaign> --file plan.yml | --stdin");
-      const text = file === "-" ? fs.readFileSync(0, "utf8") : readText(path.resolve(root, file), null);
-      if (text == null) throw new UserError(`No plan file at ${file}`);
-      const plan = parsePlanText(text);
-      const consoleConfig = loadConsole();
-      const allowedKinds = Object.keys(resolveKinds(consoleConfig, campaign.data));
+    const subcommands = new Set(["draft", "diff", "show", "discard", "import"]);
+    const sub = subcommands.has(positional[0]) ? positional[0] : null;
+    const slug = resolveCampaign(root, (sub ? positional[1] : positional[0]) || flags.campaign);
+    const campaign = readCampaign(root, slug);
+    const consoleConfig = loadConsole();
+    const kinds = resolveKinds(consoleConfig, campaign.data);
+    const allowedKinds = Object.keys(kinds);
+    const context = readContext(root, slug);
+    const maxConcurrent = Number(consoleConfig.limits?.max_concurrent || 4);
+    const planInputs = { allowedKinds, maxConcurrent, contextBytes: context.bytes };
+
+    const editable = () => {
       const state = loadState(root, slug);
       const live = Object.values(state.runs || {}).some((run) => run.status === "live");
-      if ((state.stage === "running" || campaign.data.stage === "running" || live) && !flags.force) {
-        throw new UserError(`Campaign "${slug}" is running; the plan may change only while nothing is running`, [
+      const blockedStages = ["running", "delivered", "archived"];
+      const stage = blockedStages.includes(campaign.data.stage) ? campaign.data.stage : state.stage;
+      if (live || blockedStages.includes(state.stage) || blockedStages.includes(campaign.data.stage)) {
+        throw new UserError(`Campaign "${slug}" is ${live ? "live" : stage}; the plan may change only while it is draft, awaiting approval or paused`, [
           `Pause it first: orchestrate pause ${slug}`,
-          "or pass --force if you mean to change the plan under a live run.",
+          "plan draft and plan import never change a plan under a live run.",
         ]);
       }
-      const canRemove = (id) => !Object.values(state.runs || {}).some((run) => String(run.ticket) === String(id));
-      const result = importPlan({ root, slug, plan, allowedKinds, prune: Boolean(flags.prune), canRemove });
+      return state;
+    };
+
+    const printRows = (rows) => {
+      const pad = (value, n) => String(value).padEnd(n);
+      console.log(`${pad("#", 4)} ${pad("key", 18)} ${pad("kind", 9)} ${pad("blocked", 12)} title`);
+      for (const row of rows) {
+        console.log(
+          `${pad(row.id || "—", 4)} ${pad(row.key, 18)} ${pad(row.kind, 9)} ${pad(row.blocked || "—", 12)} ${row.title}`,
+        );
+      }
+    };
+
+    if (sub === "draft") {
+      editable();
+      const file = flags.file || (flags.stdin ? "-" : null);
+      if (!file) throw new UserError("Usage: orchestrate plan draft <campaign> --file plan.yml | --stdin");
+      const text = file === "-" ? fs.readFileSync(0, "utf8") : readText(path.resolve(root, file), null);
+      if (text == null) throw new UserError(`No plan file at ${file}`);
+      const result = draftPlan({ root, slug, plan: parsePlanText(text), ...planInputs });
       if (flags.json) {
         console.log(JSON.stringify(result, null, 2));
         return;
       }
-      const pad = (value, n) => String(value).padEnd(n);
-      console.log(`${pad("#", 4)} ${pad("key", 18)} ${pad("kind", 9)} ${pad("blocked", 10)} title`);
-      for (const ticket of result.tickets) {
-        console.log(
-          `${pad(ticket.id, 4)} ${pad(ticket.key, 18)} ${pad(ticket.kind, 9)} ${pad(ticket.blocked_by.join(",") || "—", 10)} ${ticket.title}`,
-        );
+      console.log(`draft ${result.file}`);
+      printRows(result.plan.tickets.map((ticket) => ({ key: ticket.key, kind: ticket.kind, blocked: ticket.blocked_by.join(","), title: ticket.title })));
+      console.log("");
+      console.log(formatPlanDiff(result));
+      console.log("");
+      console.log("Nothing is applied. tickets/ is untouched until `orchestrate plan import`.");
+      return;
+    }
+
+    if (sub === "diff") {
+      const result = refreshDraft(root, slug, planInputs);
+      if (flags.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
       }
+      printRows(result.plan.tickets.map((ticket) => ({ key: ticket.key, kind: ticket.kind, blocked: ticket.blocked_by.join(","), title: ticket.title })));
+      console.log("");
+      console.log(formatPlanDiff(result));
+      return;
+    }
+
+    if (sub === "show") {
+      if (flags.applied) {
+        const applied = readAppliedBase(root, slug);
+        if (!applied.plan) throw new UserError(`No applied plan for "${slug}"`);
+        if (flags.json) {
+          console.log(JSON.stringify(applied.plan, null, 2));
+          return;
+        }
+        console.log(applied.text || canonicalText(applied.plan));
+        return;
+      }
+      const draft = readDraft(root, slug, { allowedKinds, strict: true });
+      if (!draft.exists) throw new UserError(`No draft plan for "${slug}"`, [`Run \`orchestrate plan draft ${slug} --file plan.yml\`.`]);
+      const ticketKey = flags.ticket ? String(flags.ticket) : null;
+      if (ticketKey) {
+        const ticket = draft.plan.tickets.find((entry) => entry.key === ticketKey);
+        if (!ticket) throw new UserError(`No ticket "${ticketKey}" in the draft`);
+        if (flags.json) {
+          console.log(JSON.stringify(ticket, null, 2));
+          return;
+        }
+        console.log(`# ${ticket.title}`);
+        console.log(`key:        ${ticket.key}`);
+        console.log(`kind:       ${ticket.kind}`);
+        console.log(`blocked by: ${ticket.blocked_by.join(", ") || "—"}`);
+        console.log(`touches:    ${ticket.touches.join(", ")}`);
+        console.log(`sources:    ${ticket.sources.join(", ") || "—"}`);
+        console.log("");
+        console.log("What to build:");
+        console.log(ticket.what);
+        console.log("");
+        console.log("Acceptance:");
+        for (const criterion of ticket.accept) console.log(`- [ ] ${criterion}`);
+        if (ticket.notes) {
+          console.log("");
+          console.log("Notes:");
+          console.log(ticket.notes);
+        }
+        return;
+      }
+      if (flags.json) {
+        console.log(JSON.stringify(draft.plan, null, 2));
+        return;
+      }
+      console.log(draft.text);
+      return;
+    }
+
+    if (sub === "discard") {
+      editable();
+      const removed = discardDraft(root, slug);
+      console.log(removed.length ? `discarded:\n${removed.join("\n")}` : "no draft to discard");
+      return;
+    }
+
+    if (sub === "import") {
+      if (flags.force)
+        throw new UserError("plan import does not accept --force", [
+          `Pause the campaign first: orchestrate pause ${slug}`,
+        ]);
+      const state = editable();
+      const acceptOpen = Boolean(flags["accept-open"]);
+      let plan;
+      if (flags.file || flags.stdin) {
+        const file = flags.file || "-";
+        const text = file === "-" ? fs.readFileSync(0, "utf8") : readText(path.resolve(root, file), null);
+        if (text == null) throw new UserError(`No plan file at ${file}`);
+        plan = parsePlanText(text);
+      } else {
+        const draft = readDraft(root, slug, { allowedKinds, strict: true });
+        if (!draft.exists) throw new UserError(`No draft plan for "${slug}"`, [`Write a draft first: orchestrate plan draft ${slug} --file plan.yml`]);
+        plan = draft.plan;
+      }
+      const canRemove = (id) => !Object.values(state.runs || {}).some((run) => String(run.ticket) === String(id));
+      const result = importPlan({ root, slug, plan, allowedKinds, prune: Boolean(flags.prune), canRemove, acceptOpen });
+      const audit = writeApplied({ root, slug, plan: result.plan, result });
+      discardDraft(root, slug);
+      appendEvent(root, {
+        campaign: slug,
+        type: "plan.applied",
+        data: { hash: audit.hash, tickets: audit.tickets.length, openQuestions: audit.openQuestions.length },
+      });
+      if (flags.json) {
+        console.log(JSON.stringify({ ...result, audit }, null, 2));
+        return;
+      }
+      printRows(
+        result.tickets.map((ticket) => ({
+          id: ticket.id,
+          key: ticket.key,
+          kind: ticket.kind,
+          blocked: ticket.blocked_by.join(","),
+          title: ticket.title,
+        })),
+      );
       console.log("");
       console.log(
         `${result.tickets.length} tickets · ${result.created.length} new · ${result.updated.length} updated${result.removed.length ? ` · ${result.removed.length} removed` : ""}`,
       );
       console.log(`plan    ${result.file}`);
-      const context = readContext(root, slug);
+      console.log(`audit   ${audit.hash} · ${audit.appliedAt}`);
       if (context.bytes) console.log(`context ${context.file} (${context.bytes} bytes)`);
       console.log(`next    orchestrate defaults ${slug} --apply   # bind chains if the plan has none`);
       console.log(`        orchestrate approve ${slug}`);
       return;
     }
-    const slug = resolveCampaign(root, flags.campaign || positional[0]);
+
+    const plan = loadPlan(root, slug);
     if (flags.json) {
-      const plan = loadPlan(root, slug);
       console.log(
         JSON.stringify(
           {
@@ -556,8 +702,10 @@ const commands = {
               kind: entry.data.kind,
               blocked_by: entry.data.blocked_by || [],
               touches: entry.data.touches || [],
+              sources: entry.data.sources || [],
             })),
             errors: plan.errors,
+            applied: readAppliedAudit(root, slug),
           },
           null,
           2,
@@ -718,6 +866,14 @@ const commands = {
   approve({ flags, positional }) {
     const root = rootDir(flags);
     const slug = resolveCampaign(root, flags.campaign || positional[0]);
+    const draft = readDraft(root, slug);
+    if (draft.exists) {
+      throw new UserError(`Campaign "${slug}" has an unapplied draft plan`, [
+        `Review it: orchestrate plan diff ${slug}`,
+        `Apply it: orchestrate plan import ${slug}`,
+        `Or abandon it: orchestrate plan discard ${slug}`,
+      ]);
+    }
     approveCampaign(root, slug, loadConsole());
     console.log(`approved ${slug}`);
     tickNow(root);
@@ -739,17 +895,25 @@ const commands = {
       const counts = {};
       for (const ticket of view.tickets) counts[ticket.stage] = (counts[ticket.stage] || 0) + 1;
       console.log(`${slug} [${view.stage}]${view.reason ? ` ${view.reason}` : ""}`);
-      console.log(
-        `  ${view.tickets.length} tickets: ` +
-          Object.entries(counts)
-            .map(([stage, n]) => `${n} ${stage}`)
-            .join(", "),
-      );
+      const countText = Object.entries(counts)
+        .map(([stage, n]) => `${n} ${stage}`)
+        .join(", ");
+      console.log(`  ${view.tickets.length} tickets${countText ? `: ${countText}` : ""}`);
+      if (view.draft?.exists) {
+        console.log(
+          view.draft.error
+            ? `  draft invalid: ${view.draft.error}`
+            : `  draft ${view.draft.tickets} ticket${view.draft.tickets === 1 ? "" : "s"} · not applied · ${view.draft.hash}`,
+        );
+      }
       console.log(
         `  spend ${view.spend.tokens} tokens, ${money(view.spend.dollars)}; ` +
           `${view.inbox.filter((i) => i.status === "open").length} open inbox items`,
       );
-      for (const error of view.planErrors) console.log(`  ! ${error}`);
+      for (const error of view.planErrors) {
+        if (view.draft?.exists && /no tickets/i.test(error)) continue;
+        console.log(`  ! ${error}`);
+      }
       printTickets(root, slug);
     }
   },
@@ -1143,7 +1307,11 @@ const commands = {
   init                                  scaffold this project, register it, write console defaults
   start "<goal>"                        create a draft campaign
   plan [campaign] [--json]              list tickets and validation errors
-  plan import <campaign> --file f       atomically write campaign body and ticket graph; --prune, --force
+  plan draft <campaign> --file f        save a draft, show both deltas; tickets untouched
+  plan diff <campaign>                  reprint the draft deltas
+  plan show <campaign> [--ticket k]     full draft ticket text; --applied
+  plan import <campaign> [--file f]      apply the draft or a file atomically; --prune, --accept-open
+  plan discard <campaign>               abandon the draft
   context [--ticket 03]                 the substrate a worker reads: decisions, siblings, diff, history
   context append <campaign> --from f   append free-form human context to context.md
   decisions [campaign] [--all]          list decisions, with ids

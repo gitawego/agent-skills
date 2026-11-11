@@ -19,14 +19,20 @@ import { resolveQuotas } from "./quotas.mjs";
 import { costOf, summarizeCost, telemetryOf } from "./telemetry.mjs";
 import { usageFromLog } from "./runs.mjs";
 import { readContext } from "./plan-import.mjs";
+import { readAppliedAudit, readDraft } from "./plan-draft.mjs";
 
 export function projectName(root) {
   return path.basename(root);
 }
 
+function cleanSection(value) {
+  const text = String(value || "").trim();
+  return text === "None." ? "" : text;
+}
+
 /* What the panel should point at next. The panel never decides this with a
    model; it reads the same state the supervisor writes. */
-export function deriveNextAction({ slug, stage, tickets = [], inbox = [], planErrors = [], reason = null, unboundKinds = [] }) {
+export function deriveNextAction({ slug, stage, tickets = [], inbox = [], planErrors = [], reason = null, unboundKinds = [], draft = null }) {
   const open = inbox.filter((item) => item.status === "open");
   const review = open.find((item) => item.kind === "review");
   const question = open.find((item) => item.kind === "needs_answer");
@@ -66,6 +72,20 @@ export function deriveNextAction({ slug, stage, tickets = [], inbox = [], planEr
   if (stage === "running") {
     return { actor: "supervisor", text: "Supervisor is dispatching the frontier.", command: null };
   }
+  if (draft?.exists) {
+    if (draft.error) {
+      return {
+        actor: "you",
+        text: "The draft plan is invalid; fix it in your agent session.",
+        command: `orchestrate plan show ${slug}`,
+      };
+    }
+    return {
+      actor: "you",
+      text: "Review the draft plan in your agent session.",
+      command: `orchestrate plan diff ${slug}`,
+    };
+  }
   if (stage === "awaiting_approval") {
     return { actor: "you", text: "Approve the plan and bindings.", command: `orchestrate approve ${slug}` };
   }
@@ -73,7 +93,7 @@ export function deriveNextAction({ slug, stage, tickets = [], inbox = [], planEr
     return {
       actor: "you",
       text: "Write the plan in your agent session.",
-      command: `orchestrate plan import ${slug} --file plan.yml`,
+      command: `orchestrate plan draft ${slug} --file plan.yml`,
     };
   }
   if (unboundKinds.length) {
@@ -192,6 +212,8 @@ export function campaignView(root, slug) {
 
   const inboxItems = listItems(root, slug);
   const context = readContext(root, slug);
+  const draft = readDraft(root, slug);
+  const planAudit = readAppliedAudit(root, slug);
   const tickets = plan.ordered.map((ticket) => {
     const entry = state.tickets[ticket.data.id] || {};
     const run = entry.run ? state.runs[entry.run] : null;
@@ -232,6 +254,7 @@ export function campaignView(root, slug) {
       summary: entry.summary || null,
       findings: entry.findings || null,
       answer: entry.answer || null,
+      sources: asArray(ticket.data.sources),
       model: entry.model || chain[0]?.model || null,
       cost: summarizeCost([...ticketRuns, ...childRuns]),
       run: run
@@ -268,6 +291,8 @@ export function campaignView(root, slug) {
     criteria: (campaign.sections["acceptance criteria"] || "").trim(),
     constraints: (campaign.sections.constraints || "").trim(),
     reading: (campaign.sections["what to read first"] || "").trim(),
+    assumptions: cleanSection(campaign.sections.assumptions),
+    openQuestions: cleanSection(campaign.sections["open questions"]),
     kinds: Object.fromEntries(
       Object.entries(campaign.data.kinds || {}).map(([id, kind]) => [
         id,
@@ -292,6 +317,31 @@ export function campaignView(root, slug) {
     spend: state.spend,
     delivery: state.delivery || null,
     approvedAt: state.approvedAt || null,
+    planAudit,
+    draft: {
+      exists: draft.exists,
+      file: draft.file,
+      hash: draft.hash,
+      updatedAt: draft.updatedAt,
+      error: draft.error,
+      tickets: draft.plan ? draft.plan.tickets.length : 0,
+      assumptions: draft.plan ? draft.plan.assumptions.length : 0,
+      openQuestions: draft.plan ? draft.plan.open_questions.length : 0,
+      goal: draft.plan?.goal || "",
+      brief: draft.plan?.brief || "",
+      criteria: draft.plan?.criteria || [],
+      constraints: draft.plan?.constraints || "",
+      reading: draft.plan?.reading || "",
+      assumptionsList: draft.plan?.assumptions || [],
+      openQuestionsList: draft.plan?.open_questions || [],
+      ticketsList: (draft.plan?.tickets || []).map((ticket) => ({
+        key: ticket.key,
+        title: ticket.title,
+        kind: ticket.kind,
+        blocked_by: ticket.blocked_by,
+        sources: ticket.sources,
+      })),
+    },
     context: {
       file: context.file,
       bytes: context.bytes,
@@ -329,6 +379,7 @@ export function campaignView(root, slug) {
       inbox: inboxItems,
       planErrors: state.planErrors || [],
       reason: state.reason,
+      draft: { exists: draft.exists, error: draft.error },
       unboundKinds: [...new Set(tickets.map((ticket) => ticket.kind))].filter(
         (kind) => !(effectiveKinds[kind]?.models || []).length,
       ),
