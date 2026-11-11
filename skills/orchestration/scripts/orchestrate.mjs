@@ -685,7 +685,16 @@ const commands = {
         plan = draft.plan;
       }
       const canRemove = (id) => !Object.values(state.runs || {}).some((run) => String(run.ticket) === String(id));
-      const result = importPlan({ root, slug, plan, allowedKinds, prune: Boolean(flags.prune), canRemove, acceptOpen });
+      const result = importPlan({
+        root,
+        slug,
+        plan,
+        allowedKinds,
+        prune: Boolean(flags.prune),
+        canRemove,
+        acceptOpen,
+        acceptFragmented: Boolean(flags["accept-fragmented"]),
+      });
       const audit = writeApplied({ root, slug, plan: result.plan, result });
       discardDraft(root, slug);
       appendEvent(root, {
@@ -1339,7 +1348,7 @@ const commands = {
   plan draft <campaign> --file f        save a draft, show both deltas; tickets untouched
   plan diff <campaign>                  reprint the draft deltas
   plan show <campaign> [--ticket k]     full draft ticket text; --applied
-  plan import <campaign> [--file f]      apply the draft or a file atomically; --prune, --accept-open
+  plan import <campaign> [--file f]      apply the draft or a file atomically; --prune, --accept-open, --accept-fragmented
   plan discard <campaign>               abandon the draft
   plan audit <campaign> [--write]       show or persist the applied-plan audit
   context [--ticket 03]                 the substrate a worker reads: decisions, siblings, diff, history

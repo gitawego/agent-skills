@@ -19,7 +19,7 @@ import {
 } from "./util.mjs";
 import { readCampaign, sections } from "./config.mjs";
 import { asArray, loadTickets, ticketTitle, touchesOverlap } from "./plan.mjs";
-import { PLAN_LIMITS, normalizePlan, parsePlanText } from "./plan-import.mjs";
+import { PLAN_LIMITS, normalizePlan, parsePlanText, planFragmentation } from "./plan-import.mjs";
 import { stringifyYaml } from "./yaml.mjs";
 
 const CAMPAIGN_COMPARE = ["goal", "brief", "criteria", "constraints", "assumptions", "open_questions", "reading"];
@@ -315,6 +315,28 @@ export function planWarnings({ plan, contextBytes = 0, maxConcurrent = 4 }) {
       text: `${overlaps.length} ticket pair${overlaps.length === 1 ? "" : "s"} overlap (${overlaps.slice(0, 3).join(", ")}); the scheduler will serialize them.`,
     });
   }
+  const fragmentation = planFragmentation(plan);
+  if (fragmentation.small.length >= 3) {
+    warnings.push({
+      level: "warn",
+      code: "fragmentation",
+      text: `${fragmentation.small.length} of ${plan.tickets.length} tickets touch one path and have one acceptance criterion (${fragmentation.small.join(", ")}); merge small neighbors unless each is independently verifiable.`,
+    });
+  }
+  if (fragmentation.mergeCandidates.length) {
+    warnings.push({
+      level: "warn",
+      code: "merge-candidates",
+      text: `${fragmentation.mergeCandidates.length} merge candidate pair${fragmentation.mergeCandidates.length === 1 ? "" : "s"} (${fragmentation.mergeCandidates.slice(0, 3).join(", ")}): same or nested paths behind a dependency.`,
+    });
+  }
+  if (fragmentation.chain >= 4) {
+    warnings.push({
+      level: "warn",
+      code: "serial-chain",
+      text: `The graph is one ${fragmentation.chain}-ticket chain; merge adjacent slices or split the work so more than one ticket can run in parallel.`,
+    });
+  }
   if (plan.open_questions.length) {
     warnings.push({
       level: "warn",
@@ -354,6 +376,7 @@ export function draftPlan({ root, slug, plan, allowedKinds = null, maxConcurrent
     applied: applied.plan,
     deltaPrevious,
     deltaApplied: diffPlans(applied.plan, normalized),
+    fragmentation: planFragmentation(normalized),
     warnings,
   };
 }
@@ -370,6 +393,7 @@ export function refreshDraft(root, slug, { allowedKinds = null, maxConcurrent = 
     applied: applied.plan,
     deltaPrevious: previous.plan ? diffPlans(previous.plan, draft.plan) : null,
     deltaApplied: diffPlans(applied.plan, draft.plan),
+    fragmentation: planFragmentation(draft.plan),
     warnings: planWarnings({ plan: draft.plan, contextBytes, maxConcurrent }),
   };
 }
@@ -426,7 +450,12 @@ function deltaDetails(delta) {
 export function formatPlanDiff(result, { label = "Plan draft" } = {}) {
   const lines = [];
   const count = result.plan.tickets.length;
+  const fragmentation = result.fragmentation || planFragmentation(result.plan);
+  const frontier = result.plan.tickets.filter((ticket) => !ticket.blocked_by.length).length;
   lines.push(`${label} · ${count} ticket${count === 1 ? "" : "s"} · ${result.hash || "unsaved"}`);
+  lines.push(
+    `Runs: ~${count * 2} (${count} work + ${count} review) before retries · ${frontier} ready to start · ${fragmentation.small.length} small · ${fragmentation.mergeCandidates.length} merge candidate${fragmentation.mergeCandidates.length === 1 ? "" : "s"}`,
+  );
   lines.push(deltaLine(result.deltaPrevious, "Since your last draft"));
   lines.push(...deltaDetails(result.deltaPrevious));
   lines.push(deltaLine(result.deltaApplied, "Apply will change"));

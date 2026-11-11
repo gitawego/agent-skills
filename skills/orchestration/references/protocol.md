@@ -87,7 +87,9 @@ tickets:
     sources: [README.md]
 ```
 
-`assumptions` is required: an empty list is allowed, but the agent must state what it inferred. `open_questions` blocks `plan import` unless `--accept-open` is passed; `sources` is written to the ticket frontmatter and shown in the drawer. Plans are capped at 20 tickets; above 12 is a review warning.
+`assumptions` is required: an empty list is allowed, but the agent must state what it inferred. `open_questions` blocks `plan import` unless `--accept-open` is passed; `sources` is written to the ticket frontmatter and shown in the drawer.
+
+Plans are capped at **16 tickets**; above **8** is a review warning. A ticket with one touched path and one acceptance criterion is a *small slice*. Four or more small slices making up at least half the plan is fragmentation: `plan import` refuses unless `--accept-fragmented` is passed. The draft also warns about merge candidates (same or nested paths behind a dependency) and a single serial chain of four or more tickets. Each ticket costs a work run plus a review run, so a 6-ticket plan is at least 12 model runs before retries.
 
 `import` validates the whole plan first and writes nothing on error. It assigns ids in file order, resolves `blocked_by` by ticket `key` (or a numeric id in the plan), and records the `key` on each ticket. Always set `key`: it is the stable identity across revisions. Re-import is idempotent by `key`: ids and filenames stay stable, only changed files are rewritten. `--prune` removes keyed tickets missing from the plan, but refuses when a removed ticket has runs.
 

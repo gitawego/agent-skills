@@ -18,7 +18,7 @@ import { campaignDecisionsFile } from "./util.mjs";
 import { resolveQuotas } from "./quotas.mjs";
 import { costOf, summarizeCost, telemetryOf } from "./telemetry.mjs";
 import { usageFromLog } from "./runs.mjs";
-import { readContext } from "./plan-import.mjs";
+import { planFragmentation, readContext } from "./plan-import.mjs";
 import { deriveAppliedAudit, readAppliedAudit, readDraft } from "./plan-draft.mjs";
 
 export function projectName(root) {
@@ -73,6 +73,13 @@ export function deriveNextAction({ slug, stage, tickets = [], inbox = [], planEr
     return { actor: "supervisor", text: "Supervisor is dispatching the frontier.", command: null };
   }
   if (draft?.exists) {
+    if (draft.blocking) {
+      return {
+        actor: "you",
+        text: "The draft is fragmented; merge small slices before importing.",
+        command: `orchestrate plan diff ${slug}`,
+      };
+    }
     if (draft.error) {
       return {
         actor: "you",
@@ -341,6 +348,7 @@ export function campaignView(root, slug) {
         blocked_by: ticket.blocked_by,
         sources: ticket.sources,
       })),
+      fragmentation: draft.plan ? planFragmentation(draft.plan) : null,
     },
     context: {
       file: context.file,
@@ -379,7 +387,7 @@ export function campaignView(root, slug) {
       inbox: inboxItems,
       planErrors: state.planErrors || [],
       reason: state.reason,
-      draft: { exists: draft.exists, error: draft.error },
+      draft: { exists: draft.exists, error: draft.error, blocking: Boolean(draft.plan && planFragmentation(draft.plan).blocking) },
       unboundKinds: [...new Set(tickets.map((ticket) => ticket.kind))].filter(
         (kind) => !(effectiveKinds[kind]?.models || []).length,
       ),

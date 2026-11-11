@@ -1118,10 +1118,20 @@ function stageCounts(c) {
 function draftBlock(c) {
   if (!c.draft?.exists) return "";
   const draft = c.draft;
+  const small = draft.fragmentation?.small?.length || 0;
+  const merges = draft.fragmentation?.mergeCandidates?.length || 0;
+  const sizing = draft.fragmentation?.blocking
+    ? `blocking: ${small} small slices`
+    : small >= 3
+      ? `${small} small slices`
+      : merges
+        ? `${merges} merge candidate${merges === 1 ? "" : "s"}`
+        : "";
   return `<section class="draft-plan">
     <div class="eyebrow">draft plan · not applied</div>
     <strong>${draft.error ? "Invalid draft" : `${draft.tickets} ticket${draft.tickets === 1 ? "" : "s"}`}</strong>
     <span class="hint">${esc(draft.hash || "")}${draft.updatedAt ? ` · ${esc(clockOf(draft.updatedAt))}` : ""}${draft.openQuestions ? ` · ${draft.openQuestions} open question${draft.openQuestions === 1 ? "" : "s"}` : ""}</span>
+    ${sizing ? `<span class="warn">${esc(sizing)}</span>` : ""}
     ${commandRow("Review in your agent", `orchestrate plan diff ${c.slug}`)}
     ${commandRow("Inspect the draft", `orchestrate plan show ${c.slug}`)}
     ${draft.error ? `<p class="hint">${esc(draft.error)}</p>` : ""}

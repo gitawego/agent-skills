@@ -33,6 +33,8 @@ test("a pending draft points at the draft review", () => {
   assert.match(action.command, /plan diff demo/);
   const broken = deriveNextAction({ ...base, stage: "draft", draft: { exists: true, error: "bad yaml" } });
   assert.match(broken.text, /invalid/);
+  const fragmented = deriveNextAction({ ...base, stage: "draft", draft: { exists: true, blocking: true } });
+  assert.match(fragmented.text, /fragmented/);
 });
 
 test("a running campaign is the supervisor's until a person is needed", () => {

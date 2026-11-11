@@ -54,6 +54,8 @@ Read the catalog for the campaign's adapter (`node scripts/orchestrate.mjs catal
 
 The panel is a flight deck: it shows the plan, the tickets, the next action and the telemetry, and it configures the fleet. It never hosts the conversation. It has one manual **Tickets → New ticket** form for a single one-off slice; do not send the whole plan there. Approvals, answers and delivery reviews happen in this session, with a copyable command shown in the panel. The supervisor never invents tickets.
 
+**Right-size the slices.** A ticket is an independently verifiable outcome, not a file or a step. Aim for 3–7 tickets; 8+ needs a reason and 16 is refused. Do not split by file, and do not create a “prepare” ticket followed by a “use it” ticket: merge them unless each is demoable alone. Group docs/chores with the change they describe. A ticket with one touched path and one acceptance criterion is a small slice; four or more small slices making up at least half the plan block `plan import` unless you pass `--accept-fragmented`. Every ticket costs a work run plus a review run, so 6 tickets is at least 12 model runs before retries.
+
 **Tickets from chat.** The human does not need a form. Ask for the slice and make the contract explicit — **including the campaign**:
 
 - One ticket: “Add a ticket to `<campaign>` for the CLI slice: kind code, blocked by 01, touches `src/cli/**`, what: add and list commands, acceptance: `add` prints added.”

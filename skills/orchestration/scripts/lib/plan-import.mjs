@@ -8,11 +8,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { UserError, ensureDir, exists, nowIso, pad2, readText } from "./util.mjs";
 import { readCampaign } from "./config.mjs";
-import { asArray, loadPlan, loadTickets, ticketsDir } from "./plan.mjs";
+import { asArray, loadPlan, loadTickets, ticketsDir, touchesOverlap } from "./plan.mjs";
 import { joinFrontmatter, parseYaml } from "./yaml.mjs";
 import { slugify } from "./create.mjs";
 
-export const PLAN_LIMITS = { warnTickets: 12, maxTickets: 20, warnContextBytes: 100_000 };
+export const PLAN_LIMITS = { warnTickets: 8, maxTickets: 16, warnContextBytes: 100_000 };
 
 const PLAN_FIELDS = new Set([
   "version",
@@ -193,6 +193,55 @@ export function normalizePlan(plan, { allowedKinds = null, requireAssumptions = 
   };
 }
 
+/* A slice is “small” when it has one touched path and one acceptance
+   criterion. Four or more small slices in a plan is fragmentation, not
+   decomposition: each one pays for a worktree, a work run and a review run. */
+export function planFragmentation(plan) {
+  const tickets = plan.tickets || [];
+  const small = tickets.filter((ticket) => ticket.touches.length <= 1 && ticket.accept.length <= 1);
+  const ratio = tickets.length ? small.length / tickets.length : 0;
+  const byTouches = new Map();
+  for (const ticket of tickets) {
+    const key = [...ticket.touches].map(String).sort().join("\u0000");
+    if (!byTouches.has(key)) byTouches.set(key, []);
+    byTouches.get(key).push(ticket.key);
+  }
+  const candidates = new Set();
+  for (const keys of byTouches.values()) {
+    if (keys.length < 2) continue;
+    for (let i = 0; i < keys.length; i++) for (let j = i + 1; j < keys.length; j++) candidates.add([keys[i], keys[j]].sort().join("/"));
+  }
+  for (const left of tickets) {
+    for (const right of tickets) {
+      if (left.key >= right.key) continue;
+      const blocked = left.blocked_by.includes(right.key) || right.blocked_by.includes(left.key);
+      if (!blocked) continue;
+      const subset =
+        left.touches.every((touch) => right.touches.some((other) => touchesOverlap([touch], [other]))) ||
+        right.touches.every((touch) => left.touches.some((other) => touchesOverlap([touch], [other])));
+      if (subset) candidates.add([left.key, right.key].sort().join("/"));
+    }
+  }
+  const byKey = new Map(tickets.map((ticket) => [ticket.key, ticket]));
+  const depth = new Map();
+  const longest = (ticket) => {
+    if (depth.has(ticket.key)) return depth.get(ticket.key);
+    depth.set(ticket.key, 1);
+    const blockers = ticket.blocked_by.map((key) => byKey.get(key)).filter(Boolean);
+    const value = 1 + Math.max(0, ...blockers.map(longest));
+    depth.set(ticket.key, value);
+    return value;
+  };
+  const chain = Math.max(0, ...tickets.map(longest));
+  return {
+    small: small.map((ticket) => ticket.key),
+    ratio,
+    mergeCandidates: [...candidates].sort(),
+    chain,
+    blocking: small.length >= 4 && ratio >= 0.5,
+  };
+}
+
 function splitSections(body) {
   const preamble = [];
   const list = [];
@@ -275,8 +324,15 @@ function restore(snap) {
 /* Import a plan atomically. Existing keyed tickets keep their id and file;
    new keys get the next ids. `prune` removes keyed tickets missing from the
    plan, but only when `canRemove(id)` agrees (the caller checks runs). */
-export function importPlan({ root, slug, plan, allowedKinds = null, prune = false, canRemove = null, acceptOpen = false }) {
+export function importPlan({ root, slug, plan, allowedKinds = null, prune = false, canRemove = null, acceptOpen = false, acceptFragmented = false }) {
   const normalized = normalizePlan(plan, { allowedKinds });
+  const fragmentation = planFragmentation(normalized);
+  if (fragmentation.blocking && !acceptFragmented) {
+    throw new UserError("The plan is too fragmented", [
+      `${fragmentation.small.length} of ${normalized.tickets.length} tickets have one touched path and one acceptance criterion: ${fragmentation.small.join(", ")}`,
+      "Merge small neighbors into verifiable slices, or pass --accept-fragmented if this is deliberate.",
+    ]);
+  }
   if (normalized.open_questions.length && !acceptOpen) {
     throw new UserError("The plan still has open questions", [
       ...normalized.open_questions.map((question) => `! ${question}`),
@@ -377,6 +433,7 @@ export function importPlan({ root, slug, plan, allowedKinds = null, prune = fals
       assumptions: normalized.assumptions,
       openQuestions: normalized.open_questions,
       plan: normalized,
+      fragmentation,
     };
   } catch (err) {
     restore(snap);

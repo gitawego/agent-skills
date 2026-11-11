@@ -34,7 +34,7 @@ A campaign is one paragraph of intent plus a set of tickets with blocking edges.
 | 22 | The panel monitors and configures; the agent converses and decides | A decision that needs a sentence happens in the agent; the panel offers switches that need none, plus one manual New ticket form for a single slice |
 | 23 | Raw context is append-only; the plan is synthesized and imported atomically | `context.md` is evidence, `campaign.md` and `tickets/` are the contract. One validated import replaces a dozen edits and keeps the plan explainable |
 | 24 | Tickets have a dedicated manifest; a manual form is a one-off convenience | The ticket graph is the campaign's center of gravity. The agent is the primary author; the form covers one extra slice without a conversation, never a whole plan |
-| 25 | A plan is drafted and reviewed before it is applied | The draft lives outside `tickets/`; `plan draft` shows the delta since the last message and the delta apply will make, requires assumptions, and blocks on open questions. `plan import` writes and stops; approval is separate |
+| 25 | A plan is drafted and reviewed before it is applied | The draft lives outside `tickets/`; `plan draft` shows the delta since the last message and the delta apply will make, requires assumptions, and blocks on open questions. A plan is capped at 16 tickets; four small slices making up half the plan block import unless `--accept-fragmented`. `plan import` writes and stops; approval is separate |
 
 ## Refinements made while writing
 

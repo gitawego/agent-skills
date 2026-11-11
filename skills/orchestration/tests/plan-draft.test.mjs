@@ -22,6 +22,7 @@ import {
 } from "../scripts/lib/plan-draft.mjs";
 import { importPlan, normalizePlan } from "../scripts/lib/plan-import.mjs";
 import { loadTickets } from "../scripts/lib/plan.mjs";
+import { stringifyYaml } from "../scripts/lib/yaml.mjs";
 
 const CLI = path.join(SKILL, "scripts", "orchestrate.mjs");
 
@@ -88,7 +89,7 @@ test("the plan cap and review warnings are enforced", () => {
       accept: ["Done"],
     })),
   });
-  assert.throws(() => normalizePlan(many), /at most 20 tickets/);
+  assert.throws(() => normalizePlan(many), /at most 16 tickets/);
   const thirteen = plan({
     tickets: Array.from({ length: 13 }, (_, index) => ({
       key: `t${index}`,
@@ -108,6 +109,58 @@ test("the plan cap and review warnings are enforced", () => {
     maxConcurrent: 4,
   });
   assert.ok(risky.some((warning) => /high-risk path/.test(warning.text)));
+  assert.ok(warnings.some((warning) => /one path/.test(warning.text)));
+});
+
+test("fragmentation warnings name merge candidates and long serial chains", () => {
+  const shared = plan({
+    tickets: [
+      { ...plan().tickets[0], touches: ["src/shared/**"] },
+      { ...plan().tickets[1], touches: ["src/shared/**"], blocked_by: ["store"] },
+    ],
+  });
+  const merged = planWarnings({ plan: normalizePlan(shared), contextBytes: 0, maxConcurrent: 4 });
+  assert.ok(merged.some((warning) => /merge candidate/.test(warning.text)));
+
+  const chain = plan({
+    tickets: Array.from({ length: 4 }, (_, index) => ({
+      key: `c${index}`,
+      title: `Chain ${index}`,
+      kind: "code",
+      touches: [`src/c${index}.js`],
+      blocked_by: index ? [`c${index - 1}`] : [],
+      what: "One link.",
+      accept: ["It works", "It stays working"],
+    })),
+  });
+  const serial = planWarnings({ plan: normalizePlan(chain), contextBytes: 0, maxConcurrent: 4 });
+  assert.ok(serial.some((warning) => /one 4-ticket chain/.test(warning.text)));
+});
+
+test("four small slices are blocked unless explicitly accepted", () => {
+  const { box, dir } = setup();
+  const small = plan({
+    tickets: Array.from({ length: 4 }, (_, index) => ({
+      key: `s${index}`,
+      title: `Small ${index}`,
+      kind: "code",
+      touches: [`src/s${index}.js`],
+      what: "One small thing.",
+      accept: ["It works"],
+    })),
+  });
+  assert.throws(() => importPlan({ root: dir, slug: "demo", plan: small, allowedKinds: ["code"] }), /too fragmented/);
+  const accepted = importPlan({ root: dir, slug: "demo", plan: small, allowedKinds: ["code"], acceptFragmented: true });
+  assert.equal(accepted.fragmentation.blocking, true);
+  assert.equal(accepted.tickets.length, 4);
+
+  const file = path.join(box, "small.yml");
+  fs.writeFileSync(file, stringifyYaml(small));
+  const refused = cli(dir, ["plan", "import", "demo", "--file", file]);
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /too fragmented/);
+  const forced = cli(dir, ["plan", "import", "demo", "--file", file, "--accept-fragmented"]);
+  assert.equal(forced.status, 0, forced.stderr);
 });
 
 test("a draft keeps the previous revision and shows both deltas", () => {
@@ -367,6 +420,7 @@ tickets:
   const draft = cli(dir, ["plan", "draft", "demo", "--file", planFile]);
   assert.equal(draft.status, 0, draft.stderr);
   assert.match(draft.stdout, /Apply will change/);
+  assert.match(draft.stdout, /Runs: ~2 \(1 work \+ 1 review\)/);
   assert.ok(fs.existsSync(draftFile(dir, "demo")));
 
   const show = cli(dir, ["plan", "show", "demo", "--ticket", "store"]);
