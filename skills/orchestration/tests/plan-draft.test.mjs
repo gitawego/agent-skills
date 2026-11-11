@@ -323,6 +323,25 @@ tickets:
   assert.equal(readAppliedAudit(dir, "demo").openQuestions.length, 1);
 });
 
+test("plan draft hides informational warnings unless --verbose", () => {
+  const { box, dir } = setup();
+  const file = path.join(box, "plan.yml");
+  fs.writeFileSync(
+    file,
+    stringifyYaml(
+      plan({
+        tickets: [{ ...plan().tickets[0], sources: [] }],
+      }),
+    ),
+  );
+  const quiet = cli(dir, ["plan", "draft", "demo", "--file", file]);
+  assert.equal(quiet.status, 0, quiet.stderr);
+  assert.doesNotMatch(quiet.stdout, /cites no sources/);
+  const verbose = cli(dir, ["plan", "draft", "demo", "--file", file, "--verbose"]);
+  assert.equal(verbose.status, 0, verbose.stderr);
+  assert.match(verbose.stdout, /cites no sources/);
+});
+
 test("plan draft and plan import accept stdin", () => {
   const { dir } = setup();
   const text = `version: 1
@@ -360,6 +379,23 @@ tickets:
   });
   assert.equal(imported.status, 0, imported.stderr);
   assert.equal(loadTickets(dir, "demo").length, 1);
+});
+
+test("plan import --submit runs a tick; plan_gate decides whether approval is still needed", () => {
+  const { box, dir } = setup();
+  const file = path.join(box, "plan.yml");
+  fs.writeFileSync(file, stringifyYaml(plan()));
+  assert.equal(cli(dir, ["plan", "draft", "demo", "--file", file]).status, 0);
+  const human = cli(dir, ["plan", "import", "demo", "--submit"]);
+  assert.equal(human.status, 0, human.stderr);
+  assert.match(human.stdout, /submitted · awaiting_approval/);
+  assert.equal(JSON.parse(cli(dir, ["status", "demo", "--json"]).stdout).campaigns[0].stage, "awaiting_approval");
+
+  const campaignFile = path.join(dir, "orchestration", "demo", "campaign.md");
+  fs.writeFileSync(campaignFile, fs.readFileSync(campaignFile, "utf8").replace("plan_gate: human", "plan_gate: auto"));
+  const auto = cli(dir, ["plan", "import", "demo", "--file", file, "--submit"]);
+  assert.equal(auto.status, 0, auto.stderr);
+  assert.match(auto.stdout, /submitted · running/);
 });
 
 test("a paused campaign can be re-planned and needs a fresh approve", () => {

@@ -1144,7 +1144,6 @@ function draftBriefing(c) {
   const assumptions = (draft.assumptionsList || []).map((item) => `- ${item}`).join("\n");
   const questions = (draft.openQuestionsList || []).map((item) => `- ${item}`).join("\n");
   return `<div class="briefing draft-briefing">
-    <div class="eyebrow">draft briefing</div>
     ${draft.goal ? docBlock("Draft goal", draft.goal) : ""}
     ${docBlock("Brief", draft.brief)}
     ${docBlock("Acceptance criteria", criteria)}
@@ -1211,8 +1210,9 @@ function campaignOverview(c) {
     ${draftBlock(c)}
     ${
       c.draft?.exists && !c.draft.error
-        ? `${draftBriefing(c)}<details class="applied-doc"><summary>Applied campaign document</summary>${appliedBriefing(c)}</details>`
-        : appliedBriefing(c)
+        ? `<details class="briefing-details" ${c.draft.blocking ? "open" : ""}><summary>Draft briefing</summary>${draftBriefing(c)}</details>
+           <details class="applied-doc"><summary>Applied campaign document</summary>${appliedBriefing(c)}</details>`
+        : `<details class="briefing-details"><summary>Briefing</summary>${appliedBriefing(c)}</details>`
     }
     ${ledger(c)}`;
 }
@@ -1452,39 +1452,47 @@ function campaignConfigure(c) {
         <div class="config-fields">
           <div class="field"><label>Adapter</label><div class="stack">${adapterSelect("campaign")}<span class="sub">models, tools and billing of this campaign</span></div></div>
           <div class="field"><label>Spend</label><div class="stack">${spendSelect("campaign")}<span class="sub">subscription-only hides metered models</span></div></div>
-          <div class="field"><label>Sandbox</label><div class="stack">${sandboxSelect("campaign")}<span class="sub">bwrap isolates writes on Linux</span></div></div>
-          <div class="field"><label for="autoship">Autoship</label><div class="stack">
-            <input id="autoship" name="max_autoship_lines" type="number" min="0" value="${c.maxAutoshipLines}" />
-            <span class="sub">changed lines above this never ship without you.</span>
-          </div></div>
-          <div class="field"><label for="bt">Budget</label><div class="stack">
-            <div style="display:flex;gap:8px">
-              <input id="bt" name="budget_tokens" type="number" min="0" placeholder="tokens" value="${c.budget?.tokens ?? ""}" />
-              <input name="budget_dollars" type="number" min="0" step="0.01" placeholder="dollars" value="${c.budget?.dollars ?? ""}" />
+          <details class="advanced">
+            <summary>Advanced</summary>
+            <div class="config-fields">
+              <div class="field"><label>Sandbox</label><div class="stack">${sandboxSelect("campaign")}<span class="sub">bwrap isolates writes on Linux</span></div></div>
+              <div class="field"><label for="autoship">Autoship</label><div class="stack">
+                <input id="autoship" name="max_autoship_lines" type="number" min="0" value="${c.maxAutoshipLines}" />
+                <span class="sub">changed lines above this never ship without you.</span>
+              </div></div>
+              <div class="field"><label for="bt">Budget</label><div class="stack">
+                <div style="display:flex;gap:8px">
+                  <input id="bt" name="budget_tokens" type="number" min="0" placeholder="tokens" value="${c.budget?.tokens ?? ""}" />
+                  <input name="budget_dollars" type="number" min="0" step="0.01" placeholder="dollars" value="${c.budget?.dollars ?? ""}" />
+                </div>
+                <span class="sub">${budgetEstimate(c) || (c.runner?.adapter && c.runner.adapter !== "pi" && c.budget?.dollars ? "A dollar budget cannot cap a subscription adapter; check the acknowledgment." : "empty: no ceiling.")}</span>
+                <label class="sub" style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="budget_ack" ${c.budget?.ack_unmetered ? "checked" : ""}/> acknowledge unmetered adapters</label>
+              </div></div>
             </div>
-            <span class="sub">${budgetEstimate(c) || (c.runner?.adapter && c.runner.adapter !== "pi" && c.budget?.dollars ? "A dollar budget cannot cap a subscription adapter; check the acknowledgment." : "empty: no ceiling.")}</span>
-            <label class="sub" style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="budget_ack" ${c.budget?.ack_unmetered ? "checked" : ""}/> acknowledge unmetered adapters</label>
-          </div></div>
+          </details>
         </div>
-      </section>
-
-      <section class="settings-block">
-        <header><h2 class="page">Checks</h2><span class="hint">the supervisor runs these in the ticket's worktree</span></header>
-        <textarea class="mono" name="checks" rows="4" placeholder="tests | node --test" aria-label="Checks">${esc(checks)}</textarea>
-        <p class="sub" style="margin:6px 0 0">One per line, <span class="mono">name | command</span>.</p>
-      </section>
-
-      <section class="settings-block">
-        <header><h2 class="page">Generated paths</h2><span class="hint">never counted as drift</span></header>
-        <input name="allow_paths" type="text" value="${esc((c.allowPaths || []).join(", "))}" placeholder="package-lock.json, snapshots/**" aria-label="Generated paths" />
-        <p class="sub" style="margin:6px 0 0">Lockfiles, snapshots and other files a worker regenerates without declaring them.</p>
       </section>
     </div>
 
-    <section class="settings-block">
-      <header><h2 class="page">Provider quotas</h2><span class="hint">campaign additions and overrides</span></header>
-      ${quotaEditor("campaign")}
-    </section>
+    <details class="advanced">
+      <summary>Advanced <span class="hint">checks, generated paths, quotas</span></summary>
+      <div class="config-grid">
+        <section class="settings-block">
+          <header><h2 class="page">Checks</h2><span class="hint">the supervisor runs these in the ticket's worktree</span></header>
+          <textarea class="mono" name="checks" rows="4" placeholder="tests | node --test" aria-label="Checks">${esc(checks)}</textarea>
+          <p class="sub" style="margin:6px 0 0">One per line, <span class="mono">name | command</span>.</p>
+        </section>
+        <section class="settings-block">
+          <header><h2 class="page">Generated paths</h2><span class="hint">never counted as drift</span></header>
+          <input name="allow_paths" type="text" value="${esc((c.allowPaths || []).join(", "))}" placeholder="package-lock.json, snapshots/**" aria-label="Generated paths" />
+          <p class="sub" style="margin:6px 0 0">Lockfiles, snapshots and other files a worker regenerates without declaring them.</p>
+        </section>
+      </div>
+      <section class="settings-block">
+        <header><h2 class="page">Provider quotas</h2><span class="hint">campaign additions and overrides</span></header>
+        ${quotaEditor("campaign")}
+      </section>
+    </details>
 
     <section class="chains">
       <header><h2 class="page">Model chains</h2><span class="hint">first model starts the ticket; each next one is the fallback</span><button class="btn" data-act="defaults" data-scope="campaign">Use defaults</button><button class="btn" data-act="refresh-catalog" data-scope="campaign">Refresh models</button></header>
@@ -1521,7 +1529,7 @@ function deliveryBlock(c) {
     ${delivery.detail ? `<p class="note">${esc(delivery.detail)}</p>` : ""}
     ${
       manual
-        ? `<p class="note">Open a PR from <span class="mono">${esc(branch)}</span> into <span class="mono">${esc(base)}</span>, or approve a local merge in your agent session.</p>
+        ? `<p class="note">Open a PR from <span class="mono">${esc(branch)}</span> into <span class="mono">${esc(base)}</span>, or merge locally and remove the worktree and branches in the same decision.</p>
            ${commandRow("Review the delivery", "orchestrate acceptance")}
            ${commandRow("Push the branch", `git push origin ${branch}`)}`
         : ""
@@ -1537,10 +1545,26 @@ function deliveryBlock(c) {
   </section>`;
 }
 
+function attentionBlock(c) {
+  const attention = c.attention;
+  if (!attention) return "";
+  return `<section class="settings-block">
+    <header><h2 class="page">Attention</h2><span class="hint">human actions</span></header>
+    <dl class="attention-list">
+      <dt>Approvals</dt><dd>${attention.approvals}</dd>
+      <dt>Questions answered</dt><dd>${attention.answers}</dd>
+      <dt>Deliveries reviewed</dt><dd>${attention.reviews}</dd>
+      <dt>Cleanups</dt><dd>${attention.cleanups}</dd>
+      <dt>Total</dt><dd><b>${attention.total}</b></dd>
+    </dl>
+  </section>`;
+}
+
 function campaignHistory(c) {
   const spend = c.spendByModel || [];
   return `${planAuditBlock(c)}
     ${draftBlock(c)}
+    ${attentionBlock(c)}
     <section class="history-spend">
       <header><h2 class="page">Spend and cache</h2><span class="hint">${num(c.spend.tokens)} tokens · ${usd(c.spend.dollars)} · ${c.cacheHit == null ? "cache —" : `${(c.cacheHit * 100).toFixed(1)}% cached read`}</span></header>
       <table class="ticket-table">

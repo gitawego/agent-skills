@@ -28,7 +28,8 @@ import {
   setStage,
   ticketState,
 } from "./state.mjs";
-import { appendEvent } from "./ledger.mjs";
+import { appendEvent, readEvents } from "./ledger.mjs";
+import { attentionOf } from "./attention.mjs";
 import { asArray, loadPlan, matchTouches, ticketTitle, touchesOverlap } from "./plan.mjs";
 import {
   campaignFile,
@@ -1375,7 +1376,7 @@ function maybeDeliver(root, slug, state, plan, data) {
 
 /* The pheromone that survives the campaign: a short, non-destructive summary a
    person reads before the next one starts. The ledger stays the audit trail. */
-function writeClose(root, slug, state, plan, data) {
+export function writeClose(root, slug, state, plan, data) {
   const rows = plan.ordered.map((ticket) => {
     const id = ticket.data.id;
     const entry = state.tickets[id] || {};
@@ -1395,6 +1396,7 @@ function writeClose(root, slug, state, plan, data) {
     };
   });
   const decisions = readDecisions(root, slug);
+  const attention = attentionOf(readEvents(root).filter((event) => event.campaign === slug));
   const checks = (data.checks || []).map((check) => check.name).join(", ") || "none";
   const rough = rows.filter((row) => row.attempts > 1 || row.gateCycles > 0);
   const lines = [
@@ -1424,6 +1426,14 @@ function writeClose(root, slug, state, plan, data) {
     "## Decisions",
     "",
     decisions.length ? decisions.map((record) => `- ${summaryLine(record)}`).join("\n") : "None recorded.",
+    "",
+    "## Attention",
+    "",
+    `- approvals: ${attention.approvals}`,
+    `- questions answered: ${attention.answers}`,
+    `- deliveries reviewed: ${attention.reviews}`,
+    `- cleanups: ${attention.cleanups}`,
+    `- total human actions: ${attention.total}`,
     "",
     "## What was hard",
     "",
@@ -1898,9 +1908,14 @@ export function applyCommand(root, command, consoleConfig) {
     if (!["delivered", "paused"].includes(state.stage)) {
       throw new UserError(`Only a delivered or paused campaign is archived (this one is ${state.stage})`);
     }
+    const wasDelivered = state.stage === "delivered";
     campaignStage(root, slug, state, "archived");
     saveState(root, slug, state);
     writeStageToPlan(root, slug, "archived");
+    if (wasDelivered) {
+      const campaign = readCampaign(root, slug);
+      writeClose(root, slug, state, loadPlan(root, slug), campaign.data);
+    }
     return { ok: true };
   }
 

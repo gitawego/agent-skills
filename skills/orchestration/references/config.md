@@ -205,7 +205,7 @@ The campaign document is the intake: goal first and required, then brief, accept
 | --- | --- |
 | `stage` | `draft`, `awaiting_approval`, `running`, `paused`, `delivered`, `archived`. Runtime-written; the panel shows it, only the supervisor sets it |
 | `autonomy` | `supervised` leaves every delivery to a human; `trusted` lands small verified work and escalates the rest; `unattended` lands everything that passes its gates and files only questions and failures |
-| `plan_gate` | `human` waits for approval; `auto` dispatches on a finished plan and files it as a review item (only meaningful with `unattended`) |
+| `plan_gate` | `human` waits for one approval; `auto` dispatches a clean finished plan without a human turn. Use it for an explicit request with a clean draft, and run `plan import --submit`; the panel still shows the plan |
 | `landing` | `branch` uses worktrees, an integration branch, and one result to merge; `directory` writes artifacts into a workspace with no branches |
 | `base` | The ref a branch-landing campaign branches from and merges back into |
 | `checks` | Deterministic commands the supervisor runs itself in the ticket's worktree. A worker's own check claims are ignored |

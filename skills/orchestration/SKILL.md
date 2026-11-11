@@ -8,7 +8,18 @@ disable-model-invocation: true
 
 A **campaign** turns one paragraph of intent into landed work. You plan it as **tickets** with blocking edges, approve the model binding for each **ticket kind**, then a supervisor dispatches **runs** in parallel, up to its **slots** and provider quota windows. Questions stop at the **inbox**; finished deliveries wait in **acceptance**; work that passes its **gates** lands.
 
-The supervisor is a zero-dependency Node process (`scripts/orchestrate.mjs`) plus a local panel. Read the reference for a branch before acting on it:
+The supervisor is a zero-dependency Node process (`scripts/orchestrate.mjs`) plus a local panel.
+
+## Attention
+
+Take as little human attention as possible, and give as much value as possible. Every message, question, setting and panel element must earn its cost.
+
+- **One approval per campaign.** If `plan_gate: auto` and the draft is clean — no open questions, no blocking warnings, no high-risk path, chains bound — import without a second ask and let the supervisor approve.
+- **One question at a time.** Ask only what changes the ticket graph; batch only independent facts.
+- **Speak when a person must act or a result is ready.** No progress chatter; healthy state stays quiet.
+- **One delivery decision.** Ask `open a PR` or `merge locally`; after a merge, one cleanup question, with removal as the default when the branch is safe.
+
+Read the reference for a branch before acting on it:
 
 - [references/config.md](references/config.md): campaign document, ticket kinds, model chains, budget, inheritance, validation.
 - [references/protocol.md](references/protocol.md): stages, ticket files, report schema, slots, retries, gates, landing, events.
@@ -30,7 +41,7 @@ Five steps. Each has a completion criterion; do not start the next until it hold
 
 ### 1. Start
 
-The human invokes `/orchestration start <goal>`. Scaffold if this project has no campaign yet (`node scripts/orchestrate.mjs init`), then create a `draft` campaign holding the goal.
+The human invokes `/orchestration start <goal>`. Scaffold if this project has no campaign yet (`node scripts/orchestrate.mjs init`), then create a `draft` campaign holding the goal. If the human says “run it”, start with `--plan-gate auto --autonomy trusted`; a clean draft can then be imported with `--submit` without a second approval.
 
 **Done when:** `orchestration/<campaign>/campaign.md` exists with a one-sentence goal, and the campaign stage is `draft`.
 
@@ -40,21 +51,25 @@ Take the human's free-form context — notes, links, constraints, prior attempts
 
 Then write a **draft** plan: goal, brief, acceptance criteria, constraints, assumptions, open questions, reading list, and the **tickets**. Each ticket is a vertical slice, sized to one fresh context window, declaring the tickets that **block** it, the paths it **touches**, and the **sources** it came from.
 
-Save the draft with `orchestrate plan draft <campaign> --file plan.yml`; `--file` is the new revision to read and may be a scratch file. The canonical draft is written to `.orchestration/campaigns/<campaign>/plan.yml`, and the previous revision is kept as `plan.prev.yml`. It validates the plan, snapshots the previous draft, and prints the table, the delta **since your last draft**, the delta **apply will change**, assumptions, open questions and warnings. Show that in chat. The human can keep talking: “split 02”, “block 03 on 01”, “drop docs”. Each revision is another `plan draft`; present the delta, not a fresh table. Nothing is written to `tickets/` until the human says “apply”.
+Save the draft with `orchestrate plan draft <campaign> --file plan.yml`. It validates the plan, snapshots the previous draft, and prints the table, the delta since the last draft, the delta apply will make, assumptions, open questions and actionable warnings. Show that in chat; revisions are another `plan draft`, and you present the delta. Nothing enters `tickets/` until apply.
+
+If the human asked to run the campaign and `plan_gate: auto`, present a compact draft once and run `plan import --submit`; do not ask for a second approval. With `plan_gate: human`, ask once.
 
 `orchestrate plan import <campaign>` applies the current draft. It stops before approval, refuses while anything is running, requires `assumptions`, and blocks on open questions unless `--accept-open` is passed. Re-import is idempotent by ticket `key`. `approve` refuses while a draft is unapplied; apply or `plan discard` first.
 
-Grill the human first, one capped round of at most seven questions on the frontier (scope, the shape of the deliverable, what "verified" means, hard constraints). Ask only what changes the tickets; facts are yours to look up.
+Grill the human first on the frontier (scope, the shape of the deliverable, what "verified" means, hard constraints). Ask one concrete question at a time, stop at seven, and ask only what changes the tickets; facts are yours to look up.
 
 **Done when:** every acceptance criterion of the campaign is claimed by at least one ticket, every ticket names its blockers and touched paths, the ticket graph is acyclic, and no ticket lacks a verifiable outcome. The campaign stage is `awaiting_approval`.
 
 ### 3. Bind and approve
 
-Read the catalog for the campaign's adapter (`node scripts/orchestrate.mjs catalog --adapter <id>`) and confirm the chain for every kind the plan uses: a first model that matches the kind's work, a fallback from another family where one exists, and a thinking level. A new console already resolved the newest DeepSeek Flash, Muse Spark Contributor and MiMo Flash releases into the kinds (the reviewer stays on a different first model); `orchestrate defaults <campaign> --apply` fills empty chains against the live catalog. Confirm, adjust, and say why in one line per kind, so the human can disagree with the choice rather than re-derive it. If a family is absent from the adapter's catalog, that chain is still empty and must be bound by hand. The picker is ordered cheapest first; the human still chooses.
+Read the catalog for the campaign's adapter (`node scripts/orchestrate.mjs catalog --adapter <id>`) and confirm the chain for every kind the plan uses: a first model that matches the kind's work, a fallback from another family where one exists, and a thinking level. A new console already resolved the newest DeepSeek Flash, Muse Spark Contributor and MiMo Flash releases into the kinds (the reviewer stays on a different first model); `orchestrate defaults <campaign> --apply` fills empty chains against the live catalog. If a family is absent, bind by hand. The picker is cheapest first; the human still chooses.
+
+If the draft is clean and `plan_gate: auto`, `plan import --submit` applies it and lets the supervisor approve. Otherwise, ask once: “apply or adjust?”
 
 The panel is a flight deck: it shows the plan, the tickets, the next action and the telemetry, and it configures the fleet. It never hosts the conversation. It has one manual **Tickets → New ticket** form for a single one-off slice; do not send the whole plan there. Approvals, answers and delivery reviews happen in this session, with a copyable command shown in the panel. The supervisor never invents tickets.
 
-**Right-size the slices.** A ticket is an independently verifiable outcome, not a file or a step. Aim for 3–7 tickets; 8+ needs a reason and 16 is refused. Do not split by file, and do not create a “prepare” ticket followed by a “use it” ticket: merge them unless each is demoable alone. Group docs/chores with the change they describe. A ticket with one touched path and one acceptance criterion is a small slice; four or more small slices making up at least half the plan block `plan import` unless you pass `--accept-fragmented`. Every ticket costs a work run plus a review run, so 6 tickets is at least 12 model runs before retries.
+**Right-size the slices.** A ticket is an independently verifiable outcome, not a file or a step. Aim for 3–7 tickets; 8+ needs a reason and 16 is refused. Do not split by file or create “prepare”/“use it” pairs; merge them unless each is demoable alone. Every ticket costs a work run plus a review run. See [references/protocol.md](references/protocol.md#context-and-the-plan) for the fragmentation rule.
 
 **Tickets from chat.** The human does not need a form. Ask for the slice and make the contract explicit — **including the campaign**:
 
@@ -82,7 +97,7 @@ Answer questions with a decision, not with advice. A worker resumes from the ans
 
 Report what landed, what was dropped and why, what the spend was, and which tickets cost more than one attempt. If a class of failure repeated, propose a check that would have caught it.
 
-When the campaign reaches `delivered`, name the integration branch and ask the human one clear question: **open a PR from that branch into `base`, or merge locally?** After it is in `base`, ask a second: **remove the campaign branches and integration worktree?** `orchestrate cleanup <campaign> --dry-run` shows exactly what would go; cleanup keeps the base checkout. Do not remove the worktree or branches before that answer. The campaign stage is `archived` when closed.
+When the campaign reaches `delivered`, name the branch and ask one delivery question: **open a PR from `orch/<slug>/integration` into `base`, or merge locally and clean up?** A local choice runs `review approve` and then `cleanup`; do not ask again. If the PR is chosen, `cleanup` waits until it lands. If the branch is already merged, ask the cleanup question once. `cleanup --dry-run` shows exactly what would go; removal is the default when the branch is safe, and the base checkout is never removed. The campaign stage is `archived` when closed.
 
 **Done when:** the report is written and the panel shows no open inbox item or waiting delivery for the campaign.
 
@@ -95,10 +110,10 @@ The script is the source of truth; the skill's slash commands are conveniences o
 | `init` | Scaffold `orchestration/`, register the project in the console, write defaults |
 | `start <goal>` | Create a `draft` campaign |
 | `plan [campaign] [--json]` | Validate the plan and list every ticket |
-| `plan draft <campaign> --file plan.yml` | Save a draft; print the table, deltas, assumptions, open questions and warnings |
-| `plan diff <campaign>` | Reprint the draft deltas without writing |
+| `plan draft <campaign> --file plan.yml [--verbose]` | Save a draft; print the table, deltas, assumptions, open questions and actionable warnings |
+| `plan diff <campaign> [--verbose]` | Reprint the draft deltas without writing |
 | `plan show <campaign> [--ticket <key>]` | Full draft ticket text; `--applied` shows the applied plan |
-| `plan import <campaign> [--file plan.yml] [--prune] [--accept-open] [--accept-fragmented]` | Apply the draft atomically; refuses while running; stops before approval |
+| `plan import <campaign> [--file plan.yml] [--prune] [--accept-open] [--accept-fragmented] [--submit]` | Apply the draft atomically; `--submit` runs a tick so an auto plan can approve |
 | `plan discard <campaign>` | Abandon the draft without touching tickets |
 | `plan audit <campaign> [--write]` | Show or persist the applied-plan audit; legacy campaigns derive it from the ticket graph |
 | `context append <campaign> --from notes.md` | Append free-form human input to `context.md` |

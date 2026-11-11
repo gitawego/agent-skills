@@ -117,6 +117,11 @@ test("a supervised campaign leaves the delivery for a person", async () => {
   assert.match(after.nextAction.command, new RegExp(`cleanup ${slug} --dry-run`));
   const branches = gitOut(dir, ["branch", "--list", "orch/*"]);
   assert.match(branches, new RegExp(`orch/${slug}/01`), "approval leaves cleanup to the person");
+  applyCommand(dir, { type: "archive", campaign: slug }, loadConsole());
+  const close = fs.readFileSync(path.join(dir, "orchestration", slug, "CLOSE.md"), "utf8");
+  assert.match(close, /## Attention/);
+  assert.match(close, /deliveries reviewed: 1/);
+  assert.match(close, /total human actions: 1/);
 });
 
 test("a manual delivery still merges after the base has moved", async () => {

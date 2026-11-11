@@ -60,7 +60,7 @@ import { decisionsFor, promoteDecision, readDecisions, summaryLine } from "./lib
 import { appendEvent, readEvents } from "./lib/ledger.mjs";
 import { campaignBranches, cleanupCampaignBranches, diffStats, integrationBranch, integrationWorktree } from "./lib/landing.mjs";
 import { priceLabel } from "./lib/pricing.mjs";
-import { approveCampaign, tick } from "./lib/engine.mjs";
+import { approveCampaign, tick, writeClose } from "./lib/engine.mjs";
 import { enqueue } from "./lib/commands.mjs";
 import { listItems } from "./lib/inbox.mjs";
 import { campaignView, projectView } from "./lib/view.mjs";
@@ -453,6 +453,12 @@ const commands = {
       console.log("nothing to clean");
     }
     if (worktreeExists) console.log(`removed ${integration}`);
+    try {
+      const plan = loadPlan(root, slug);
+      if (plan.ordered.length) writeClose(root, slug, state, plan, campaign.data);
+    } catch {
+      /* cleanup stays best-effort if the plan is not readable */
+    }
     console.log(`kept ${base}`);
   },
 
@@ -632,7 +638,7 @@ const commands = {
       console.log(`draft ${result.file}`);
       printRows(result.plan.tickets.map((ticket) => ({ key: ticket.key, kind: ticket.kind, blocked: ticket.blocked_by.join(","), title: ticket.title })));
       console.log("");
-      console.log(formatPlanDiff(result));
+      console.log(formatPlanDiff(result, { verbose: Boolean(flags.verbose) }));
       console.log("");
       console.log("Nothing is applied. tickets/ is untouched until `orchestrate plan import`.");
       return;
@@ -646,7 +652,7 @@ const commands = {
       }
       printRows(result.plan.tickets.map((ticket) => ({ key: ticket.key, kind: ticket.kind, blocked: ticket.blocked_by.join(","), title: ticket.title })));
       console.log("");
-      console.log(formatPlanDiff(result));
+      console.log(formatPlanDiff(result, { verbose: Boolean(flags.verbose) }));
       return;
     }
 
@@ -761,8 +767,16 @@ const commands = {
       console.log(`plan    ${result.file}`);
       console.log(`audit   ${audit.hash} · ${audit.appliedAt}`);
       if (context.bytes) console.log(`context ${context.file} (${context.bytes} bytes)`);
-      console.log(`next    orchestrate defaults ${slug} --apply   # bind chains if the plan has none`);
-      console.log(`        orchestrate approve ${slug}`);
+      if (flags.submit) {
+        tickNow(root, { quiet: true });
+        const after = loadState(root, slug);
+        console.log(`submitted · ${after.stage}`);
+        if (after.stage === "awaiting_approval") console.log(`next    orchestrate approve ${slug}`);
+        else console.log(`next    the supervisor dispatches the frontier`);
+      } else {
+        console.log(`next    orchestrate defaults ${slug} --apply   # bind chains if the plan has none`);
+        console.log(`        orchestrate approve ${slug}`);
+      }
       return;
     }
 
@@ -1393,10 +1407,10 @@ const commands = {
   init                                  scaffold this project, register it, write console defaults
   start "<goal>"                        create a draft campaign
   plan [campaign] [--json]              list tickets and validation errors
-  plan draft <campaign> --file f        save a draft, show both deltas; tickets untouched
-  plan diff <campaign>                  reprint the draft deltas
+  plan draft <campaign> --file f        save a draft, show both deltas; tickets untouched; --verbose
+  plan diff <campaign> [--verbose]      reprint the draft deltas
   plan show <campaign> [--ticket k]     full draft ticket text; --applied
-  plan import <campaign> [--file f]      apply the draft or a file atomically; --prune, --accept-open, --accept-fragmented
+  plan import <campaign> [--file f]      apply the draft or a file atomically; --prune, --accept-open, --accept-fragmented, --submit
   plan discard <campaign>               abandon the draft
   plan audit <campaign> [--write]       show or persist the applied-plan audit
   context [--ticket 03]                 the substrate a worker reads: decisions, siblings, diff, history

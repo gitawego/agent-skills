@@ -56,6 +56,8 @@ The draft lives in `.orchestration/campaigns/<slug>/plan.yml`; the previous revi
 
 That is the fine-tuning loop: the human says “split 02”, “drop docs”, “block 03 on 01”; the agent edits the draft, runs `plan draft`, and presents only the delta. `plan import` is only run after an explicit “apply”.
 
+For an explicit request whose draft has no open questions and no blocking warning, `plan import --submit` applies the plan and runs a tick; when the campaign is `plan_gate: auto`, the supervisor approves without another human turn. With `plan_gate: human`, the tick leaves it `awaiting_approval` for one decision. `plan draft --verbose` adds informational warnings such as a ticket with no sources; the default output carries only actionable ones.
+
 ```yaml
 version: 1
 goal: Make a perfect quick shell theme
@@ -227,6 +229,10 @@ Approving a delivery item is a merge attempt, not a receipt. If the merge cannot
 **Directory landing.** No branches. Each ticket writes into the workspace root; `touches` overlap is the only concurrency control. A passed ticket's files are copied into the delivery directory in ticket order, and the campaign delivers a manifest, not a commit.
 
 What ships follows the autonomy level, and the campaign's `max_autoship_lines` overrides every level: `supervised` always waits for a human; `trusted` ships verified work under the threshold; `unattended` ships anything that passes its gates.
+
+## Attention
+
+The close report and History count the human actions a campaign cost: approvals, questions answered, deliveries reviewed and cleanups. `CLOSE.md` is written at delivery and refreshed on archive, so a delivery review is counted after the fact. A campaign with zero human actions is the target for a `plan_gate: auto` + `trusted` or `unattended` run; attention per landed ticket is the signal for whether to widen autonomy or fix the plan.
 
 ## The ledger
 

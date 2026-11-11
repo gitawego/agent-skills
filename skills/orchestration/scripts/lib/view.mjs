@@ -20,6 +20,7 @@ import { costOf, summarizeCost, telemetryOf } from "./telemetry.mjs";
 import { usageFromLog } from "./runs.mjs";
 import { planFragmentation, readContext } from "./plan-import.mjs";
 import { deriveAppliedAudit, readAppliedAudit, readDraft } from "./plan-draft.mjs";
+import { attentionOf } from "./attention.mjs";
 
 export function projectName(root) {
   return path.basename(root);
@@ -54,7 +55,7 @@ export function deriveNextAction({
       const branch = delivery.branch || `orch/${slug}/integration`;
       return {
         actor: "you",
-        text: `Review the delivery. Branch ${branch} → ${base}; open a PR or approve a local merge.`,
+        text: `Review the delivery. Branch ${branch} → ${base}; open a PR, or merge locally and clean up.`,
         command: "orchestrate acceptance",
       };
     }
@@ -244,6 +245,7 @@ export function campaignView(root, slug) {
   }
 
   const inboxItems = listItems(root, slug);
+  const campaignEvents = readEvents(root).filter((event) => event.campaign === slug);
   const context = readContext(root, slug);
   const draft = readDraft(root, slug);
   const planAudit = readAppliedAudit(root, slug) || deriveAppliedAudit(root, slug, { appliedAt: state.approvedAt || null });
@@ -396,8 +398,8 @@ export function campaignView(root, slug) {
     tickets,
     runs,
     inbox: inboxItems,
-    events: readEvents(root)
-      .filter((event) => event.campaign === slug)
+    attention: attentionOf(campaignEvents),
+    events: campaignEvents
       .slice(-40)
       .map((event) => ({
         ts: event.ts,

@@ -303,8 +303,11 @@ export function planWarnings({ plan, contextBytes = 0, maxConcurrent = 4 }) {
   const overlaps = [];
   for (let i = 0; i < plan.tickets.length; i++) {
     for (let j = i + 1; j < plan.tickets.length; j++) {
-      if (touchesOverlap(plan.tickets[i].touches, plan.tickets[j].touches)) {
-        overlaps.push(`${plan.tickets[i].key}/${plan.tickets[j].key}`);
+      const left = plan.tickets[i];
+      const right = plan.tickets[j];
+      const related = left.blocked_by.includes(right.key) || right.blocked_by.includes(left.key);
+      if (!related && touchesOverlap(left.touches, right.touches)) {
+        overlaps.push(`${left.key}/${right.key}`);
       }
     }
   }
@@ -447,7 +450,7 @@ function deltaDetails(delta) {
   return lines;
 }
 
-export function formatPlanDiff(result, { label = "Plan draft" } = {}) {
+export function formatPlanDiff(result, { label = "Plan draft", verbose = false } = {}) {
   const lines = [];
   const count = result.plan.tickets.length;
   const fragmentation = result.fragmentation || planFragmentation(result.plan);
@@ -471,9 +474,10 @@ export function formatPlanDiff(result, { label = "Plan draft" } = {}) {
     lines.push("Open questions:");
     for (const question of result.plan.open_questions) lines.push(`  - ${question}`);
   }
-  if (result.warnings.length) {
+  const warnings = (result.warnings || []).filter((warning) => verbose || warning.level !== "info");
+  if (warnings.length) {
     lines.push("Warnings:");
-    for (const warning of result.warnings) lines.push(`  ! ${warning.text}`);
+    for (const warning of warnings) lines.push(`  ! ${warning.text}`);
   }
   return lines.join("\n");
 }

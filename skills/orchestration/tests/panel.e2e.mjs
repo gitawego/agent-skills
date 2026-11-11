@@ -381,7 +381,7 @@ tickets:
       expression: `JSON.stringify({
         draft: document.querySelector(".draft-plan")?.textContent || "",
         next: document.querySelector(".next-action")?.textContent || "",
-        assumptions: document.body.innerText.toLowerCase().includes("assumptions"),
+        assumptions: document.getElementById("app")?.textContent.toLowerCase().includes("assumptions"),
       })`,
       returnByValue: true,
     });
@@ -397,12 +397,14 @@ tickets:
       expression: `JSON.stringify({
         plan: document.querySelector(".settings-block")?.textContent || "",
         hash: document.body.innerText.includes("abc123def456"),
+        attention: document.body.textContent.includes("Attention"),
       })`,
       returnByValue: true,
     });
     const historyPage = JSON.parse(historyPlan.result.result.value);
     assert.match(historyPage.plan, /1 ticket applied/);
     assert.equal(historyPage.hash, true, "the applied plan hash is visible");
+    assert.equal(historyPage.attention, true, "History shows the attention metric");
 
     fs.unlinkSync(path.join(stateDir, "plan.applied.json"));
     await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo/history` });
