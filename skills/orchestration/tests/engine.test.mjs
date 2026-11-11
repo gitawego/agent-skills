@@ -124,6 +124,22 @@ test("a supervised campaign leaves the delivery for a person", async () => {
   assert.match(close, /total human actions: 1/);
 });
 
+test("approve with cleanup merges, removes the worktree and branches, and counts the action", async () => {
+  const { dir, slug } = setup({ autonomy: "supervised", tickets: 1 });
+  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  const view = await until(dir, slug, (v) => v.stage === "delivered");
+  const item = view.inbox.find((i) => i.kind === "review");
+  applyCommand(dir, { type: "review.approve", campaign: slug, item: item.id, cleanup: true }, loadConsole());
+  const after = campaignView(dir, slug);
+  assert.equal(after.attention.cleanups, 1);
+  assert.match(after.nextAction.command, new RegExp(`archive ${slug}`));
+  assert.deepEqual(fs.readdirSync(path.join(dir, ".orchestration", "campaigns", slug, "worktrees")), []);
+  assert.equal(gitOut(dir, ["branch", "--list", "orch/*"]).trim(), "");
+  const close = fs.readFileSync(path.join(dir, "orchestration", slug, "CLOSE.md"), "utf8");
+  assert.match(close, /cleanups: 1/);
+  assert.match(close, /total human actions: 2/);
+});
+
 test("a manual delivery still merges after the base has moved", async () => {
   const { dir, slug } = setup({ autonomy: "supervised", tickets: 1 });
   scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });

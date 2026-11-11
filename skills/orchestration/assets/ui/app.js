@@ -817,7 +817,7 @@ function viewAcceptance(items) {
                   ${commandRow("Approve in your agent", `orchestrate review ${item.id} approve "…"`)}
                   ${commandRow("Send back in your agent", `orchestrate review ${item.id} reject "…"`)}
                   <div class="actions">
-                    <button class="btn primary" data-act="approve-item" data-root="${esc(campaign.root)}" data-campaign="${esc(campaign.slug)}" data-item="${esc(item.id)}">Approve and merge</button>
+                    <button class="btn primary" data-act="approve-item" data-cleanup="true" data-root="${esc(campaign.root)}" data-campaign="${esc(campaign.slug)}" data-item="${esc(item.id)}">Approve, merge and clean up</button>
                     <button class="btn ghost" data-act="open-campaign" data-root="${esc(campaign.root)}" data-campaign="${esc(campaign.slug)}">Open campaign</button>
                   </div>
                 </article>`,
@@ -1527,6 +1527,7 @@ function deliveryBlock(c) {
   const base = c.base || "main";
   const manual = delivery.mode === "manual";
   const merged = delivery.mode === "merged";
+  const cleaned = (c.attention?.cleanups || 0) > 0;
   return `<section class="settings-block">
     <header><h2 class="page">Delivery</h2><span class="hint">${esc(delivery.mode)} · ${esc(branch)} → ${esc(base)}</span></header>
     ${delivery.detail ? `<p class="note">${esc(delivery.detail)}</p>` : ""}
@@ -1539,9 +1540,9 @@ function deliveryBlock(c) {
     }
     ${
       merged
-        ? `<p class="note">Merged into <span class="mono">${esc(base)}</span>. The integration worktree and campaign branches can be removed; the base checkout stays.</p>
-           ${commandRow("Preview cleanup", `orchestrate cleanup ${c.slug} --dry-run`)}
-           ${commandRow("Remove branches and worktree", `orchestrate cleanup ${c.slug}`)}`
+        ? `<p class="note">Merged into <span class="mono">${esc(base)}</span>. ${cleaned ? "The integration worktree and campaign branches are removed." : "The integration worktree and campaign branches can be removed; the base checkout stays."}</p>
+           ${cleaned ? "" : commandRow("Preview cleanup", `orchestrate cleanup ${c.slug} --dry-run`)}
+           ${cleaned ? "" : commandRow("Remove branches and worktree", `orchestrate cleanup ${c.slug}`)}`
         : ""
     }
     ${commandRow("Close the campaign", `orchestrate archive ${c.slug}`)}
@@ -2530,7 +2531,13 @@ document.addEventListener("click", (event) => {
     case "approve-campaign":
       return command(root, { type: "approve", campaign });
     case "approve-item":
-      return command(root, { type: "review.approve", campaign, item, text: "Approved." });
+      return command(root, {
+        type: "review.approve",
+        campaign,
+        item,
+        text: "Approved.",
+        cleanup: target.dataset.cleanup === "true",
+      });
     case "defaults": {
       const scope = target.dataset.scope === "campaign" ? "campaign" : "console";
       const project = root || campaigns()[0]?.root;

@@ -44,6 +44,7 @@ export function deriveNextAction({
   draft = null,
   delivery = null,
   base = "main",
+  cleaned = false,
 }) {
   const open = inbox.filter((item) => item.status === "open");
   const review = open.find((item) => item.kind === "review");
@@ -60,6 +61,7 @@ export function deriveNextAction({
       };
     }
     if (delivery?.mode === "merged") {
+      if (cleaned) return { actor: "you", text: "Close the campaign with a report.", command: `orchestrate archive ${slug}` };
       return {
         actor: "you",
         text: `Merged into ${base}. Remove the integration worktree and campaign branches?`,
@@ -246,6 +248,7 @@ export function campaignView(root, slug) {
 
   const inboxItems = listItems(root, slug);
   const campaignEvents = readEvents(root).filter((event) => event.campaign === slug);
+  const attention = attentionOf(campaignEvents);
   const context = readContext(root, slug);
   const draft = readDraft(root, slug);
   const planAudit = readAppliedAudit(root, slug) || deriveAppliedAudit(root, slug, { appliedAt: state.approvedAt || null });
@@ -398,7 +401,7 @@ export function campaignView(root, slug) {
     tickets,
     runs,
     inbox: inboxItems,
-    attention: attentionOf(campaignEvents),
+    attention,
     events: campaignEvents
       .slice(-40)
       .map((event) => ({
@@ -417,6 +420,7 @@ export function campaignView(root, slug) {
       reason: state.reason,
       delivery: state.delivery || null,
       base: campaign.data.base || "main",
+      cleaned: attention.cleanups > 0,
       draft: { exists: draft.exists, error: draft.error, blocking: Boolean(draft.plan && planFragmentation(draft.plan).blocking) },
       unboundKinds: [...new Set(tickets.map((ticket) => ticket.kind))].filter(
         (kind) => !(effectiveKinds[kind]?.models || []).length,

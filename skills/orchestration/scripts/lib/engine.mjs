@@ -68,6 +68,7 @@ import { createItem, findItem, listItems, openItemForTicket, updateItem } from "
 import { attachmentAudit, attachmentPaths, loadAttachments } from "./attachments.mjs";
 import {
   changedSince,
+  cleanupCampaignBranches,
   deliverBranch,
   diffStats,
   ensureIntegration,
@@ -1803,6 +1804,11 @@ export function applyCommand(root, command, consoleConfig) {
         return { ok: false, delivery: res };
       }
       markAnswered();
+      if (command.cleanup) {
+        const branches = cleanupCampaignBranches(root, slug);
+        if (branches.length) appendEvent(root, { campaign: slug, type: "branches.cleaned", data: { branches } });
+        writeClose(root, slug, state, loadPlan(root, slug), readCampaign(root, slug).data);
+      }
       return { ok: true, delivery: res };
     }
 
