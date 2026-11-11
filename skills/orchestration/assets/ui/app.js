@@ -1177,9 +1177,12 @@ function draftTickets(c) {
 function planAuditBlock(c) {
   const audit = c.planAudit;
   if (!audit) return "";
+  const when = audit.appliedAt ? `applied ${clockOf(audit.appliedAt)}` : "applied time unknown";
+  const source = audit.derived ? " · derived from tickets" : "";
+  const hash = audit.hash || "hash unknown";
   return `<section class="settings-block">
-    <header><h2 class="page">Plan</h2><span class="hint">applied ${esc(clockOf(audit.appliedAt))} · ${esc(audit.hash)}</span></header>
-    <p class="note">${audit.tickets.length} ticket${audit.tickets.length === 1 ? "" : "s"} applied.${audit.assumptions?.length ? ` ${audit.assumptions.length} assumption${audit.assumptions.length === 1 ? "" : "s"} recorded.` : ""}${audit.openQuestions?.length ? ` ${audit.openQuestions.length} open question${audit.openQuestions.length === 1 ? "" : "s"} accepted.` : ""}</p>
+    <header><h2 class="page">Plan</h2><span class="hint">${esc(when)}${esc(source)} · ${esc(hash)}</span></header>
+    <p class="note">${(audit.tickets || []).length} ticket${(audit.tickets || []).length === 1 ? "" : "s"} applied.${audit.assumptions?.length ? ` ${audit.assumptions.length} assumption${audit.assumptions.length === 1 ? "" : "s"} recorded.` : ""}${audit.openQuestions?.length ? ` ${audit.openQuestions.length} open question${audit.openQuestions.length === 1 ? "" : "s"} accepted.` : ""}</p>
     ${audit.assumptions?.length ? `<ul class="plan-list">${audit.assumptions.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>` : ""}
     ${audit.openQuestions?.length ? `<ul class="plan-list">${audit.openQuestions.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>` : ""}
   </section>`;

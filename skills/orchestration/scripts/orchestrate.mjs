@@ -39,10 +39,13 @@ import {
 import { boundFirstModels, pendingDefaultKinds, resolveDefaultChains } from "./lib/defaults.mjs";
 import { appendContext, importPlan, parsePlanText, readContext } from "./lib/plan-import.mjs";
 import {
+  deriveAppliedAudit,
   discardDraft,
   draftPlan,
   canonicalText,
   formatPlanDiff,
+  appliedAuditFile,
+  persistAppliedAudit,
   readAppliedBase,
   readAppliedAudit,
   readDraft,
@@ -516,7 +519,7 @@ const commands = {
 
   plan({ flags, positional }) {
     const root = rootDir(flags);
-    const subcommands = new Set(["draft", "diff", "show", "discard", "import"]);
+    const subcommands = new Set(["draft", "diff", "show", "discard", "import", "audit"]);
     const sub = subcommands.has(positional[0]) ? positional[0] : null;
     const slug = resolveCampaign(root, (sub ? positional[1] : positional[0]) || flags.campaign);
     const campaign = readCampaign(root, slug);
@@ -550,6 +553,31 @@ const commands = {
         );
       }
     };
+
+    if (sub === "audit") {
+      const stored = readAppliedAudit(root, slug);
+      const state = loadState(root, slug);
+      const audit = stored || deriveAppliedAudit(root, slug, { appliedAt: state.approvedAt || null });
+      if (!audit) throw new UserError(`No applied plan for "${slug}"`, ["Nothing has been imported yet."]);
+      if (flags.write) persistAppliedAudit(root, slug, audit);
+      if (flags.json) {
+        console.log(JSON.stringify(audit, null, 2));
+        return;
+      }
+      console.log(`${slug} · ${(audit.tickets || []).length} tickets · ${audit.hash || "hash unknown"}`);
+      console.log(`applied   ${audit.appliedAt || "unknown"}${audit.derived ? " (derived from tickets)" : ""}`);
+      for (const ticket of audit.tickets || []) console.log(`  ${ticket.id}  ${ticket.key.padEnd(18)} ${ticket.kind.padEnd(9)} ${ticket.title}`);
+      if (audit.assumptions?.length) {
+        console.log("assumptions");
+        for (const item of audit.assumptions) console.log(`  - ${item}`);
+      }
+      if (audit.openQuestions?.length) {
+        console.log("open questions");
+        for (const item of audit.openQuestions) console.log(`  - ${item}`);
+      }
+      if (flags.write) console.log(`wrote ${appliedAuditFile(root, slug)}`);
+      return;
+    }
 
     if (sub === "draft") {
       editable();
@@ -692,6 +720,7 @@ const commands = {
 
     const plan = loadPlan(root, slug);
     if (flags.json) {
+      const audit = readAppliedAudit(root, slug) || deriveAppliedAudit(root, slug, { appliedAt: loadState(root, slug).approvedAt || null });
       console.log(
         JSON.stringify(
           {
@@ -705,7 +734,7 @@ const commands = {
               sources: entry.data.sources || [],
             })),
             errors: plan.errors,
-            applied: readAppliedAudit(root, slug),
+            applied: audit,
           },
           null,
           2,
@@ -1312,6 +1341,7 @@ const commands = {
   plan show <campaign> [--ticket k]     full draft ticket text; --applied
   plan import <campaign> [--file f]      apply the draft or a file atomically; --prune, --accept-open
   plan discard <campaign>               abandon the draft
+  plan audit <campaign> [--write]       show or persist the applied-plan audit
   context [--ticket 03]                 the substrate a worker reads: decisions, siblings, diff, history
   context append <campaign> --from f   append free-form human context to context.md
   decisions [campaign] [--all]          list decisions, with ids

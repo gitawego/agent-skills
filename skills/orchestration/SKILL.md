@@ -96,6 +96,7 @@ The script is the source of truth; the skill's slash commands are conveniences o
 | `plan show <campaign> [--ticket <key>]` | Full draft ticket text; `--applied` shows the applied plan |
 | `plan import <campaign> [--file plan.yml] [--prune] [--accept-open]` | Apply the draft atomically; refuses while running; stops before approval |
 | `plan discard <campaign>` | Abandon the draft without touching tickets |
+| `plan audit <campaign> [--write]` | Show or persist the applied-plan audit; legacy campaigns derive it from the ticket graph |
 | `context append <campaign> --from notes.md` | Append free-form human input to `context.md` |
 | `ticket add "<title>" --kind code --touches "<globs>" [--attachments img.png] [--blocked-by 01] [--what ...] [--accept ...]` | Add one ticket with the next number |
 | `ticket edit <id> [--title ...] [--kind ...] [--touches ...] [--blocked-by ...] [--what ...] [--accept ...]` | Change a ticket; a change that would break the plan is rolled back |

@@ -19,7 +19,7 @@ import { resolveQuotas } from "./quotas.mjs";
 import { costOf, summarizeCost, telemetryOf } from "./telemetry.mjs";
 import { usageFromLog } from "./runs.mjs";
 import { readContext } from "./plan-import.mjs";
-import { readAppliedAudit, readDraft } from "./plan-draft.mjs";
+import { deriveAppliedAudit, readAppliedAudit, readDraft } from "./plan-draft.mjs";
 
 export function projectName(root) {
   return path.basename(root);
@@ -213,7 +213,7 @@ export function campaignView(root, slug) {
   const inboxItems = listItems(root, slug);
   const context = readContext(root, slug);
   const draft = readDraft(root, slug);
-  const planAudit = readAppliedAudit(root, slug);
+  const planAudit = readAppliedAudit(root, slug) || deriveAppliedAudit(root, slug, { appliedAt: state.approvedAt || null });
   const tickets = plan.ordered.map((ticket) => {
     const entry = state.tickets[ticket.data.id] || {};
     const run = entry.run ? state.runs[entry.run] : null;

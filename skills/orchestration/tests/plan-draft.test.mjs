@@ -8,9 +8,11 @@ import { createCampaign } from "../scripts/lib/create.mjs";
 import {
   appliedAuditFile,
   appliedPlanFile,
+  deriveAppliedAudit,
   discardDraft,
   draftFile,
   draftPlan,
+  persistAppliedAudit,
   previousDraftFile,
   readAppliedAudit,
   readDraft,
@@ -169,6 +171,38 @@ test("the applied plan and audit are written beside the state", () => {
   assert.ok(fs.existsSync(appliedAuditFile(dir, "demo")));
   assert.equal(readAppliedAudit(dir, "demo").tickets.length, 2);
   assert.match(result.file, /campaign\.md$/);
+});
+
+test("legacy campaigns derive an applied audit and can persist it", () => {
+  const { box, dir } = setup();
+  const applied = importPlan({ root: dir, slug: "demo", plan: plan(), allowedKinds: ["code"] });
+  writeApplied({ root: dir, slug: "demo", plan: applied.plan, result: applied });
+  fs.unlinkSync(appliedAuditFile(dir, "demo"));
+  const derived = deriveAppliedAudit(dir, "demo", { appliedAt: "2026-01-01T00:00:00Z" });
+  assert.equal(derived.derived, true);
+  assert.equal(derived.tickets.length, 2);
+  assert.equal(derived.appliedAt, "2026-01-01T00:00:00Z");
+  fs.unlinkSync(appliedPlanFile(dir, "demo"));
+  const fromTickets = deriveAppliedAudit(dir, "demo");
+  assert.equal(fromTickets.derived, true);
+  assert.equal(fromTickets.tickets.length, 2);
+  assert.equal(fromTickets.assumptions.length, 1);
+  persistAppliedAudit(dir, "demo", fromTickets);
+  assert.equal(readAppliedAudit(dir, "demo").derived, true);
+
+  const cliPlan = path.join(box, "plan.yml");
+  fs.writeFileSync(
+    cliPlan,
+    "version: 1\ngoal: G\nbrief: B\nassumptions: []\ntickets:\n  - key: one\n    title: One\n    kind: code\n    touches: [src/**]\n    what: Do it.\n    accept: [Done]\n",
+  );
+  assert.equal(cli(dir, ["plan", "draft", "demo", "--file", cliPlan]).status, 0);
+  assert.equal(cli(dir, ["plan", "import", "demo"]).status, 0);
+  fs.unlinkSync(appliedAuditFile(dir, "demo"));
+  const audit = cli(dir, ["plan", "audit", "demo", "--json"]);
+  assert.equal(audit.status, 0, audit.stderr);
+  assert.equal(JSON.parse(audit.stdout).derived, true);
+  assert.equal(cli(dir, ["plan", "audit", "demo", "--write"]).status, 0);
+  assert.equal(readAppliedAudit(dir, "demo").derived, true);
 });
 
 test("discard removes the draft and keeps the applied plan", () => {

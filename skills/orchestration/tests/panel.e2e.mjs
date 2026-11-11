@@ -404,6 +404,15 @@ tickets:
     assert.match(historyPage.plan, /1 ticket applied/);
     assert.equal(historyPage.hash, true, "the applied plan hash is visible");
 
+    fs.unlinkSync(path.join(stateDir, "plan.applied.json"));
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo/history` });
+    await sleep(700);
+    const derived = await send("Runtime.evaluate", {
+      expression: `JSON.stringify({ plan: document.querySelector(".settings-block")?.textContent || "" })`,
+      returnByValue: true,
+    });
+    assert.match(JSON.parse(derived.result.result.value).plan, /derived from tickets/);
+
     await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo/tickets` });
     await sleep(600);
     const sources = await send("Runtime.evaluate", {

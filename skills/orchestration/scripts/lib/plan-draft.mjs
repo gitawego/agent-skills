@@ -175,6 +175,45 @@ export function readAppliedAudit(root, slug) {
   return readJson(appliedAuditFile(root, slug), null);
 }
 
+export function persistAppliedAudit(root, slug, audit) {
+  writeJson(appliedAuditFile(root, slug), audit);
+  return audit;
+}
+
+/* Older campaigns predate plan.applied.json. Derive the same audit shape from
+   the applied plan (or the committed ticket graph) without writing anything. */
+export function deriveAppliedAudit(root, slug, { appliedAt = null } = {}) {
+  const applied = readAppliedBase(root, slug);
+  const tickets = loadTickets(root, slug);
+  if (!applied.plan || (!tickets.length && !applied.text)) return null;
+  const byKey = new Map(tickets.map((ticket) => [String(ticket.data.key || ticket.slug), ticket]));
+  const rows = applied.plan.tickets.map((ticket, index) => {
+    const actual = byKey.get(ticket.key);
+    return {
+      id: actual?.data.id || pad2(index + 1),
+      key: ticket.key,
+      title: actual ? ticketTitle(actual) : ticket.title,
+      kind: actual?.data.kind || ticket.kind,
+    };
+  });
+  const seen = new Set(rows.map((ticket) => ticket.key));
+  for (const ticket of tickets) {
+    const key = String(ticket.data.key || ticket.slug);
+    if (seen.has(key)) continue;
+    rows.push({ id: ticket.data.id, key, title: ticketTitle(ticket), kind: ticket.data.kind });
+  }
+  const text = applied.text || canonicalText(applied.plan);
+  return {
+    version: 1,
+    hash: planHash(text),
+    appliedAt: appliedAt || null,
+    derived: true,
+    tickets: rows,
+    assumptions: applied.plan.assumptions || [],
+    openQuestions: applied.plan.open_questions || [],
+  };
+}
+
 function sameValue(a, b) {
   return JSON.stringify(a) === JSON.stringify(b);
 }

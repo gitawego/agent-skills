@@ -70,7 +70,7 @@ The line is derived in `campaignView` from state, inbox and deliveries; it is de
 
 **Configure owns every editable field.** Delivery policy, runtime, budget, autoship, checks, generated paths, quotas and chains. A sticky **Save configuration** bar is the only write. Changing chains or the adapter is refused while the campaign runs; the panel says so. Plan text is not editable here.
 
-**History is the audit.** The applied plan (hash, time, ticket count, assumptions and accepted open questions), any pending draft, spend by model, cached-read share, the last 40 ledger events, decisions with their scope and citation, and the delivery record. Sharing a decision or closing the campaign is a copyable agent command.
+**History is the audit.** The applied plan (hash, time, ticket count, assumptions and accepted open questions), any pending draft, spend by model, cached-read share, the last 40 ledger events, decisions with their scope and citation, and the delivery record. Campaigns that predate `plan.applied.json` derive the audit from their ticket graph and are labelled **derived from tickets**. Sharing a decision or closing the campaign is a copyable agent command.
 
 ## Starting and planning
 

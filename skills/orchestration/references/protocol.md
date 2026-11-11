@@ -91,6 +91,8 @@ tickets:
 
 `import` validates the whole plan first and writes nothing on error. It assigns ids in file order, resolves `blocked_by` by ticket `key` (or a numeric id in the plan), and records the `key` on each ticket. Always set `key`: it is the stable identity across revisions. Re-import is idempotent by `key`: ids and filenames stay stable, only changed files are rewritten. `--prune` removes keyed tickets missing from the plan, but refuses when a removed ticket has runs.
 
+Older campaigns imported before `plan.applied.json` existed derive the same audit from the ticket graph; the panel labels it **derived from tickets**, and `plan audit <campaign> --write` persists it.
+
 `plan draft` and `plan import` are refused while a campaign is running, delivered or archived; there is no `--force`. Pausing is the only route. A plan change to a paused campaign still needs a fresh `approve`, and `approve` refuses while a draft is unapplied. The plan is frozen at approval: editing the brief or tickets under live work changes the shared worker prompt prefix and invalidates prompt-cache hits. Raw context is not injected into every worker prompt; the agent distills the relevant parts into the brief and each ticket's notes.
 
 ## A run
