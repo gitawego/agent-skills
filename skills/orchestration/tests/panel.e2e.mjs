@@ -271,6 +271,8 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
         briefInput: document.querySelectorAll('textarea[name="brief"]').length,
         chains: document.body.innerText.includes("Model chains"),
         next: document.querySelector(".next-action")?.textContent || "",
+        briefing: Boolean(document.querySelector(".briefing-details")),
+        briefingOpen: Boolean(document.querySelector(".briefing-details")?.open),
       })`,
       returnByValue: true,
     });
@@ -279,6 +281,8 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     assert.deepEqual(overviewPage.tabs.slice(0, 3), ["Overview", "Tickets 1", "Configure"], "the campaign has sections");
     assert.equal(overviewPage.briefInput, 0, "the brief is read-only");
     assert.equal(overviewPage.chains, false, "chains are not on the overview");
+    assert.equal(overviewPage.briefing, true, "the briefing is a disclosure");
+    assert.equal(overviewPage.briefingOpen, false, "healthy briefing is collapsed");
     assert.match(overviewPage.next, /Approve the plan|delivery is waiting|draft plan/, "the next action names the agent step");
 
     await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo/tickets` });
@@ -461,6 +465,8 @@ tickets:
           chains,
           value: document.querySelector('input[name="max_autoship_lines"]')?.value || "",
           save: Boolean(document.querySelector('[data-act="save-campaign"]')),
+          advanced: Boolean(document.querySelector("#app .advanced")),
+          advancedOpen: Boolean(document.querySelector("#app .advanced")?.open),
         });
       })()`,
       awaitPromise: true,
@@ -470,6 +476,8 @@ tickets:
     assert.equal(configurePage.chains, true, "chains live in Configure");
     assert.equal(configurePage.value, "321", "an unsaved config edit survives a background refresh");
     assert.equal(configurePage.save, true, "configuration has one explicit save");
+    assert.equal(configurePage.advanced, true, "advanced settings are disclosed");
+    assert.equal(configurePage.advancedOpen, false, "advanced settings start collapsed");
 
     const stateFile = path.join(stateDir, "state.json");
     const stateBase = {
