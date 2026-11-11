@@ -49,7 +49,7 @@ orchestrate plan import <campaign>                  # apply the current draft
 orchestrate plan discard <campaign>                 # abandon the draft
 ```
 
-The draft lives in `.orchestration/campaigns/<slug>/plan.yml`; the previous revision is `plan.prev.yml`; the applied plan is `plan.applied.yml` plus `plan.applied.json` (hash, time, ticket ids). `plan draft` prints two deltas:
+The draft lives in `.orchestration/campaigns/<slug>/plan.yml`; the previous revision is `plan.prev.yml`; the applied plan is `plan.applied.yml` plus `plan.applied.json` (hash, time, ticket ids). Multiline fields are literal block scalars (`|-`, `|`, `|+`) so the stored plan and `plan show --applied` stay readable and round-trip exactly. `plan draft` prints two deltas:
 
 - **since your last draft** — what the agent just changed after the human's message;
 - **apply will change** — the draft against the applied graph. A ticket marked `-` remains on disk unless `plan import --prune` is used.

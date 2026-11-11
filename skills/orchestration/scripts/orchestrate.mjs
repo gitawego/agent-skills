@@ -619,7 +619,7 @@ const commands = {
           console.log(JSON.stringify(applied.plan, null, 2));
           return;
         }
-        console.log(applied.text || canonicalText(applied.plan));
+        console.log(canonicalText(applied.plan));
         return;
       }
       const draft = readDraft(root, slug, { allowedKinds, strict: true });

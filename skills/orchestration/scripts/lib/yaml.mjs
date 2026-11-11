@@ -249,7 +249,10 @@ function expandBlockScalars(text) {
     const first = block.find((entry) => entry.trim());
     const contentIndent = first ? first.length - first.trimStart().length : keyIndent + 2;
     const content = block.map((entry) => (entry.trim() ? entry.slice(contentIndent) : ""));
-    while (content.length && content[content.length - 1] === "") content.pop();
+    const chomp = match[3];
+    if (chomp !== "+") {
+      while (content.length && content[content.length - 1] === "") content.pop();
+    }
     let value;
     if (match[2] === "|") {
       value = content.join("\n");
@@ -260,8 +263,8 @@ function expandBlockScalars(text) {
         return `${acc} ${entry.trim()}`;
       }, "");
     }
-    if (match[3] !== "-" && value) value += "\n";
-    if (match[3] === "+" && value) value += "\n";
+    if (chomp === "+") value += "\n";
+    else if (chomp !== "-" && value) value += "\n";
     out.push(`${line.slice(0, line.indexOf(":"))}: ${JSON.stringify(value)}`);
     i = j - 1;
   }
@@ -295,9 +298,29 @@ function scalar(value) {
   return JSON.stringify(s);
 }
 
+function isBlockString(value) {
+  return typeof value === "string" && value.includes("\n");
+}
+
+/* A multiline string is emitted as a literal block. `|-` strips the final
+   newline, `|` clips one, `|+` keeps the extra blank lines. */
+function blockShape(value) {
+  const trailing = (value.match(/\n+$/) || [""])[0].length;
+  const body = value.replace(/\n+$/, "");
+  const lines = body ? body.split("\n") : [""];
+  if (trailing > 1) for (let i = 1; i < trailing; i++) lines.push("");
+  return { header: trailing === 0 ? "|-" : trailing === 1 ? "|" : "|+", lines };
+}
+
+function emitBlockLines(out, lines, indent) {
+  const pad = " ".repeat(indent);
+  for (const line of lines) out.push(`${pad}${line}`);
+}
+
 function inline(value) {
   if (Array.isArray(value)) {
     if (!value.length) return "[]";
+    if (value.some(isBlockString)) return null;
     if (value.every((v) => v === null || typeof v !== "object")) {
       return `[${value.map((v) => scalar(v)).join(", ")}]`;
     }
@@ -306,11 +329,13 @@ function inline(value) {
   if (value && typeof value === "object") {
     const entries = Object.entries(value);
     if (!entries.length) return "{}";
+    if (entries.some(([, v]) => isBlockString(v))) return null;
     if (entries.every(([, v]) => v === null || typeof v !== "object")) {
       return `{ ${entries.map(([k, v]) => `${k}: ${scalar(v)}`).join(", ")} }`;
     }
     return null;
   }
+  if (isBlockString(value)) return null;
   return scalar(value);
 }
 
@@ -330,15 +355,26 @@ function emit(value, indent, out) {
         }
         const [firstKey, firstValue] = entries[0];
         const flatFirst = inline(firstValue);
-        if (flatFirst && entries.length === 1) {
+        if (isBlockString(firstValue)) {
+          const block = blockShape(firstValue);
+          out.push(`${pad}- ${firstKey}: ${block.header}`);
+          emitBlockLines(out, block.lines, indent + 4);
+        } else if (flatFirst && entries.length === 1) {
           out.push(`${pad}- ${firstKey}: ${flatFirst}`);
           continue;
+        } else {
+          const nested = flatFirst && (firstValue === null || typeof firstValue !== "object");
+          out.push(`${pad}- ${firstKey}:${nested ? ` ${flatFirst}` : ""}`);
+          if (!nested) emitNested(firstValue, indent + 4, out);
         }
-        const nested = flatFirst && (firstValue === null || typeof firstValue !== "object");
-        out.push(`${pad}- ${firstKey}:${nested ? ` ${flatFirst}` : ""}`);
-        if (!nested) emitNested(firstValue, indent + 4, out);
         for (const [key, value2] of entries.slice(1)) {
           const flat = inline(value2);
+          if (isBlockString(value2)) {
+            const block = blockShape(value2);
+            out.push(`${pad}  ${key}: ${block.header}`);
+            emitBlockLines(out, block.lines, indent + 4);
+            continue;
+          }
           if (flat) {
             out.push(`${pad}  ${key}: ${flat}`);
             continue;
@@ -377,6 +413,12 @@ function emitNested(value, indent, out, atRoot = false) {
     return;
   }
   for (const [key, v] of entries) {
+    if (isBlockString(v)) {
+      const block = blockShape(v);
+      out.push(`${pad}${key}: ${block.header}`);
+      emitBlockLines(out, block.lines, indent + 2);
+      continue;
+    }
     const flat = inline(v);
     if (v === null || typeof v !== "object") {
       out.push(`${pad}${key}: ${scalar(v)}`);

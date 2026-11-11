@@ -61,6 +61,20 @@ empty: []
   assert.deepEqual(data.empty, []);
 });
 
+test("multiline strings emit and parse as literal blocks", () => {
+  const value = {
+    brief: "line one\nline two",
+    constraints: "keep it\nno deps\n",
+    extra: "two trailing\n\n",
+    tickets: [{ key: "a", what: "do one\ndo two", accept: ["works"], notes: "note\nline" }],
+  };
+  const text = stringifyYaml(value);
+  assert.match(text, /^brief: \|-$/m);
+  assert.match(text, /^    what: \|-$/m);
+  assert.match(text, /^extra: \|\+$/m);
+  assert.deepEqual(parseYaml(text), value);
+});
+
 test("keeps comments out of quoted values", () => {
   const data = parseYaml('note: "a # b"\nother: c # trailing\n');
   assert.equal(data.note, "a # b");

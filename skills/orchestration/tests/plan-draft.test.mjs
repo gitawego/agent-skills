@@ -270,6 +270,74 @@ tickets:
   assert.equal(readAppliedAudit(dir, "demo").openQuestions.length, 1);
 });
 
+test("plan draft and plan import accept stdin", () => {
+  const { dir } = setup();
+  const text = `version: 1
+goal: Stdin plan
+brief: |
+  From stdin.
+criteria:
+  - It works
+constraints: None.
+assumptions: []
+open_questions: []
+reading: README.md
+tickets:
+  - key: one
+    title: One
+    kind: code
+    touches: [src/**]
+    what: Do it.
+    accept: [Done]
+`;
+  const drafted = spawnSync(process.execPath, [CLI, "plan", "draft", "demo", "--stdin"], {
+    cwd: dir,
+    input: text,
+    encoding: "utf8",
+    env: process.env,
+  });
+  assert.equal(drafted.status, 0, drafted.stderr);
+  assert.equal(readDraft(dir, "demo").plan.tickets[0].key, "one");
+
+  const imported = spawnSync(process.execPath, [CLI, "plan", "import", "demo", "--stdin"], {
+    cwd: dir,
+    input: text,
+    encoding: "utf8",
+    env: process.env,
+  });
+  assert.equal(imported.status, 0, imported.stderr);
+  assert.equal(loadTickets(dir, "demo").length, 1);
+});
+
+test("a paused campaign can be re-planned and needs a fresh approve", () => {
+  const { dir } = setup();
+  const first = importPlan({ root: dir, slug: "demo", plan: plan(), allowedKinds: ["code", "review"] });
+  writeApplied({ root: dir, slug: "demo", plan: first.plan, result: first });
+  assert.equal(cli(dir, ["approve", "demo"]).status, 0);
+  assert.equal(cli(dir, ["pause", "demo"]).status, 0);
+  draftPlan({ root: dir, slug: "demo", plan: plan({ goal: "Revised while paused" }), allowedKinds: ["code", "review"] });
+  const changed = importPlan({ root: dir, slug: "demo", plan: plan({ goal: "Revised while paused" }), allowedKinds: ["code", "review"] });
+  writeApplied({ root: dir, slug: "demo", plan: changed.plan, result: changed });
+  discardDraft(dir, "demo");
+  const status = JSON.parse(cli(dir, ["status", "demo", "--json"]).stdout);
+  assert.equal(status.campaigns[0].stage, "paused");
+  assert.equal(cli(dir, ["approve", "demo"]).status, 0);
+});
+
+test("plan show --applied is readable JSON or literal YAML", () => {
+  const { dir } = setup();
+  const result = importPlan({ root: dir, slug: "demo", plan: plan({ brief: "line one\nline two" }), allowedKinds: ["code"] });
+  writeApplied({ root: dir, slug: "demo", plan: result.plan, result });
+  const shown = cli(dir, ["plan", "show", "demo", "--applied", "--json"]);
+  assert.equal(shown.status, 0, shown.stderr);
+  const body = JSON.parse(shown.stdout);
+  assert.equal(body.goal, "Prove the draft");
+  assert.equal(body.tickets.length, 2);
+  const text = cli(dir, ["plan", "show", "demo", "--applied"]);
+  assert.equal(text.status, 0, text.stderr);
+  assert.match(text.stdout, /brief: \|-$/m);
+});
+
 test("the CLI draft, show, diff and import loop runs from the draft file", () => {
   const { box, dir } = setup();
   const planFile = path.join(box, "plan.yml");
