@@ -817,6 +817,7 @@ function viewAcceptance(items) {
                   ${commandRow("Approve in your agent", `orchestrate review ${item.id} approve "…"`)}
                   ${commandRow("Send back in your agent", `orchestrate review ${item.id} reject "…"`)}
                   <div class="actions">
+                    <button class="btn primary" data-act="approve-item" data-root="${esc(campaign.root)}" data-campaign="${esc(campaign.slug)}" data-item="${esc(item.id)}">Approve and merge</button>
                     <button class="btn ghost" data-act="open-campaign" data-root="${esc(campaign.root)}" data-campaign="${esc(campaign.slug)}">Open campaign</button>
                   </div>
                 </article>`,
@@ -1046,10 +1047,12 @@ function openCampaignButton() {
 function nextActionBlock(c) {
   const action = c.nextAction || { actor: "none", text: "", command: null };
   const label = { you: "You", supervisor: "Supervisor", worker: "Worker", none: "Closed" }[action.actor] || action.actor;
+  const approve = c.stage === "awaiting_approval" && !c.draft?.exists && !(c.planErrors || []).length;
   return `<section class="next-action" data-actor="${esc(action.actor)}">
     <span class="actor">${esc(label)}</span>
     <span class="text">${esc(action.text)}</span>
     ${action.command ? `<code>${esc(action.command)}</code><button class="btn ghost" data-act="copy" data-command="${esc(action.command)}" aria-label="Copy next command">Copy</button>` : ""}
+    ${approve ? `<button class="btn primary" data-act="approve-campaign" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Approve</button>` : ""}
   </section>`;
 }
 
@@ -2524,6 +2527,10 @@ document.addEventListener("click", (event) => {
       const scope = target.dataset.scope || (view === "campaign" ? "campaign" : "console");
       return command(root, { type: "catalog.refresh", adapter: "all", all: true });
     }
+    case "approve-campaign":
+      return command(root, { type: "approve", campaign });
+    case "approve-item":
+      return command(root, { type: "review.approve", campaign, item, text: "Approved." });
     case "defaults": {
       const scope = target.dataset.scope === "campaign" ? "campaign" : "console";
       const project = root || campaigns()[0]?.root;

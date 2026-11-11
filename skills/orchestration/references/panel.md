@@ -33,7 +33,7 @@ A **strip** is one ticket: a perforated number stub, the title, the kind, and te
 | --- | --- | --- |
 | **Fleet** (default) | One row per ticket across every project plus one row per delivery waiting for acceptance; status tabs, search, project and adapter filters, quota windows, and the queue reason on every row | Open a ticket or a delivery, pause/resume dispatch, filter, **Open campaign** |
 | **Inbox** | Every open question and failure across projects, oldest first, with the question, options, default, what the worker tried and a copyable answer command | Copy the command, open the ticket, open the campaign. No textarea, no answer button |
-| **Acceptance** | Open delivery reviews grouped by campaign, with the changed-line count, autoship limit, checks and findings, plus copyable approve and send-back commands | Copy a review command, open the campaign. Approve and reject happen in the agent |
+| **Acceptance** | Open delivery reviews grouped by campaign, with the changed-line count, autoship limit, checks and findings, plus copyable approve and send-back commands | **Approve and merge** as a binary action, copy the send-back command, open the campaign |
 | **Campaign → Overview** | The read-only briefing (goal as the title, brief, criteria, context, constraints, reading), health counts, the next-action rail and the recent ledger | Read; copy the next command; open another section; pause/resume/cancel/archive |
 | **Campaign → Tickets** | The ticket manifest: list or board, stage counts, kind filter, search, blocked-by chips, the ticket drawer, and a collapsible **New ticket** form | Open a ticket; stop or retry from the drawer; add one ticket by hand; copy the agent prompt for batches |
 | **Campaign → Configure** | Delivery policy, runtime (adapter, spend, sandbox, budget, autoship), checks, generated paths, quotas, and the model chains | Edit, save once, use defaults, refresh models; pause first for chain changes |
@@ -142,7 +142,7 @@ The same block shows context used against the model's window (when the catalog k
 
 ## Rules
 
-1. **Switches stay, sentences move.** Approval, answers and delivery review happen in the agent. The panel offers only controls that need no sentence — plus one manual New ticket form for a single slice.
+1. **Switches stay, sentences move.** Answers and nuanced review happen in the agent. Binary approvals — approve a clean plan, approve and merge a delivery — are one click because the evidence is already on the screen. The panel never hosts a textarea for a decision, and keeps one manual New ticket form for a single slice.
 2. **What needs a person comes first.** An empty inbox says so in one line; a healthy campaign takes one band.
 3. **One place per concept.** Fleet is the map, Inbox is the question queue, Acceptance is the delivery queue, Tickets is one campaign's manifest, Configure is the only form, History is the audit.
 4. **A draft is not a ticket.** `plan draft` writes only `.orchestration/campaigns/<slug>/plan.yml`; the Tickets tab shows a read-only draft preview. `plan import` writes `tickets/`, and `approve` refuses while a draft is unapplied. Counts are lengths; a draft count never claims applied work.

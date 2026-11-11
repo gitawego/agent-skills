@@ -236,7 +236,7 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
       expression: `JSON.stringify({
         cards: document.querySelectorAll(".acceptance-card").length,
         commands: document.querySelectorAll(".acceptance-card .command-row").length,
-        approve: Boolean(document.querySelector('[data-act="approve-acceptance"]')),
+        approve: Boolean(document.querySelector('[data-act="approve-item"]')),
         title: document.body.innerText.includes("Acceptance"),
       })`,
       returnByValue: true,
@@ -244,7 +244,7 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     const acceptPage = JSON.parse(acceptView.result.result.value);
     assert.equal(acceptPage.cards, 1, "the acceptance queue lists the delivery");
     assert.ok(acceptPage.commands >= 2, "approve and send-back hand off to the agent");
-    assert.equal(acceptPage.approve, false, "acceptance does not decide in the browser");
+    assert.equal(acceptPage.approve, true, "a binary approval is available in the browser");
     assert.equal(acceptPage.title, true);
 
     await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#settings` });
