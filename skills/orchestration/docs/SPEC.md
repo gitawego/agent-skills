@@ -104,7 +104,7 @@ The remaining-work list was closed in one pass. What changed, and why:
 | Verification | A `ready` report must show a non-empty diff inside its declared `touches`, and `allow_paths` exists for generated files | The report is free to write; the diff is not |
 | Verification | Directory landing snapshots the tree at the ticket's first run and compares each later run against it | With no branch there was no drift check at all |
 | Control | `ticket edit`, `ticket remove`, `cancel`, `archive`, in the CLI and the panel | The panel could start work it could not finish or undo |
-| Delivery | Ticket worktrees and branches are pruned at delivery; `CLOSE.md` is written | Accepted in the ant round, then unimplemented |
+| Delivery | A finished ticket loses its worktree but keeps its branch; delivery removes any remaining worktrees and keeps the ticket and integration branches; `CLOSE.md` is written | Accepted in the ant round, then unimplemented |
 | Panel | Chain picker fed by the live catalog; command errors surface as a toast; cost below a cent shows four decimals; the registry is read per request, so a new project appears without a restart | Every one of these was observed as a defect in use |
 | Correctness | Rejecting a delivery no longer merges it; approval requires the `review` kind; a lost `state.json` recovers attempts and spend from the run records | Five defects found by walking the remaining-work list |
 

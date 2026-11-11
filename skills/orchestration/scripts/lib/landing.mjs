@@ -116,9 +116,20 @@ export function writeManifest(root, slug, tickets, workdir) {
   return file;
 }
 
-/* Ticket branches and worktrees are merged into the integration branch by the
-   time a campaign delivers; keeping them is just clutter on disk. The
-   integration branch stays: it is the campaign's record. */
+/* A finished ticket no longer needs its worktree: done is terminal, and the
+   ticket branch is already merged into the integration branch. The branch is
+   kept as the exact pointer; only the checkout is removed. */
+export function removeTicketWorktree(root, slug, ticketId) {
+  const worktree = ticketWorktree(root, slug, ticketId);
+  if (!exists(worktree)) return false;
+  const res = git(root, ["worktree", "remove", "--force", worktree], { timeout: 60_000 });
+  if (!res.ok) git(root, ["worktree", "prune"]);
+  return true;
+}
+
+/* Delivery removes any remaining worktree checkouts but keeps every ticket
+   branch and the integration branch. Branch names are cheap; they are the
+   exact pointers into the integration history. */
 export function pruneWorktrees(root, slug) {
   const dir = campaignWorktreesDir(root, slug);
   if (!exists(dir)) return [];
@@ -128,10 +139,6 @@ export function pruneWorktrees(root, slug) {
     const worktree = path.join(dir, entry);
     const res = git(root, ["worktree", "remove", "--force", worktree], { timeout: 60_000 });
     if (!res.ok) git(root, ["worktree", "prune"]);
-    const branch = ticketBranch(slug, entry);
-    if (git(root, ["rev-parse", "--verify", "--quiet", branch]).ok) {
-      git(root, ["branch", "-D", branch]);
-    }
     removed.push(entry);
   }
   return removed;

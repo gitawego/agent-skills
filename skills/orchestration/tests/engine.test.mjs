@@ -447,7 +447,22 @@ test("generated paths are allowed outside touches", async () => {
   assert.equal(view.stage, "delivered");
 });
 
-test("delivery prunes the ticket worktrees and branches but keeps the integration branch", async () => {
+test("a finished ticket loses its worktree but keeps its branch", async () => {
+  const { dir, slug } = setup({ tickets: 2 });
+  scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
+  const view = await until(dir, slug, (v) => v.tickets[0].stage === "done");
+  assert.equal(view.tickets[0].stage, "done");
+  const worktrees = fs.readdirSync(path.join(dir, ".orchestration", "campaigns", slug, "worktrees"));
+  assert.ok(!worktrees.includes("01"), "the finished ticket worktree is gone");
+  assert.ok(worktrees.includes("_integration"));
+  const branches = gitOut(dir, ["branch", "--list", "orch/*"]);
+  assert.match(branches, new RegExp(`orch/${slug}/01`), "the ticket branch is kept");
+  assert.match(branches, new RegExp(`orch/${slug}/integration`));
+  const events = fs.readFileSync(path.join(dir, ".orchestration", "events.jsonl"), "utf8");
+  assert.match(events, /"type":"worktree.removed"/);
+});
+
+test("delivery removes worktrees but keeps ticket and integration branches", async () => {
   const { dir, slug } = setup({ tickets: 1 });
   scenario({ work: [{ status: "ready", summary: "wrote it" }], review: [{ status: "ready", summary: "clean" }] });
   await until(dir, slug, (v) => v.stage === "delivered");
@@ -455,7 +470,7 @@ test("delivery prunes the ticket worktrees and branches but keeps the integratio
   assert.deepEqual(worktrees, ["_integration"]);
   const branches = gitOut(dir, ["branch", "--list", "orch/*"]);
   assert.match(branches, new RegExp(`orch/${slug}/integration`));
-  assert.doesNotMatch(branches, new RegExp(`orch/${slug}/01`));
+  assert.match(branches, new RegExp(`orch/${slug}/01`), "ticket branches stay after delivery");
 });
 
 test("a lost state file is rebuilt from the runs, attempts and spend included", async () => {

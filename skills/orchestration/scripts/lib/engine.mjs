@@ -74,6 +74,7 @@ import {
   integrationBranch,
   mergeTicket,
   pruneWorktrees,
+  removeTicketWorktree,
   snapshotDir,
   writeManifest,
 } from "./landing.mjs";
@@ -437,6 +438,7 @@ function collectWork({ root, slug, state, plan, kinds, consoleConfig, run, summa
     }
     case "dropped":
       setStage(root, slug, state, ticketId, "dropped", { reason: report.summary });
+      dropTicketWorktree(root, slug, ticketId);
       return;
     case "progress":
       setStage(root, slug, state, ticketId, "queued", { reason: "checkpointed" });
@@ -475,6 +477,7 @@ function collectReview({ root, slug, state, plan, kinds, consoleConfig, run, sum
         type: "gate.review",
         data: { result: "pass", detail: report.summary },
       });
+      dropTicketWorktree(root, slug, ticketId);
       return;
     }
     if (land.conflict) {
@@ -569,6 +572,7 @@ function collectMerge({ root, slug, state, run, summary }) {
   if (summary.report?.status === "ready") {
     setStage(root, slug, state, ticketId, "done", { reason: "merged" });
     appendEvent(root, { campaign: slug, ticket: ticketId, run: run.id, type: "merge.done", data: {} });
+    dropTicketWorktree(root, slug, ticketId);
     return;
   }
   setStage(root, slug, state, ticketId, "needs_answer", { reason: "unresolved conflict" });
@@ -652,6 +656,13 @@ function dirDrift({ root, ticket, data, before }) {
 function landTicket({ root, slug, ticketId, data }) {
   if ((data.landing || "branch") === "directory") return { ok: true };
   return mergeTicket(root, slug, ticketId);
+}
+
+/* Once a ticket is done or dropped the worktree is terminal; the branch stays
+   so the exact commits remain pointed at. */
+function dropTicketWorktree(root, slug, ticketId) {
+  if (!removeTicketWorktree(root, slug, ticketId)) return;
+  appendEvent(root, { campaign: slug, ticket: ticketId, type: "worktree.removed", data: {} });
 }
 
 // --- starting runs ---------------------------------------------------------

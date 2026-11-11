@@ -214,9 +214,11 @@ Bind `review` to a different model than the work kinds. The reviewer that grades
 
 **Branch landing.** Every ticket branches from the integration branch, never from `base`. Its run merges the integration branch tip in before reporting `ready`, so conflicts surface inside the ticket where the worker can fix them. The supervisor merges the ticket branch into the integration branch after the gates pass, serially, one at a time. A conflicting merge gets one `chores` run in merge mode; a second conflict parks the ticket as `needs_answer` with the conflict as the question.
 
+Once a ticket is `done` or `dropped`, its worktree is removed (`worktree.removed` in the ledger) and its branch is kept. Done is terminal; the branch is the exact pointer and the integration branch already holds the merge. A failed or sent-back ticket keeps its worktree for the retry.
+
 Delivery also writes `orchestration/<campaign>/CLOSE.md`: landed and dropped tickets, per-ticket model, cost and attempts, the decisions, the checks, and what needed more than one try.
 
-Delivery also prunes: the per-ticket worktrees and `orch/<slug>/<ticket>` branches are removed, because the integration branch already holds their commits. `orch/<slug>/integration` stays as the campaign's record, and a decision whose declared paths no longer exist is retired as `paths-removed`.
+Delivery removes any remaining ticket worktree checkouts but keeps every `orch/<slug>/<ticket>` branch and `orch/<slug>/integration`. The branches are cheap pointers into the integration history; the integration branch stays as the campaign's record. A decision whose declared paths no longer exist is retired as `paths-removed`.
 
 A campaign delivers when every ticket is `done` or `dropped`: one result from the integration branch to `base`, by pull request when the base is a protected branch, or by fast-forward when the campaign is `trusted` and the diff is under `max_autoship_lines`.
 
@@ -234,7 +236,7 @@ What ships follows the autonomy level, and the campaign's `max_autoship_lines` o
 {"ts":"2026-11-09T18:03:11Z","campaign":"pocket-museum-v4","ticket":"03","run":"r-...-a1","type":"run.reported","data":{"status":"ready","cost":0.42,"tokens":18422}}
 ```
 
-Types: `campaign.created`, `plan.drafted`, `campaign.approved`, `campaign.paused`, `campaign.resumed`, `campaign.delivered`, `ticket.added`, `ticket.stage`, `run.dispatched`, `run.reported`, `run.exited`, `run.retried`, `run.stopped`, `gate.check`, `gate.review`, `question.answered`, `inbox.opened`, `inbox.answered`, `merge.done`, `merge.conflict`, `delivery.blocked`, `delivery.rejected`, `dispatch.paused`, `dispatch.resumed`, `spend.recorded`, `error`.
+Types: `campaign.created`, `plan.drafted`, `campaign.approved`, `campaign.paused`, `campaign.resumed`, `campaign.delivered`, `ticket.added`, `ticket.stage`, `run.dispatched`, `run.reported`, `run.exited`, `run.retried`, `run.stopped`, `gate.check`, `gate.review`, `question.answered`, `inbox.opened`, `inbox.answered`, `merge.done`, `merge.conflict`, `worktree.removed`, `worktrees.pruned`, `delivery.blocked`, `delivery.rejected`, `dispatch.paused`, `dispatch.resumed`, `spend.recorded`, `error`.
 
 Every event carries the campaign and, where it applies, the ticket and run. A system-wide error carries neither. The ledger is never rewritten; a correction is a new event that names what it supersedes.
 

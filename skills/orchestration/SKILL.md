@@ -162,7 +162,7 @@ orchestration/                 # committed: the plan and its history
     plan.applied.yml           # last applied plan; plan.applied.json is its audit
     runs/<run-id>/             # prompt.md, run.json, log.jsonl, report.json
     sessions/                  # worker sessions, resumed by ticket
-    worktrees/<ticket>/        # isolation for branch-landing campaigns
+    worktrees/<ticket>/        # checkout while the ticket runs; removed when done, branch kept
     inbox/<item>.json
 ```
 
