@@ -269,6 +269,20 @@ export function diffPlans(basePlan, nextPlan) {
 
 export function planWarnings({ plan, contextBytes = 0, maxConcurrent = 4 }) {
   const warnings = [];
+  const ticketCount = plan.tickets.length;
+  if (ticketCount > PLAN_LIMITS.softTickets) {
+    const runs = ticketCount * 2;
+    warnings.push({
+      level: "warn",
+      code: "ticket-budget",
+      text:
+        `${ticketCount} tickets means at least ${runs} work/review runs and ${ticketCount} separate context reconstructions. ` +
+        "Split only when each slice is independently demoable; otherwise merge it into one vertical ticket." +
+        (ticketCount >= PLAN_LIMITS.strongTickets
+          ? " Add a written reason for this many slices before approving."
+          : ""),
+    });
+  }
   if (plan.tickets.length > PLAN_LIMITS.warnTickets) {
     warnings.push({
       level: "warn",

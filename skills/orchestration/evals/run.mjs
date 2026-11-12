@@ -236,6 +236,7 @@ tickets:
   const oneBody = JSON.parse(oneDraft.out);
   assert(oneBody.plan.tickets.length === 1, "one ticket stays one ticket");
   assert(oneBody.coverage.claimed === 1 && oneBody.coverage.total === 1, "the one ticket covers the criterion");
+  assert(!oneBody.warnings.some((warning) => warning.code === "ticket-budget"), "one ticket has no budget warning");
 
   const four = path.join(box, "four.yml");
   fs.writeFileSync(
@@ -264,6 +265,7 @@ ${["a", "b", "c", "d"]
   assert(fourBody.plan.tickets.length === 4, "four tickets stay four tickets");
   assert(fourBody.coverage.claimed === 0 && fourBody.coverage.total === 1, "missing coverage is visible");
   assert(/missing: the shared outcome holds/.test(fourBody.coverageText), "the missing criterion is named");
+  assert(fourBody.warnings.some((warning) => warning.code === "ticket-budget"), "four tickets warns about the split budget");
 });
 
 /* eval 10: a ready report without acceptance evidence cannot reach done */

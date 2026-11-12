@@ -264,6 +264,7 @@ Only what the worker cannot infer: a pointer to a prototype, a decision already 
 
 Rules:
 
+- **One ticket is the default.** A ticket is one user-visible outcome. Split only when each slice is independently demoable and can proceed without a reasoning handoff. Two or three are normal for independent parallel work; four triggers a budget warning; six or more asks for a written reason. Never split by file or by layer.
 - **Vertical slice.** Each ticket cuts a complete path, and is demoable or verifiable alone.
 - **One context window.** If a competent worker cannot finish it in one session, split it.
 - **Blockers are real edges.** A ticket with no blockers can start immediately. A cycle is a planning error and fails validation.

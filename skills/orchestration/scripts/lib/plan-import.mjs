@@ -19,7 +19,13 @@ import {
   protectedPathReason,
 } from "./evidence.mjs";
 
-export const PLAN_LIMITS = { warnTickets: 8, maxTickets: 16, warnContextBytes: 100_000 };
+export const PLAN_LIMITS = {
+  softTickets: 3,
+  strongTickets: 6,
+  warnTickets: 8,
+  maxTickets: 16,
+  warnContextBytes: 100_000,
+};
 
 const PLAN_FIELDS = new Set([
   "version",

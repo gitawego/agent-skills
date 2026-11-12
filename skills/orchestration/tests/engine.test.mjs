@@ -207,6 +207,15 @@ test("a blocking edge holds a ticket until its blocker is done", async () => {
 
   view = await until(dir, slug, (v) => v.tickets.every((t) => t.stage === "done"));
   assert.equal(view.stage, "delivered");
+  const state = loadState(dir, slug);
+  const second = Object.values(state.runs).find((run) => run.role === "work" && run.ticket === "02");
+  const prompt = fs.readFileSync(
+    path.join(dir, ".orchestration", "campaigns", slug, "runs", second.id, "prompt.md"),
+    "utf8",
+  );
+  assert.match(prompt, /## Completed blockers/);
+  assert.match(prompt, /01 t1/);
+  assert.match(prompt, /first/, "the blocker's summary travels with the dependent ticket");
 });
 
 test("tickets whose touches overlap never run at once", async () => {
@@ -395,6 +404,37 @@ test("a budget ceiling pauses the campaign instead of stalling it", async () => 
   const view = await until(dir, slug, (v) => v.stage === "paused");
   assert.match(view.reason || "", /budget/);
   assert.ok(view.inbox.some((i) => /budget/.test(i.title)));
+});
+
+test("several failed tickets share one campaign failure item", async () => {
+  const { dir, slug } = setup({ tickets: 2 });
+  scenario({
+    work: [
+      { status: "failed", summary: "model could not parse the request" },
+      { status: "failed", summary: "model could not parse the request" },
+    ],
+    review: [],
+  });
+  const view = await until(dir, slug, (v) => v.tickets.every((ticket) => ticket.stage === "failed"));
+  const failures = view.inbox.filter((item) => item.kind === "failure" && item.status === "open");
+  assert.equal(failures.length, 1, "two parked tickets make one campaign failure, not two messages");
+  assert.match(failures[0].title, /2 tickets/);
+  assert.deepEqual([...failures[0].tickets].sort(), ["01", "02"]);
+  assert.match(failures[0].findings, /01 failed/);
+  assert.match(failures[0].findings, /02 failed/);
+
+  applyCommand(dir, { type: "retry", campaign: slug, ticket: "01" }, loadConsole());
+  const afterOne = campaignView(dir, slug).inbox.filter((item) => item.kind === "failure" && item.status === "open");
+  assert.equal(afterOne.length, 1, "retrying one ticket keeps the other ticket's failure");
+  assert.deepEqual(afterOne[0].tickets, ["02"]);
+  assert.match(afterOne[0].title, /1 ticket/);
+
+  applyCommand(dir, { type: "retry", campaign: slug, ticket: "02" }, loadConsole());
+  assert.equal(
+    campaignView(dir, slug).inbox.filter((item) => item.kind === "failure" && item.status === "open").length,
+    0,
+    "the grouped item closes when every ticket is retried",
+  );
 });
 
 test("a failed report retries to the attempt cap, then parks", async () => {

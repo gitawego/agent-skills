@@ -36,6 +36,7 @@ A campaign is one paragraph of intent plus a set of tickets with blocking edges.
 | 24 | Tickets have a dedicated manifest; a manual form is a one-off convenience | The ticket graph is the campaign's center of gravity. The agent is the primary author; the form covers one extra slice without a conversation, never a whole plan |
 | 25 | A plan is drafted and reviewed before it is applied, with one clean approval | The draft lives outside `tickets/`; `plan draft` shows the delta since the last message and the delta apply will make, requires assumptions, and blocks on open questions. A plan is capped at 16 tickets; four small slices making up half the plan block import unless `--accept-fragmented`. `approve` applies a clean draft atomically, then approves; `plan import` remains the apply-only path |
 | 26 | Human attention is a budget | One approval for a clean `plan_gate: auto` plan; one question at a time; one delivery decision; `CLOSE.md` and History count approvals, answers, reviews and cleanups |
+| 27 | One ticket is the default; splitting is earned | A ticket is one user-visible outcome. Split only for independently demoable slices or real parallel isolation. Four tickets warns, six needs a reason, sixteen is refused. A blocked ticket receives its completed blockers' summary, files and evidence, and generic ticket failures aggregate into one campaign item. See [ADR-001](ADR-001-ticket-sizing-and-context.md) |
 
 ## Refinements made while writing
 

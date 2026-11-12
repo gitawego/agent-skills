@@ -94,7 +94,11 @@ tickets:
 
 `assumptions` is required: an empty list is allowed, but the agent must state what it inferred. `open_questions` blocks `plan import` unless `--accept-open` is passed; `sources` is written to the ticket frontmatter and shown in the drawer. `covers` is optional and must exactly match a campaign criterion after whitespace normalization; a ticket may cover several criteria, and a criterion may be covered by several tickets. Missing coverage is a warning, not a gate. Duplicate campaign criteria and unknown `covers` entries are plan errors. `touches` may not match `.git/`, `.orchestration/`, `.env` / `.env.*`, `secrets/`, `id_rsa*`, or the campaign's own `orchestration/<slug>/` files; those paths are not a worker's to edit.
 
-Plans are capped at **16 tickets**; above **8** is a review warning. A ticket with one touched path and one acceptance criterion is a *small slice*. Four or more small slices making up at least half the plan is fragmentation: `plan import` refuses unless `--accept-fragmented` is passed. The draft also warns about merge candidates (same or nested paths behind a dependency) and a single serial chain of four or more tickets. Each ticket costs a work run plus a review run, so a 6-ticket plan is at least 12 model runs before retries.
+**Start with one ticket for one user-visible outcome.** Split only when each slice is independently demoable and can proceed without reconstructing another worker's reasoning. Two or three tickets are normal for a genuinely independent parallel effort; four triggers a budget warning; six or more asks for a written reason; **16 is the hard cap**. Do not split by file, by layer, or into “prepare”/“use it” pairs.
+
+The budget warning names the cost: `N tickets` means at least `2N` work/review runs and `N` separate context reconstructions. A ticket with one touched path and one acceptance criterion is a *small slice*; four or more small slices making up at least half the plan is fragmentation, and `plan import` refuses unless `--accept-fragmented` is passed. The draft also warns about merge candidates (same or nested paths behind a dependency) and a single serial chain of four or more tickets. See [ADR-001](../docs/ADR-001-ticket-sizing-and-context.md).
+
+When a ticket is blocked by another, its worker prompt includes the completed blocker's summary, reported files and acceptance evidence. That packet is context, not authority to widen the ticket.
 
 `import` validates the whole plan first and writes nothing on error. It assigns ids in file order, resolves `blocked_by` by ticket `key` (or a numeric id in the plan), and records the `key` on each ticket. Always set `key`: it is the stable identity across revisions. Re-import is idempotent by `key`: ids and filenames stay stable, only changed files are rewritten. `--prune` removes keyed tickets missing from the plan, but refuses when a removed ticket has runs.
 
@@ -210,6 +214,8 @@ Every queued row carries a machine-readable reason (`slots`, `kind-slots`, `lane
 | Worker exits 0 with no report | `failed`, never `ready` |
 
 `max_attempts` (default 3) counts dispatches, not retries inside a dispatch. A ticket that exhausts them is a plan problem, and the panel says so.
+
+Generic ticket failures are grouped into one campaign-level inbox item: `ticket-failed`, `gate-cycles`, `review-broken` and `land-failed` share a `group`, list their affected `tickets`, and keep per-ticket `details` and findings. A stale review, an integration-check failure, a delivery-audit failure and a budget pause keep their own specific item, because each names a different human action.
 
 ## The orchestrator's judgement
 

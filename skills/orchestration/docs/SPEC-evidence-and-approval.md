@@ -203,7 +203,7 @@ checks fail or review fails
   → findings attached to the same ticket
   → same worker session resumes with the findings
   → checks and a fresh review run again
-  → after 3 gate cycles: ticket failed, one failure item
+  → after 3 gate cycles: ticket failed, added to the campaign failure digest
 ```
 
 No repair ticket is created. The review run is independent and always uses a
@@ -225,9 +225,12 @@ These are product rules for the agent and prompt, not a new CLI feature.
 
 - Generate tickets only on an explicit planning request or an explicit plan
   change. A passive `context append` must not create tickets.
-- One ticket is one independently verifiable outcome, not one file, one
-  paragraph, or one step.
-- Prefer 3–7 tickets. Eight needs a reason; sixteen is refused.
+- One ticket is one independently verifiable outcome, not one file, one layer,
+  one paragraph, or one step. Start with one ticket.
+- Split only when each slice is independently demoable and can proceed without
+  a reasoning handoff. Two or three are normal for independent parallel work;
+  four triggers a budget warning; six or more asks for a written reason; sixteen
+  is refused. See `ADR-001-ticket-sizing-and-context.md` for the decision.
 - Do not create tickets for “review”, “verification”, “context”, or “process”.
   Review is a gate; context is input.
 - Do not create “prepare” and “use it” pairs. Merge them unless each is
@@ -381,8 +384,9 @@ The prompt tells reviewers to write this file in the system temp directory.
 - `gateCycles` still counts check or review failures.
 - A failed review or check sets `needs_changes`, stores findings, and resumes
   the same worker session.
-- After three gate cycles the ticket becomes `failed` and a failure item is
-  opened; no repair ticket is created.
+- After three gate cycles the ticket becomes `failed` and joins the campaign's
+  `gate-cycles` failure digest; no repair ticket is created. The digest names
+  every affected ticket and keeps each ticket's findings under its own heading.
 - The resume prompt uses structured findings when present:
 
 ```text

@@ -121,14 +121,73 @@ function integrationHead(root, slug) {
   return res.ok ? res.stdout.trim() : null;
 }
 
-/* The same failure must not spawn a second inbox item when a tick repeats.
-   Identity is the human-readable title, which names the blocked thing. */
-function ensureFailureItem(root, slug, { ticket = null, title, brief, findings = "" }) {
-  const existing = listItems(root, slug, { status: "open" }).find(
-    (item) => item.kind === "failure" && item.title === title,
-  );
-  if (existing) return existing;
-  return createItem(root, slug, { kind: "failure", ticket, title, brief, findings });
+/* One campaign-level digest per failure class. `details` holds each ticket's
+   own reason and evidence, so aggregation keeps the diagnosis without one
+   near-identical inbox message per ticket. */
+function failureDigest(details, fallbackTitle) {
+  const tickets = Object.keys(details).filter((id) => id !== "campaign").sort();
+  return {
+    title:
+      tickets.length > 0
+        ? `Campaign failures: ${tickets.length} ticket${tickets.length === 1 ? "" : "s"}`
+        : fallbackTitle,
+    brief: Object.values(details)
+      .map((entry) => `${entry.title}: ${entry.brief}`)
+      .join("\n"),
+    findings: Object.values(details)
+      .map((entry) => `## ${entry.title}\n${entry.findings}`)
+      .join("\n\n"),
+    tickets,
+    details,
+  };
+}
+
+function clearTicketFromFailures(root, slug, ticketId) {
+  for (const item of listItems(root, slug, { status: "open" })) {
+    if (item.kind !== "failure") continue;
+    if (item.ticket === ticketId) {
+      updateItem(root, slug, item.id, { status: "dismissed" });
+      continue;
+    }
+    if (!Array.isArray(item.tickets) || !item.tickets.includes(ticketId)) continue;
+    const details = { ...(item.details || {}) };
+    delete details[ticketId];
+    if (!Object.keys(details).length) {
+      updateItem(root, slug, item.id, { status: "dismissed" });
+      continue;
+    }
+    updateItem(root, slug, item.id, failureDigest(details, item.title));
+  }
+}
+
+function ensureFailureItem(root, slug, { ticket = null, title, brief, findings = "", group = null }) {
+  const open = listItems(root, slug, { status: "open" }).filter((item) => item.kind === "failure");
+  const existing = group
+    ? open.find((item) => item.group === group)
+    : open.find((item) => item.title === title);
+  if (!existing) {
+    return createItem(root, slug, {
+      kind: "failure",
+      ticket: group ? null : ticket,
+      title,
+      brief,
+      findings,
+      ...(group
+        ? {
+            group,
+            tickets: ticket ? [ticket] : [],
+            details: ticket ? { [ticket]: { title, brief, findings } } : {},
+          }
+        : {}),
+    });
+  }
+  if (!group) return existing;
+
+  /* One campaign-level item per failure class: a plan with several failing
+     tickets must not flood the inbox with one near-identical message each. */
+  const details = { ...(existing.details || {}) };
+  details[ticket || "campaign"] = { title, brief, findings };
+  return updateItem(root, slug, existing.id, failureDigest(details, title));
 }
 
 function dismissFailure(root, slug, titlePrefix) {
@@ -416,6 +475,7 @@ function failedRun({ root, slug, state, plan, run, summary, consoleConfig, kinds
     .join("\n\n");
   ensureFailureItem(root, slug, {
     ticket: ticketId,
+    group: "ticket-failed",
     title: `${ticketId} failed: ${firstLine(reason)}`,
     brief: [summary.report?.summary, ...reported].filter(Boolean).join("\n") || reason,
     findings: evidence,
@@ -534,16 +594,13 @@ function collectReview({ root, slug, state, plan, kinds, consoleConfig, run, sum
   const entry = ticketState(state, ticketId);
   if (summary.errors?.length || !summary.report) {
     setStage(root, slug, state, ticketId, "failed", { reason: "the review run produced no report" });
-    if (!openItemForTicket(root, slug, ticketId, "failure")) {
-      createItem(root, slug, {
-        kind: "failure",
-        ticket: ticketId,
-        run: run.id,
-        title: `${ticketId}: the reviewer broke`,
-        brief: summary.errors.join("; "),
-        findings: summary.logTail,
-      });
-    }
+    ensureFailureItem(root, slug, {
+      ticket: ticketId,
+      group: "review-broken",
+      title: `${ticketId}: the reviewer broke`,
+      brief: summary.errors.join("; "),
+      findings: summary.logTail,
+    });
     return;
   }
   const report = summary.report;
@@ -598,6 +655,7 @@ function collectReview({ root, slug, state, plan, kinds, consoleConfig, run, sum
     setStage(root, slug, state, ticketId, "failed", { reason: land.output });
     ensureFailureItem(root, slug, {
       ticket: ticketId,
+      group: "land-failed",
       title: `${ticketId}: could not land`,
       brief: land.output,
     });
@@ -664,6 +722,7 @@ function sendBack({ root, slug, state, run, findings, note = null, review = fals
     setStage(root, slug, state, ticketId, "failed", { reason: "three gate cycles" });
     ensureFailureItem(root, slug, {
       ticket: ticketId,
+      group: "gate-cycles",
       title: `${ticketId}: three gate cycles`,
       brief: "The ticket failed its gates three times. That is a spec problem, not an execution one.",
       findings: text,
@@ -948,6 +1007,20 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
     thinking = chosen.item.thinking || "medium";
   }
   const campaign = readCampaign(root, slug);
+  const dependencies = blockersOf(ticket)
+    .map((blockerId) => {
+      const blocker = plan.byId.get(blockerId);
+      const blockedEntry = state.tickets[blockerId];
+      if (!blocker || !DONE.has(blockedEntry?.stage)) return null;
+      return {
+        id: blockerId,
+        title: ticketTitle(blocker),
+        summary: blockedEntry.summary || "",
+        touched: blockedEntry.actualTouches || [],
+        acceptance: blockedEntry.acceptance || [],
+      };
+    })
+    .filter(Boolean);
   const prompt = resume
     ? resumePrompt({
         ticket: id,
@@ -968,6 +1041,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
         sections: campaign.sections,
         data: ticket,
         attachments: attached.items.map((item) => item.path),
+        dependencies,
       });
   writePrompt(root, slug, runId, prompt);
 
@@ -2134,9 +2208,7 @@ export function applyCommand(root, command, consoleConfig) {
     delete entry.reviewedBase;
     entry.reviewStale = false;
     entry.reviewRound = 0;
-    for (const item of listItems(root, slug, { status: "open" })) {
-      if (item.ticket === id && item.kind === "failure") updateItem(root, slug, item.id, { status: "dismissed" });
-    }
+    clearTicketFromFailures(root, slug, id);
     setStage(root, slug, state, id, "queued", { reason: "retried by a person" });
     saveState(root, slug, state);
     return { ok: true };

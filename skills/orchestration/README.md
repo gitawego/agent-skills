@@ -276,9 +276,16 @@ Rules:
 - `touches` is a blast-radius promise. Protected paths — `.git/`,
   `.orchestration/`, `.env` / `.env.*`, `secrets/`, `id_rsa*`, and the campaign’s own
   `orchestration/<slug>/` files — are refused.
-- Plans are capped at 16 tickets. Above 8 is a review warning. Four or more
-  one-path, one-criterion slices are blocking fragmentation unless explicitly
-  accepted.
+- Start with one ticket for one user-visible outcome. Split only when each
+  slice is independently demoable and can proceed without a reasoning handoff:
+  two or three are normal, four triggers a budget warning, six or more asks for a
+  written reason, and 16 is the hard cap.
+- Four or more one-path, one-criterion slices are blocking fragmentation unless
+  explicitly accepted.
+- A blocked ticket receives its completed blockers' summary, reported files and
+  acceptance evidence as context, never as authority to widen its scope.
+- Generic ticket failures are grouped into one campaign-level inbox item;
+  stale-review, integration and delivery failures keep their own item.
 
 ## Evidence contract
 
@@ -484,11 +491,13 @@ Key references:
 - [references/config.md](references/config.md) — campaign and ticket schema
 - [references/panel.md](references/panel.md) — panel behavior
 - [docs/SPEC.md](docs/SPEC.md) — design decisions
+- [docs/ADR-001-ticket-sizing-and-context.md](docs/ADR-001-ticket-sizing-and-context.md) — one-ticket default, dependency context, failure aggregation
 - [docs/SPEC-evidence-and-approval.md](docs/SPEC-evidence-and-approval.md) — evidence and one-decision approval spec
 
 ## When not to use it
 
-- One small edit, one file, one obvious change — just do it.
+- One small edit, one file, one obvious change — just do it, or use one ticket
+  rather than a multi-ticket campaign.
 - An idea that still needs discovery — use a research or wayfinding flow first.
 - Work whose only output is a decision — ask for the decision.
 - A plan you cannot describe in independently verifiable slices — the graph is

@@ -26,6 +26,7 @@ Read the reference for a branch before acting on it:
 - [references/contract.md](references/contract.md): the standing rules appended to every worker's system prompt.
 - [references/roles/](references/roles/): one contract per kind — code, design, visual, research, plan, chores, review, judge, merge.
 - [references/panel.md](references/panel.md): screens, actions, HTTP and SSE surface.
+- [docs/ADR-001-ticket-sizing-and-context.md](docs/ADR-001-ticket-sizing-and-context.md): one-ticket default, dependency context, failure aggregation.
 - [references/memory.md](references/memory.md): decisions, supersession, promotion, the context command, the close report.
 - [references/worker-prompt.md](references/worker-prompt.md): what a worker is told.
 
@@ -33,7 +34,7 @@ Read the reference for a branch before acting on it:
 
 Use it when the work is larger than one context window and can be split into slices that are each verifiable on their own: a feature spanning schema, API, UI, and tests; a migration; a design or research effort with several deliverables.
 
-Reach for it only when the campaign will run more than one ticket. One ticket is `/implement`. An idea still too foggy to slice is `/wayfinder`. Work whose only output is a decision is `/grilling`.
+Start with **one ticket for one outcome**. Use a multi-ticket campaign only when the slices are independently verifiable and can proceed without a reasoning handoff. An idea still too foggy to slice is `/wayfinder`. Work whose only output is a decision is `/grilling`.
 
 ## The loop
 
@@ -69,7 +70,7 @@ If the draft is clean and `plan_gate: auto`, `plan import --submit` applies it a
 
 The panel is a flight deck: it shows the plan, the tickets, the next action and the telemetry, and it configures the fleet. It never hosts the conversation. It has one manual **Tickets → New ticket** form for a single one-off slice; do not send the whole plan there. Approvals, answers and delivery reviews happen in this session, with a copyable command shown in the panel. The supervisor never invents tickets.
 
-**Right-size the slices.** A ticket is an independently verifiable outcome, not a file or a step. Aim for 3–7 tickets; 8+ needs a reason and 16 is refused. Do not split by file or create “prepare”/“use it” pairs; merge them unless each is demoable alone. Every ticket costs a work run plus a review run. See [references/protocol.md](references/protocol.md#context-and-the-plan) for the fragmentation rule.
+**Right-size the slices.** A ticket is an independently verifiable outcome, not a file, a layer, or a step. Start with **one ticket**. Split only when each slice is independently demoable and can proceed without a reasoning handoff; two or three are normal for a genuinely independent parallel effort. A fourth ticket triggers a budget warning, six or more asks for a written reason, and 16 is refused. Do not split by file, layer, or create “prepare”/“use it” pairs; merge them unless each is demoable alone. Every ticket costs a work run plus a review run and a fresh context reconstruction. See [references/protocol.md](references/protocol.md#context-and-the-plan) for the fragmentation and budget rules, and [docs/ADR-001-ticket-sizing-and-context.md](docs/ADR-001-ticket-sizing-and-context.md) for the decision.
 
 **Tickets from chat.** The human does not need a form. Ask for the slice and make the contract explicit — **including the campaign**:
 

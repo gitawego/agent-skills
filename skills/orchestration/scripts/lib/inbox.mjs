@@ -20,6 +20,9 @@ export function createItem(root, slug, item) {
     brief: item.brief || "",
     question: item.question || null,
     findings: item.findings || null,
+    ...(item.group ? { group: item.group } : {}),
+    ...(item.tickets ? { tickets: item.tickets } : {}),
+    ...(item.details ? { details: item.details } : {}),
     status: "open",
     created: nowIso(),
     answer: null,
@@ -56,7 +59,11 @@ export function updateItem(root, slug, id, patch) {
 }
 
 export function openItemForTicket(root, slug, ticketId, kind) {
-  return listItems(root, slug, { status: "open" }).find(
-    (item) => item.ticket === ticketId && (!kind || item.kind === kind),
-  );
+  return listItems(root, slug, { status: "open" }).find((item) => {
+    const grouped = Array.isArray(item.tickets) && item.tickets.length > 0;
+    const matchesTicket = ticketId
+      ? item.ticket === ticketId || (grouped && item.tickets.includes(ticketId))
+      : item.ticket === null && !grouped;
+    return matchesTicket && (!kind || item.kind === kind);
+  });
 }

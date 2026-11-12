@@ -114,6 +114,29 @@ test("the plan cap and review warnings are enforced", () => {
   assert.ok(warnings.some((warning) => /one path/.test(warning.text)));
 });
 
+test("the ticket budget warns before a single request becomes a relay race", () => {
+  const make = (count) =>
+    plan({
+      tickets: Array.from({ length: count }, (_, index) => ({
+        key: `b${index}`,
+        title: `Budget ${index}`,
+        kind: "code",
+        touches: [`src/b${index}/**`],
+        what: "One outcome.",
+        accept: ["It works", "It stays working"],
+      })),
+    });
+  const three = planWarnings({ plan: normalizePlan(make(3)), contextBytes: 0, maxConcurrent: 4 });
+  assert.ok(!three.some((warning) => warning.code === "ticket-budget"), "three tickets is the normal upper bound");
+  const four = planWarnings({ plan: normalizePlan(make(4)), contextBytes: 0, maxConcurrent: 4 });
+  const budget = four.find((warning) => warning.code === "ticket-budget");
+  assert.ok(budget, four.map((warning) => warning.code).join(", "));
+  assert.match(budget.text, /4 tickets means at least 8 work\/review runs/);
+  assert.match(budget.text, /4 separate context reconstructions/);
+  const six = planWarnings({ plan: normalizePlan(make(6)), contextBytes: 0, maxConcurrent: 4 });
+  assert.match(six.find((warning) => warning.code === "ticket-budget").text, /written reason/);
+});
+
 test("fragmentation warnings name merge candidates and long serial chains", () => {
   const shared = plan({
     tickets: [
@@ -375,6 +398,30 @@ tickets:
   const accepted = cli(dir, ["plan", "import", "demo", "--accept-open"]);
   assert.equal(accepted.status, 0, accepted.stderr);
   assert.equal(readAppliedAudit(dir, "demo").openQuestions.length, 1);
+});
+
+test("plan draft prints the split budget for four tickets", () => {
+  const { box, dir } = setup();
+  const file = path.join(box, "four.yml");
+  fs.writeFileSync(
+    file,
+    stringifyYaml(
+      plan({
+        tickets: Array.from({ length: 4 }, (_, index) => ({
+          key: `b${index}`,
+          title: `Budget ${index}`,
+          kind: "code",
+          touches: [`src/b${index}/**`],
+          what: "One outcome.",
+          accept: ["It works", "It stays working"],
+        })),
+      }),
+    ),
+  );
+  const drafted = cli(dir, ["plan", "draft", "demo", "--file", file]);
+  assert.equal(drafted.status, 0, drafted.stderr);
+  assert.match(drafted.stdout, /4 tickets means at least 8 work\/review runs/);
+  assert.match(drafted.stdout, /4 separate context reconstructions/);
 });
 
 test("plan draft prints coverage and warns without blocking", () => {

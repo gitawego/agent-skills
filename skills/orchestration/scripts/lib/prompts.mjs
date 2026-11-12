@@ -57,6 +57,30 @@ export function renderAttachments(paths) {
   return paths.map((file) => `- \`${file}\` (attached to this turn)`).join("\n");
 }
 
+/* Blocker context is evidence, not a second brief: it tells a dependent worker
+   what already landed and what evidence proved it, without letting the
+   dependency widen this ticket's scope. */
+export function renderDependencies(dependencies) {
+  const list = asArray(dependencies).filter((dependency) => dependency && dependency.id);
+  if (!list.length) return "No completed blockers. Start from the campaign brief and the repository.";
+  return list
+    .map((dependency) => {
+      const lines = [`- **${dependency.id} ${dependency.title || dependency.id}** — ${dependency.summary || "completed"}`];
+      const touched = asArray(dependency.touched).filter(Boolean);
+      lines.push(`  files: ${touched.length ? touched.join(", ") : "not reported"}`);
+      const acceptance = asArray(dependency.acceptance).filter((result) => result && result.criterion);
+      if (acceptance.length) {
+        lines.push(
+          `  acceptance: ${acceptance
+            .map((result) => `${result.criterion} (${result.status || "reported"}${result.evidence ? `: ${result.evidence}` : ""})`)
+            .join("; ")}`,
+        );
+      }
+      return lines.join("\n");
+    })
+    .join("\n");
+}
+
 const QUESTION_RULE = [
   "Ask only when the answer is not in the campaign form, the ticket, the standing decisions, or the repository.",
   "If you ask, that is the end of this turn: report `needs_answer` and stop. Do not guess and continue.",
@@ -69,7 +93,20 @@ const ACCEPTANCE_RULE = [
   "Every result must be `passed`. If one is `failed`, report `failed` instead; the supervisor reruns the checks and will not treat a partial pass as done.",
 ].join("\n");
 
-export function workerPrompt({ campaign, ticket, ticketTitle, runId, workdir, base, kind, decisions, sections, data, attachments = [] }) {
+export function workerPrompt({
+  campaign,
+  ticket,
+  ticketTitle,
+  runId,
+  workdir,
+  base,
+  kind,
+  decisions,
+  sections,
+  data,
+  attachments = [],
+  dependencies = [],
+}) {
   return template("worker-prompt.md", {
     CAMPAIGN: campaign,
     TICKET_ID: ticket,
@@ -85,6 +122,7 @@ export function workerPrompt({ campaign, ticket, ticketTitle, runId, workdir, ba
     BRIEF: (sections.brief || "(none)").trim(),
     CONSTRAINTS: (sections.constraints || "(none)").trim(),
     DECISIONS: renderDecisions(decisions),
+    DEPENDENCIES: renderDependencies(dependencies),
     QUESTION_RULE,
     ACCEPTANCE_RULE,
     CONTEXT_CMD: `node ${path.join(SKILL_DIR, "scripts", "orchestrate.mjs")} context`,

@@ -19,7 +19,7 @@ import { resolveQuotas } from "./quotas.mjs";
 import { costOf, summarizeCost, telemetryOf } from "./telemetry.mjs";
 import { usageFromLog } from "./runs.mjs";
 import { planCoverage, planFragmentation, readContext } from "./plan-import.mjs";
-import { deriveAppliedAudit, draftReadiness, readAppliedAudit, readDraft } from "./plan-draft.mjs";
+import { deriveAppliedAudit, draftReadiness, planWarnings, readAppliedAudit, readDraft } from "./plan-draft.mjs";
 import { formatCoverage } from "./evidence.mjs";
 import { attentionOf } from "./attention.mjs";
 
@@ -262,6 +262,13 @@ export function campaignView(root, slug) {
   const context = readContext(root, slug);
   const draft = readDraft(root, slug);
   const readiness = draftReadiness(draft);
+  const draftWarnings = draft.plan
+    ? planWarnings({
+        plan: draft.plan,
+        contextBytes: context.bytes,
+        maxConcurrent: Number(consoleConfig.limits?.max_concurrent || 4),
+      })
+    : [];
   const planAudit = readAppliedAudit(root, slug) || deriveAppliedAudit(root, slug, { appliedAt: state.approvedAt || null });
   const coverage = planCoverage({
     criteria: plan.criteria || criteriaFromText(campaign.sections["acceptance criteria"]),
@@ -416,6 +423,7 @@ export function campaignView(root, slug) {
       coverage: readiness.coverage,
       clean: readiness.clean,
       blockers: readiness.blockers,
+      warnings: draftWarnings,
     },
     context: {
       file: context.file,

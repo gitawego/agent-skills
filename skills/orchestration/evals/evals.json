@@ -107,6 +107,7 @@
       "files": [],
       "expectations": [
         "Creates four tickets, not one ticket per file or a prepare/use-it pair",
+        "Prints the four-ticket budget warning and the work/review run cost",
         "Prints `coverage: N/M criteria claimed` and names each missing criterion",
         "Does not block approval solely because coverage is incomplete",
         "Does not invent a `covers` entry that is absent from the campaign criteria"

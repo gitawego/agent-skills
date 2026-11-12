@@ -1153,11 +1153,13 @@ function draftBlock(c) {
         ? `${merges} merge candidate${merges === 1 ? "" : "s"}`
         : "";
   const blockers = draft.blockers || [];
+  const budget = (draft.warnings || []).find((warning) => warning.code === "ticket-budget");
   return `<section class="draft-plan">
     <div class="eyebrow">draft plan · not applied</div>
     <strong>${draft.error ? "Invalid draft" : `${draft.tickets} ticket${draft.tickets === 1 ? "" : "s"}`}</strong>
     <span class="hint">${esc(draft.hash || "")}${draft.updatedAt ? ` · ${esc(clockOf(draft.updatedAt))}` : ""}${draft.openQuestions ? ` · ${draft.openQuestions} open question${draft.openQuestions === 1 ? "" : "s"}` : ""}</span>
     ${sizing ? `<span class="warn">${esc(sizing)}</span>` : ""}
+    ${budget ? `<p class="warn">${esc(budget.text)}</p>` : ""}
     ${blockers.length ? `<p class="warn">${esc(blockers.join("; "))}</p>` : ""}
     ${coverageMatrix(draft.coverage)}
     ${draft.clean ? `<button class="btn primary" data-act="approve-campaign" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}">Approve and run</button>` : ""}

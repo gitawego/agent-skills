@@ -42,6 +42,54 @@ test("the worker prompt interpolates every placeholder", () => {
   assert.match(text, /kind: code/);
 });
 
+test("a dependent ticket receives the completed blocker's outcome and evidence", () => {
+  const text = workerPrompt({
+    campaign: "demo",
+    ticket: "02",
+    ticketTitle: "Use the store",
+    runId: "r-2",
+    workdir: "/tmp/wt",
+    base: "main",
+    kind: "code",
+    decisions: [],
+    sections: { brief: "Because.", constraints: "None." },
+    data: TICKET,
+    dependencies: [
+      {
+        id: "01",
+        title: "Storage slice",
+        summary: "Added the file store and its append/read API.",
+        touched: ["src/store/store.mjs"],
+        acceptance: [
+          { criterion: "A note survives a restart", status: "passed", evidence: "ran the store test" },
+        ],
+      },
+    ],
+  });
+  assert.match(text, /## Completed blockers/);
+  assert.match(text, /01 Storage slice/);
+  assert.match(text, /Added the file store/);
+  assert.match(text, /src\/store\/store\.mjs/);
+  assert.match(text, /A note survives a restart/);
+  assert.match(text, /not authority to widen this ticket/);
+});
+
+test("a ticket with no completed blockers says so instead of inventing one", () => {
+  const text = workerPrompt({
+    campaign: "demo",
+    ticket: "01",
+    ticketTitle: "First",
+    runId: "r-1",
+    workdir: "/tmp/wt",
+    base: "main",
+    kind: "code",
+    decisions: [],
+    sections: { brief: "Because." },
+    data: TICKET,
+  });
+  assert.match(text, /No completed blockers/);
+});
+
 test("the review prompt names the diff to read instead of leaving a placeholder", () => {
   const text = reviewPrompt({
     campaign: "demo",
