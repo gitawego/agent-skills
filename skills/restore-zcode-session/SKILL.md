@@ -1,6 +1,6 @@
 ---
 name: restore-zcode-session
-description: Reconstruct the context of a previous ZCode chat session from a log file or session ID, so a fresh session can continue the work. Use when the user says "restore session", "continue previous session", "pick up where we left off", "recover chat", points at a ZCode log path (e.g. $HOME/.zcode/cli/log/zcode-2026-06-15.jsonl), or hands over a sess_… ID — even if they don't explicitly ask for restoration. Outputs a reconstructed transcript, an in-progress task summary, and the list of files the previous session touched.
+description: Reconstruct the context of a previous ZCode chat session from a log file or session ID, so a fresh session can continue the work. Use when the user says "restore session", "continue previous session", "pick up where we left off", "recover chat", points at a ZCode log path (e.g. ~/.zcode/cli/log/zcode-2026-06-15.jsonl), or hands over a sess_… ID — even if they don't explicitly ask for restoration. Outputs a reconstructed transcript, an in-progress task summary, and the list of files the previous session touched.
 ---
 
 # Restore a ZCode chat session
@@ -16,7 +16,7 @@ When a chat session dies, breaks, or the user wants to start a new chat and cont
 
 The user may give any of:
 
-- A log file path (e.g. `$HOME/.zcode/cli/log/zcode-2026-06-15.jsonl`)
+- A log file path (e.g. `~/.zcode/cli/log/zcode-2026-06-15.jsonl`)
 - A session ID (`sess_<uuid>` from the DB)
 - Nothing — default to the most recently updated session in the DB
 

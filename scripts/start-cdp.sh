@@ -21,12 +21,20 @@
 set -uo pipefail
 
 # --- config -----------------------------------------------------------------
-HS="${CDP_HEADLESS_SHELL:-$HOME/.cache/ms-playwright/headless-shell-1234/headless_shell}"
+PLAYWRIGHT_CACHE="${PLAYWRIGHT_CACHE:-$HOME/.cache/ms-playwright}"
+default_headless_shell() {
+  [[ -d "$PLAYWRIGHT_CACHE" ]] || return 0
+  find "$PLAYWRIGHT_CACHE" -maxdepth 3 -type f -name headless_shell -perm -u+x 2>/dev/null \
+    | sort -V | tail -1
+}
+HS="${CDP_HEADLESS_SHELL:-$(default_headless_shell)}"
 PORT="${CDP_PORT:-9222}"
 ADDR="127.0.0.1"
 DIR="${CDP_USER_DATA_DIR:-$HOME/.cdp-headless}"
 URL="http://$ADDR:$PORT/json/version"
 WAIT_SECS=60
+NO_SANDBOX="${CDP_NO_SANDBOX:-0}"
+[[ "${EUID:-$(id -u)}" -eq 0 ]] && NO_SANDBOX=1
 
 MODE="ensure"
 if [[ "${1:-}" == "--force" ]]; then MODE="force"; fi
@@ -75,18 +83,21 @@ pkill -9 -f "headless_shell.*remote-debugging-port=$PORT" 2>/dev/null
 sleep 1
 
 # Launch detached (setsid + disown so it survives the launching shell exiting).
-setsid "$HS" \
-  --headless=new \
-  --no-sandbox \
-  --disable-setuid-sandbox \
-  --disable-gpu \
-  --disable-dev-shm-usage \
-  --hide-scrollbars \
-  --window-size=1280,800 \
-  --user-data-dir="$DIR" \
-  --remote-debugging-port=$PORT \
-  --remote-debugging-address=$ADDR \
-  about:blank > "$DIR/shell.log" 2>&1 < /dev/null &
+ARGS=(
+  --headless=new
+  --disable-gpu
+  --disable-dev-shm-usage
+  --hide-scrollbars
+  --window-size=1280,800
+  --user-data-dir="$DIR"
+  --remote-debugging-port=$PORT
+  --remote-debugging-address=$ADDR
+  about:blank
+)
+if [[ "$NO_SANDBOX" == "1" ]]; then
+  ARGS=(--no-sandbox --disable-setuid-sandbox "${ARGS[@]}")
+fi
+setsid "$HS" "${ARGS[@]}" > "$DIR/shell.log" 2>&1 < /dev/null &
 disown
 
 # Wait until CDP is responsive.

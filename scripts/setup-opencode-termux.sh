@@ -128,7 +128,7 @@ run_official_installer() {
   [[ "${1:-}" != "modify-path" ]] && args+=(--no-modify-path)
   [[ -n "$OPENCODE_VERSION" ]] && args+=(--version "$OPENCODE_VERSION")
   log "running official installer (v2)..."
-  curl -fsSL "$INSTALLER_URL" | bash -s -- "${args[@]}"
+  curl --proto '=https' --tlsv1.2 -fsSL "$INSTALLER_URL" | bash -s -- "${args[@]}"
 }
 
 install_via_official() {

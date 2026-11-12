@@ -7,6 +7,35 @@ folder (`SKILL.md` + optional `scripts/`, `assets/`, `evals/`, `references/`,
 `docs/`) that should be portable: clone or copy it anywhere, install the
 documented dependencies, and it should work the same.
 
+## Never hard-code or fabricate content
+
+- Derive values from data, configuration, an API, a catalog, a file, or the
+  user's input. Never invent an ID, price, path, count, date, URL, model name,
+  command result, citation, or example output.
+- If a value is missing, fail with an actionable error or ask for it. Do not
+  substitute a plausible-looking default that looks real.
+- Test fixtures and eval samples are allowed to be synthetic, but they must be
+  clearly labelled as fixtures and must never become a production fallback.
+- Docs may show examples, but examples must be marked as examples and must not
+  claim to be measured results unless they are real, reproducible evidence.
+- Prefer a small data file, config field, or environment-derived value over a
+  literal repeated in code. Keep policy constants named and documented.
+
+## Never store secrets in git
+
+- Never commit credentials, API keys, access tokens, passwords, private keys,
+  cookies, session IDs, recovery codes, or customer data. This includes test
+  fixtures, docs, scripts, screenshots, logs, and git history.
+- Read secrets from the user's environment or a user-owned config file outside
+  the repository. Document the variable name, never the value.
+- Do not commit `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, SSH keys,
+  cloud credential files, or anything under `secrets/`.
+- Before committing, inspect the staged diff and run a secret scan. If a secret
+  was ever committed, treat it as compromised: rotate it, remove it from the
+  working tree, and purge it from history before pushing.
+- A redacted placeholder such as `<token>` is fine. A realistic-looking literal
+  value is not.
+
 ## What a skill folder is — and is not
 
 A skill is **declarative content** (SKILL.md, JSON manifests, sample assets,
@@ -130,8 +159,8 @@ skill will then have a reproducible way to confirm it still works.
 
 ## Where the canonical skill source lives
 
-`$HOME/agent-skills/skills/` is the source of truth.
-`$HOME/.agents/skills/` is a *consumed* copy that mirrors the same
-files. If you change a skill, edit it in the source-of-truth location and
-sync to the consumer copy. Don't edit the consumer copy directly — the
-next skill-loading pass will overwrite it.
+The repository's `skills/` directory is the source of truth. A skill loader
+may mirror it into a consumed copy elsewhere on the machine. If you change a
+skill, edit it in the source-of-truth location and sync to the consumer copy.
+Don't edit the consumer copy directly — the next skill-loading pass will
+overwrite it.

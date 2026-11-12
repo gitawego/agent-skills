@@ -168,7 +168,7 @@ step "opencode"
 
 if [ ! -x "$OPENCODE_BIN" ]; then
     echo "    Downloading opencode installer..."
-    if ! curl -fsSL https://opencode.ai/install | bash; then
+    if ! curl --proto '=https' --tlsv1.2 -fsSL https://opencode.ai/install | bash; then
         warn "opencode installer failed; skipping (re-run later or visit https://opencode.ai/install)"
     fi
 else
@@ -226,7 +226,7 @@ step "Bun"
 
 if [ ! -x "$BUN_PATH" ]; then
     echo "    Downloading bun installer..."
-    if ! curl -fsSL https://bun.sh/install | bash; then
+    if ! curl --proto '=https' --tlsv1.2 -fsSL https://bun.sh/install | bash; then
         warn "bun installer failed; skipping"
     fi
 else

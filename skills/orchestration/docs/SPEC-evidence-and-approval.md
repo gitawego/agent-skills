@@ -781,7 +781,7 @@ Run:
 
 ```bash
 node --test tests/*.test.mjs
-ORCH_E2E_CHROME=$HOME/.local/bin/google-chrome node --test tests/panel.e2e.mjs
+ORCH_E2E_CHROME="$(command -v google-chrome)" node --test tests/panel.e2e.mjs
 node evals/run.mjs
 ```
 

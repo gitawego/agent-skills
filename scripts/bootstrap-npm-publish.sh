@@ -22,6 +22,7 @@
 # Reusable for any npm package bootstrap publish.
 
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ──────────────────────────────────────────────────────────────────────────
 # ask_secret — hidden input with real-time * per char (raw mode), with a
@@ -254,7 +255,7 @@ echo ""
 printf '%sAfter each Publish job is green, switch to Trusted Publishing (OIDC):%s\n' \
   "$BOLD" "$RESET"
 for dir in "${PKG_DIRS[@]}"; do
-  printf '  bash $HOME/workspace/agent-skills/scripts/setup-npm-trusted-publishing.sh %s\n' "$dir"
+  printf '  bash %s %s\n' "$SCRIPT_DIR/setup-npm-trusted-publishing.sh" "$dir"
 done
 
 # Wipe the token from memory (best-effort — bash doesn't guarantee this)

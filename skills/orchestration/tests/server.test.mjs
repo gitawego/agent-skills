@@ -101,6 +101,27 @@ test("the panel serves state, refuses a missing token, and queues commands", asy
   panel.close();
 });
 
+test("the log endpoint refuses traversal in campaign and run names", async () => {
+  const root = fixture();
+  const panel = await startServer({ roots: [root], port: 0 });
+  const base = `http://127.0.0.1:${panel.port}/api/log?project=${encodeURIComponent(root)}&token=${panel.token}`;
+
+  for (const query of [
+    "&campaign=../../etc&run=passwd",
+    "&campaign=demo&run=../../state",
+    "&campaign=demo&run=..%2f..%2fstate",
+    "&campaign=demo&run=..",
+  ]) {
+    const res = await fetch(`${base}${query}`);
+    assert.equal(res.status, 400, query);
+  }
+
+  const ok = await fetch(`${base}&campaign=demo&run=r-valid`);
+  assert.equal(ok.status, 200);
+  assert.equal((await ok.json()).text, "");
+  panel.close();
+});
+
 test("an ephemeral test server does not overwrite the live panel record", async () => {
   const root = fixture();
   const file = globalPanelFile();

@@ -2,7 +2,7 @@
 # setup-bun-termux.sh — idempotent bun installer for Termux (aarch64).
 #
 # WHY THIS EXISTS (from real Termux debugging):
-#   * The OFFICIAL installer (`curl -fsSL https://bun.sh/install | bash`)
+#   * The OFFICIAL installer (`curl --proto '=https' --tlsv1.2 -fsSL https://bun.sh/install | bash`)
 #     is used as recommended and installs bun to ~/.bun/bin/bun — but the
 #     downloaded binary is a GLIBC-linked ELF whose PT_INTERP
 #     (/lib/ld-linux-aarch64.so.1) does not exist on Android. The kernel
@@ -112,12 +112,12 @@ run_official_installer() {
     local tag="$BUN_VERSION"
     [[ "$tag" = bun-v* ]] || tag="bun-v$tag"
     log "running official installer (tag $tag)..."
-    if ! curl -fsSL https://bun.sh/install | bash -s "$tag"; then
+    if ! curl --proto '=https' --tlsv1.2 -fsSL https://bun.sh/install | bash -s "$tag"; then
       die "official installer failed (tag $tag)"
     fi
   else
-    log "running official installer (curl -fsSL https://bun.sh/install | bash)..."
-    if ! curl -fsSL https://bun.sh/install | bash; then
+    log "running official installer (curl --proto '=https' --tlsv1.2 -fsSL https://bun.sh/install | bash)..."
+    if ! curl --proto '=https' --tlsv1.2 -fsSL https://bun.sh/install | bash; then
       die "official installer failed"
     fi
   fi

@@ -23,7 +23,7 @@ Installing/registering is an outward-facing local system change because it write
 
 Identify one of these inputs from the user's prompt:
 
-- Existing DMG path, e.g. `$HOME/Downloads/MiniMax Code-3.0.46.dmg`
+- Existing DMG path, e.g. `~/Downloads/MiniMax Code-3.0.46.dmg`
 - Version number, e.g. `3.0.46`, for downloading:
   `https://filecdn.minimax.chat/public/minimax-agent-prod/release/MiniMax%20Code-{version}.dmg`
 

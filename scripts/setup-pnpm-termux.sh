@@ -2,7 +2,7 @@
 # setup-pnpm-termux.sh — idempotent pnpm installer for Termux (aarch64).
 #
 # WHY THIS EXISTS (from real Termux debugging):
-#   * `curl -fsSL https://get.pnpm.io/install.sh | sh -` fails on Termux:
+#   * `curl --proto '=https' --tlsv1.2 -fsSL https://get.pnpm.io/install.sh | sh -` fails on Termux:
 #       - `getconf` is missing  → arch/libc detection breaks
 #       - the downloaded binary is a glibc-linked ELF; Termux's bionic
 #         loader cannot exec it ("pnpm: not found" / "required file not found")
@@ -103,7 +103,7 @@ resolve_latest_version() {
   # /releases/latest returns whichever major had the most recent release,
   # which can be v11 — so we must filter explicitly.
   local tag
-  tag="$(curl -fsSL 'https://api.github.com/repos/pnpm/pnpm/releases?per_page=20' \
+  tag="$(curl --proto '=https' --tlsv1.2 -fsSL 'https://api.github.com/repos/pnpm/pnpm/releases?per_page=20' \
          | grep '"tag_name"' \
          | grep '"v12\.' \
          | head -1 \
@@ -139,7 +139,7 @@ ensure_pnpm_binary() {
   url="https://github.com/pnpm/pnpm/releases/download/v${PNPM_VERSION}/pnpm-linux-${arch}.tar.gz"
   log "Downloading pnpm ${PNPM_VERSION} ($arch)..."
   tmp="$(mktemp -d)"
-  curl -fsSL "$url" -o "$tmp/pnpm.tar.gz" || die "download failed: $url"
+  curl --proto '=https' --tlsv1.2 -fsSL "$url" -o "$tmp/pnpm.tar.gz" || die "download failed: $url"
   # Hardlink warnings on Termux /data are harmless — files extract as
   # regular copies; ignore tar's exit code and verify the binary below.
   tar -xzf "$tmp/pnpm.tar.gz" -C "$tmp" 2>/dev/null || true

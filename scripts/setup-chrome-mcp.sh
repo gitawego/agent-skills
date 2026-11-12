@@ -23,8 +23,8 @@ set -uo pipefail
 # --- paths ------------------------------------------------------------------
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 START_CDP="$HERE/start-cdp.sh"
-WORKSPACE="$HOME/workspace"
-CHROME_MCP_DIR="$WORKSPACE/chrome-mcp"
+WORKSPACE="${WORKSPACE:-$HOME/workspace}"
+CHROME_MCP_DIR="${CHROME_MCP_DIR:-$WORKSPACE/chrome-mcp}"
 MCP_CONFIG="$HOME/.pi/agent/mcp.json"
 PLAYWRIGHT_CACHE="$HOME/.cache/ms-playwright"
 

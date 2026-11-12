@@ -81,7 +81,7 @@ Five things only a real run could teach. Each is fixed in the code and reflected
 
 ## Proof: a real project
 
-`$HOME/habitlog` is a real repository built entirely by this skill, with real workers and no scripted reports.
+`habitlog` is a real repository built entirely by this skill, with real workers and no scripted reports.
 
 - **Plan.** Five tickets over three waves: storage and docs in parallel, then streaks and the CLI's `add`/`list`, then the CLI's `streak` command on top of both. Blockers and `touches` are declared per ticket, so the per-kind cap of 2 and the touch overlap rule decided dispatch order without a human.
 - **Binding.** `code` and `chores` on `deepseek-v4.1-flash`, `review` and `plan` on `muse-spark-1.3-contributor`, each with the other as fallback, as the operator required. The run records confirm those are the only two models the campaign used.

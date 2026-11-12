@@ -3,7 +3,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { SKILL_DIR, consoleStateDir, ensureDir, globalPanelFile, nowIso, projectStateDir, readJson, registryFile, writeJson } from "./util.mjs";
 import { projectView, consoleView } from "./view.mjs";
 import { adaptersView, allModels, catalogsForRoot } from "./catalogs.mjs";
@@ -113,9 +113,15 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
     return req.headers["x-orch-token"] || url.searchParams.get("token") || cookies(req).orch_token || "";
   }
 
+  function sameToken(value) {
+    const given = Buffer.from(String(value || ""));
+    const expected = Buffer.from(secret);
+    return given.length === expected.length && timingSafeEqual(given, expected);
+  }
+
   function authorized(req, url) {
     if (req.socket.remoteAddress && !/^(127\.|::1|::ffff:127\.)/.test(req.socket.remoteAddress)) return false;
-    return tokenFrom(req, url) === secret;
+    return sameToken(tokenFrom(req, url));
   }
 
   const server = http.createServer(async (req, res) => {
@@ -153,7 +159,7 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
         const headers = { "content-type": MIME[".html"], "cache-control": "no-store" };
         /* the page is served with a cookie so a refresh, a new tab or a bookmark
            keeps working without the token in the address bar */
-        if (tokenFrom(req, url) === secret) {
+        if (sameToken(tokenFrom(req, url))) {
           headers["set-cookie"] = `orch_token=${secret}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000`;
         }
         res.writeHead(200, headers);
@@ -214,13 +220,25 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
 
     if (route === "/api/log") {
       const root = url.searchParams.get("project");
-      const run = url.searchParams.get("run");
+      const campaign = String(url.searchParams.get("campaign") || "");
+      const run = String(url.searchParams.get("run") || "");
       const offset = Number(url.searchParams.get("offset") || 0);
       if (!currentRoots().includes(root) || !run) {
         json(res, 400, { error: "unknown project or run" });
         return;
       }
-      const file = path.join(projectStateDir(root), "campaigns", url.searchParams.get("campaign") || "", "runs", run, "log.jsonl");
+      /* campaign and run are path segments. A slug or run id can never contain
+         a separator or `..`; reject before path.join can leave the state dir. */
+      if (!/^[a-z0-9][a-z0-9-]*$/.test(campaign) || !/^[A-Za-z0-9._-]+$/.test(run) || run.includes("..")) {
+        json(res, 400, { error: "invalid campaign or run" });
+        return;
+      }
+      const runsDir = path.join(projectStateDir(root), "campaigns", campaign, "runs");
+      const file = path.join(runsDir, run, "log.jsonl");
+      if (!file.startsWith(runsDir + path.sep)) {
+        json(res, 400, { error: "invalid campaign or run" });
+        return;
+      }
       let text = "";
       try {
         text = fs.readFileSync(file, "utf8");
