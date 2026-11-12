@@ -25,16 +25,16 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 START_CDP="$HERE/start-cdp.sh"
 WORKSPACE="${WORKSPACE:-$HOME/workspace}"
 CHROME_MCP_DIR="${CHROME_MCP_DIR:-$WORKSPACE/chrome-mcp}"
-MCP_CONFIG="$HOME/.pi/agent/mcp.json"
-PLAYWRIGHT_CACHE="$HOME/.cache/ms-playwright"
+MCP_CONFIG="${MCP_CONFIG:-$HOME/.pi/agent/mcp.json}"
+PLAYWRIGHT_CACHE="${PLAYWRIGHT_CACHE:-$HOME/.cache/ms-playwright}"
 
 # Playwright 1.62.x uses chromium headless-shell revision 1234 (Chromium 151).
-HS_REV="1234"
+HS_REV="${HS_REV:-1234}"
 HS_URL="https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/$HS_REV/chromium-headless-shell-linux-arm64.zip"
 HS_DIR="$PLAYWRIGHT_CACHE/headless-shell-$HS_REV"
 HS_BIN="$HS_DIR/headless_shell"
 
-CHROME_DEVTOOLS_PKG="chrome-devtools-mcp@1.6.0"
+CHROME_DEVTOOLS_PKG="${CHROME_DEVTOOLS_PKG:-chrome-devtools-mcp@1.6.0}"
 MCP_SERVER="$CHROME_MCP_DIR/node_modules/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js"
 
 MODE="ensure"

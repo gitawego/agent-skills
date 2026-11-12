@@ -1,2 +1,15 @@
 .pi-subagents/
 .git.broken-proot/
+
+# Credentials and local secret material
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+.npmrc
+.pypirc
+.netrc
+.git-credentials
