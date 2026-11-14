@@ -39,7 +39,7 @@ Rejecting a review with findings is not a decision: it is instructions for one p
 
 **The judge** reads all active decisions before asking anyone. And before the judge is even started, the supervisor looks for a decision with the same `questionHash`; a hit is answered from memory with no model call. Re-running a ticket asks the same question twice, and the second ask should be a lookup.
 
-**Anyone** can pull the whole picture: `orchestrate context --ticket 03` prints the decisions that bear on that ticket, what the other tickets are doing, the integration diff and the recent history. The worker prompt points at it, which is why the prompt itself can stay short.
+**Anyone** can pull the whole picture: `orchestrate context --ticket 03` prints the decisions that bear on that ticket, what the other tickets are doing, the integration diff and the recent history. The worker prompt points at it, which is why the prompt itself can stay short. For a subagent, use `orchestrate context --ticket 03 --packet`: it emits a bounded JSON handoff with dependencies, verified facts, decisions, commands already run, `read_first` and `do_not_recheck` instead of the full reading surface.
 
 ## Supersession, not deletion
 

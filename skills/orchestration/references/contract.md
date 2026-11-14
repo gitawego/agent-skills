@@ -45,6 +45,17 @@ looks like for your kind, and the task prompt names the ticket.
   `.orchestration/`, `.env` / `.env.*`, `secrets/`, `id_rsa*`, or the campaign's own plan
   and tickets) as a deliverable.
 
+## Delegating to a subagent
+
+- A subagent starts without your conversation. Pass a bounded context packet,
+  never your transcript: the task, verified facts with source paths, decisions,
+  artifacts, commands already run, files to read, and a do-not-recheck list.
+- Do not ask a subagent to re-explore the repository or re-verify a fact whose
+  source has not changed. It may re-check only a changed source or a high-risk
+  claim, and it reports a contradiction instead of silently choosing a side.
+- Give it the smallest self-contained brief and the paths it needs. If it needs
+  most of your context, the work is not a good subagent task; do it yourself.
+
 ## Asking
 
 - One question per run, asked once, late, after doing everything the answer is

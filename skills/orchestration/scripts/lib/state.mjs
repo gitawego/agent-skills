@@ -127,6 +127,8 @@ function recoverFromRuns(root, slug, state) {
     ticket.workdir = record.workdir || ticket.workdir;
     ticket.sessionId = record.sessionId || ticket.sessionId;
     if (record.report?.acceptance) ticket.acceptance = record.report.acceptance;
+    if (Array.isArray(record.report?.checks)) ticket.checks = record.report.checks;
+    if (record.report?.next) ticket.next = record.report.next;
   }
 }
 

@@ -27,6 +27,7 @@ Read the reference for a branch before acting on it:
 - [references/roles/](references/roles/): one contract per kind — code, design, visual, research, plan, chores, review, judge, merge.
 - [references/panel.md](references/panel.md): screens, actions, HTTP and SSE surface.
 - [docs/ADR-001-ticket-sizing-and-context.md](docs/ADR-001-ticket-sizing-and-context.md): one-ticket default, dependency context, failure aggregation.
+- [docs/ADR-002-bounded-context-packets.md](docs/ADR-002-bounded-context-packets.md): subagent handoff packets and prompt budgets.
 - [references/memory.md](references/memory.md): decisions, supersession, promotion, the context command, the close report.
 - [references/worker-prompt.md](references/worker-prompt.md): what a worker is told.
 
@@ -134,7 +135,7 @@ The script is the source of truth; the skill's slash commands are conveniences o
 | `run` | Supervisor: all registered campaigns, one tick loop, plus the panel |
 | `tick` | One pass, no panel, safe for cron or a timer |
 | `status [campaign]` | Campaigns, stages, slots, spend |
-| `context [--ticket 03]` | The substrate a worker reads: relevant decisions, siblings, diff, history |
+| `context [--ticket 03] [--packet]` | The substrate a worker reads: relevant decisions, siblings, diff, history; `--packet` emits a bounded handoff for a subagent |
 | `decisions [campaign] [--all]` | List decisions with their ids |
 | `promote <decision-id> [campaign]` | Share one decision with every campaign |
 | `inbox` | Open questions and failures across all projects, oldest first |

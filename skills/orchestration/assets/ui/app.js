@@ -407,6 +407,12 @@ function telemetryOf(run) {
     run.cacheHit == null ? "—" : `${(run.cacheHit * 100).toFixed(1)}% cached read (${num(run.cachedReadTokens || 0)} tok)`,
   ]);
   rows.push(["Speed", run.tokensPerSecond == null ? "—" : `${run.tokensPerSecond.toFixed(1)} output tok/s`]);
+  if (run.context) {
+    rows.push([
+      "Prompt",
+      `${num(run.context.promptTokensEstimate || 0)} tok est · ${num(run.context.dependencyChars || 0)} B dependencies · ${num(run.context.decisionChars || 0)} B decisions`,
+    ]);
+  }
   rows.push(["Cost", costText(run.cost)]);
   return rows;
 }

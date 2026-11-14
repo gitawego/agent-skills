@@ -236,6 +236,7 @@ export function campaignView(root, slug) {
         promptTokens: telemetry.promptTokens,
         cacheHit: telemetry.cacheHit,
         tokensPerSecond: telemetry.tokensPerSecond,
+        context: run.context || null,
         contextTokens: run.contextTokens || null,
         billing: run.billing || null,
         included: run.included ?? null,

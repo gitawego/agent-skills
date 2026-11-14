@@ -107,6 +107,18 @@ export function readText(file, fallback = null) {
   }
 }
 
+/* Prompt and packet fields are bounded. The pointer stays visible when the
+   body is cut, so a reader can fetch the rest instead of guessing. */
+export function clip(value, max = 1200, label = "truncated") {
+  const text = String(value ?? "");
+  if (text.length <= max) return text;
+  if (max <= 0) return `… [${label}]`;
+  const cut = text.slice(0, max);
+  const line = cut.lastIndexOf("\n");
+  const body = line > max * 0.6 ? cut.slice(0, line) : cut;
+  return `${body}… [${label}; ${text.length} chars]`;
+}
+
 export function exists(file) {
   try {
     fs.statSync(file);

@@ -6,6 +6,7 @@ import { spawn as spawnDetached } from "node:child_process";
 import {
   UserError,
   binHome,
+  clip,
   dataHome,
   campaignPlanDir,
   ensureDir,
@@ -64,6 +65,7 @@ import { approveCampaign, tick, writeClose } from "./lib/engine.mjs";
 import { enqueue } from "./lib/commands.mjs";
 import { listItems } from "./lib/inbox.mjs";
 import { campaignView, projectView } from "./lib/view.mjs";
+import { buildContextPacket } from "./lib/context-packet.mjs";
 import { startServer } from "./lib/server.mjs";
 import { loadDispatch, setDispatch } from "./lib/dispatch.mjs";
 import { validateQuotas } from "./lib/quotas.mjs";
@@ -501,6 +503,20 @@ const commands = {
     const events = readEvents(root).filter((event) => event.campaign === slug).slice(-8);
     const stats = (campaign.data.landing || "branch") === "branch" ? diffStats(root, slug, campaign.data.base || "main") : null;
 
+    if (flags.packet) {
+      const packet = buildContextPacket({
+        campaign,
+        plan,
+        state,
+        ticket,
+        decisions,
+        stats,
+        inbox: listItems(root, slug),
+      });
+      console.log(JSON.stringify(packet, null, 2));
+      return;
+    }
+
     if (flags.json) {
       console.log(JSON.stringify({ campaign: slug, ticket: ticket?.data.id || null, decisions, siblings, stats, events }, null, 2));
       return;
@@ -519,14 +535,18 @@ const commands = {
       out.push("");
     }
     out.push("## Decisions", "");
-    out.push(decisions.length ? decisions.map((record) => `- ${summaryLine(record)}`).join("\n") : "- none yet", "");
+    const shownDecisions = decisions.slice(-12);
+    out.push(shownDecisions.length ? shownDecisions.map((record) => `- ${clip(summaryLine(record), 500, "decision truncated")}`).join("\n") : "- none yet", "");
+    if (decisions.length > shownDecisions.length) out.push(`- … ${decisions.length - shownDecisions.length} older decision(s) omitted`, "");
     out.push("## Other tickets", "");
+    const shownSiblings = siblings.slice(0, 40);
     out.push(
-      siblings.length
-        ? siblings.map((row) => `- ${row.id} [${row.stage}] ${row.title}${row.summary ? ` — ${row.summary.split("\n")[0].slice(0, 120)}` : ""}`).join("\n")
+      shownSiblings.length
+        ? shownSiblings.map((row) => `- ${row.id} [${row.stage}] ${row.title}${row.summary ? ` — ${row.summary.split("\n")[0].slice(0, 120)}` : ""}`).join("\n")
         : "- none",
       "",
     );
+    if (siblings.length > shownSiblings.length) out.push(`- … ${siblings.length - shownSiblings.length} more ticket(s) omitted`, "");
     if (stats) out.push("## Integration branch", "", `${stats.added} added, ${stats.removed} removed against ${campaign.data.base || "main"} (${integrationBranch(slug)})`, "");
     out.push("## Recent history", "");
     out.push(events.length ? events.map((event) => `- ${event.ts.slice(11, 19)} ${event.ticket ? `${event.ticket} ` : ""}${event.type}`).join("\n") : "- nothing yet", "");
@@ -1444,7 +1464,7 @@ const commands = {
   plan import <campaign> [--file f]      apply the draft or a file atomically; --prune, --accept-open, --accept-fragmented, --submit
   plan discard <campaign>               abandon the draft
   plan audit <campaign> [--write]       show or persist the applied-plan audit
-  context [--ticket 03]                 the substrate a worker reads: decisions, siblings, diff, history
+  context [--ticket 03] [--packet]      the substrate a worker reads; --packet emits a bounded handoff
   context append <campaign> --from f   append free-form human context to context.md
   decisions [campaign] [--all]          list decisions, with ids
   promote <decision-id> [campaign]      share one decision with every campaign

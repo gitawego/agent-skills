@@ -35,6 +35,10 @@ says what evidence your kind of work owes. For this ticket: explore far enough
 to know what "done" looks like, then build the whole vertical slice — one path
 through every layer it needs, not one layer of it.
 
+If you delegate to a subagent, follow the contract's subagent rule: pass a
+bounded packet with verified facts and paths, not your transcript. Do not ask it
+to re-explore the repository or re-verify unchanged facts.
+
 ## When you need a decision
 
 {{QUESTION_RULE}}
@@ -91,7 +95,7 @@ The rest of the colony is one command away, and it is cheaper than guessing:
 {{CONTEXT_CMD}} --ticket {{TICKET_ID}}
 ```
 
-That prints the decisions that bear on this ticket's paths, what the other tickets are doing, the integration diff and the recent history.
+That prints the decisions that bear on this ticket's paths, what the other tickets are doing, the integration diff and the recent history. Add `--packet` for a bounded JSON handoff when you delegate to a subagent.
 
 ## Run execution
 

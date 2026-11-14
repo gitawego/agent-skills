@@ -72,7 +72,17 @@ import {
   summarizeRun,
   writePrompt,
 } from "./runs.mjs";
-import { judgePrompt, mergePrompt, promptDigest, resumePrompt, reviewPrompt, systemPromptDigest, systemPromptFiles, workerPrompt } from "./prompts.mjs";
+import {
+  judgePrompt,
+  mergePrompt,
+  promptAudit,
+  promptDigest,
+  resumePrompt,
+  reviewPrompt,
+  systemPromptDigest,
+  systemPromptFiles,
+  workerPrompt,
+} from "./prompts.mjs";
 import { createItem, findItem, listItems, openItemForTicket, updateItem } from "./inbox.mjs";
 import { attachmentAudit, attachmentPaths, loadAttachments } from "./attachments.mjs";
 import {
@@ -499,6 +509,8 @@ function collectWork({ root, slug, state, plan, kinds, consoleConfig, run, summa
   entry.model = run.model;
   entry.workerModel = run.model;
   entry.workdir = run.workdir;
+  entry.checks = Array.isArray(report.checks) ? report.checks : [];
+  entry.next = report.next || null;
 
   /* A failed report may be partial; the failure is evidence. Any other report
      that volunteers acceptance results gets them recorded when they are
@@ -1017,10 +1029,13 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
         title: ticketTitle(blocker),
         summary: blockedEntry.summary || "",
         touched: blockedEntry.actualTouches || [],
+        checks: blockedEntry.checks || [],
+        next: blockedEntry.next || "",
         acceptance: blockedEntry.acceptance || [],
       };
     })
     .filter(Boolean);
+  const decisions = decisionsFor(root, slug, asArray(ticket.data.touches));
   const prompt = resume
     ? resumePrompt({
         ticket: id,
@@ -1037,7 +1052,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
         workdir,
         base: data.base || "main",
         kind: ticket.data.kind,
-        decisions: decisionsFor(root, slug, asArray(ticket.data.touches)),
+        decisions,
         sections: campaign.sections,
         data: ticket,
         attachments: attached.items.map((item) => item.path),
@@ -1069,6 +1084,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
     systemPrompts,
     systemPromptHash: systemPromptDigest(systemPrompts),
     promptHash: promptDigest(prompt),
+    context: promptAudit(prompt, { dependencies, decisions }),
   };
   const launch = getAdapter(adapterId).buildLaunch({
     run,
@@ -1236,6 +1252,7 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
     systemPrompts,
     systemPromptHash: systemPromptDigest(systemPrompts),
     promptHash: promptDigest(prompt),
+    context: promptAudit(prompt),
   };
   const launch = getAdapter(current.adapterId).buildLaunch({
     run: gateRun,
@@ -1344,6 +1361,7 @@ function startJudge({ root, slug, state, plan, ticket, run, report, kinds, conso
     systemPrompts,
     systemPromptHash: systemPromptDigest(systemPrompts),
     promptHash: promptDigest(prompt),
+    context: promptAudit(prompt),
   };
   const launch = getAdapter(adapterId).buildLaunch({
     run: judgeRun,
@@ -1428,6 +1446,7 @@ function startMerge({ root, slug, state, ticketId, run, conflict, kinds, console
     systemPrompts,
     systemPromptHash: systemPromptDigest(systemPrompts),
     promptHash: promptDigest(prompt),
+    context: promptAudit(prompt),
   };
   const launch = getAdapter(adapterId).buildLaunch({
     run: mergeRun,

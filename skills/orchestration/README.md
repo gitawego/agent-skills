@@ -287,6 +287,24 @@ Rules:
 - Generic ticket failures are grouped into one campaign-level inbox item;
   stale-review, integration and delivery failures keep their own item.
 
+## Context handoff
+
+A worker or subagent never inherits a transcript. It gets a bounded packet:
+
+```bash
+orchestrate context --ticket 03 --packet > /tmp/context-03.json
+```
+
+The packet carries the ticket, completed blockers, verified facts with sources,
+decisions, commands already run, artifacts, open questions, paths to read first,
+and a `do_not_recheck` list. It is built from recorded evidence only; a summary
+alone never becomes a “verified fact”.
+
+Prompts are bounded too: long decisions, dependency summaries, evidence and
+reading lists are clipped with an explicit truncation marker, and every run
+records `promptChars`, an estimated prompt token count, and dependency/decision
+sizes in `run.json`.
+
 ## Evidence contract
 
 A work run ends by writing `report.json` through `scripts/report.mjs`.
@@ -450,6 +468,7 @@ integration worktree; the delivery manifest is the integration artifact.
 | `init` | Scaffold and register the project |
 | `start "<goal>"` | Create a draft campaign |
 | `context append <campaign> --from f` | Save raw human input |
+| `context --ticket <id> [--packet]` | Read relevant decisions, siblings, diff and history; `--packet` emits a bounded subagent handoff |
 | `plan draft <campaign> --file f` | Write and review a draft |
 | `plan diff <campaign>` | Reprint the draft delta and coverage |
 | `plan show <campaign> [--ticket key]` | Read the draft or applied plan |
@@ -492,6 +511,7 @@ Key references:
 - [references/panel.md](references/panel.md) — panel behavior
 - [docs/SPEC.md](docs/SPEC.md) — design decisions
 - [docs/ADR-001-ticket-sizing-and-context.md](docs/ADR-001-ticket-sizing-and-context.md) — one-ticket default, dependency context, failure aggregation
+- [docs/ADR-002-bounded-context-packets.md](docs/ADR-002-bounded-context-packets.md) — subagent handoff packets, prompt budgets, context telemetry
 - [docs/SPEC-evidence-and-approval.md](docs/SPEC-evidence-and-approval.md) — evidence and one-decision approval spec
 
 ## When not to use it

@@ -199,7 +199,13 @@ test("a blocking edge holds a ticket until its blocker is done", async () => {
     "## What to build\n\nFile 2.\n\n## Acceptance criteria\n\n- [ ] The file exists.",
   );
   commitAll(dir, "add blocked ticket");
-  scenario({ work: [ready("first"), ready("second")], review: [ready("clean"), ready("clean")] });
+  scenario({
+    work: [
+      { ...ready("first"), checks: [{ name: "fixture-check", ok: true }], next: "Use work-01.txt." },
+      ready("second"),
+    ],
+    review: [ready("clean"), ready("clean")],
+  });
 
   tick({ root: dir });
   let view = campaignView(dir, slug);
@@ -216,6 +222,10 @@ test("a blocking edge holds a ticket until its blocker is done", async () => {
   assert.match(prompt, /## Completed blockers/);
   assert.match(prompt, /01 t1/);
   assert.match(prompt, /first/, "the blocker's summary travels with the dependent ticket");
+  assert.match(prompt, /checks already run \(worker report\): fixture-check \(pass\)/);
+  assert.match(prompt, /handoff: Use work-01\.txt/);
+  assert.ok(second.context?.promptTokensEstimate > 0, "the run records the prompt estimate");
+  assert.equal(second.context.dependencyCount, 1);
 });
 
 test("tickets whose touches overlap never run at once", async () => {

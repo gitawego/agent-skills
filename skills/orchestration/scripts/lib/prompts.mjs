@@ -1,7 +1,7 @@
 // Prompts are content: they live in references/ and are filled here.
 import crypto from "node:crypto";
 import path from "node:path";
-import { SKILL_DIR, REPORT_SCRIPT, exists, readText } from "./util.mjs";
+import { SKILL_DIR, REPORT_SCRIPT, clip, exists, readText } from "./util.mjs";
 import { asArray } from "./plan.mjs";
 import { renderFindings } from "./evidence.mjs";
 
@@ -20,6 +20,22 @@ export function systemPromptFiles(role) {
 
 export function promptDigest(text) {
   return crypto.createHash("sha256").update(text).digest("hex");
+}
+
+/* Context cost travels with the run, so a later prompt-size regression is
+   visible instead of being guessed from the log. */
+export function promptAudit(prompt, { dependencies = [], decisions = [] } = {}) {
+  const text = String(prompt || "");
+  const dependencyText = JSON.stringify(asArray(dependencies));
+  const decisionText = JSON.stringify(asArray(decisions));
+  return {
+    promptChars: text.length,
+    promptTokensEstimate: Math.ceil(text.length / 4),
+    dependencyChars: dependencyText.length,
+    dependencyCount: asArray(dependencies).length,
+    decisionChars: decisionText.length,
+    decisionCount: asArray(decisions).length,
+  };
 }
 
 /* The system prompt is files, not one string; hash the resolved contents so a
@@ -42,14 +58,35 @@ export function renderCriteria(ticket) {
   return ticket.criteria.map((c) => `- [ ] ${c.text}`).join("\n");
 }
 
+export const PROMPT_LIMITS = {
+  briefChars: 5_000,
+  constraintsChars: 3_000,
+  readingChars: 2_000,
+  decisions: 12,
+  decisionChars: 500,
+  dependencies: 8,
+  dependencyChars: 1_400,
+  dependencySummaryChars: 600,
+  acceptanceEvidenceChars: 400,
+  ticketBodyChars: 8_000,
+};
+
 export function renderReading(sections) {
-  const reading = (sections["what to read first"] || "").trim();
+  const reading = clip((sections["what to read first"] || "").trim(), PROMPT_LIMITS.readingChars, "reading list truncated");
   return reading || "Nothing declared. Explore the repository yourself.";
 }
 
 export function renderDecisions(decisions) {
-  if (!decisions.length) return "None recorded.";
-  return decisions.map((d) => `- ${d.text}${d.cite ? ` (${d.cite})` : ""}`).join("\n");
+  const list = asArray(decisions);
+  if (!list.length) return "None recorded.";
+  const shown = list.slice(-PROMPT_LIMITS.decisions);
+  const lines = shown.map(
+    (d) => `- ${clip(d.text, PROMPT_LIMITS.decisionChars, "decision truncated")}${d.cite ? ` (${d.cite})` : ""}`,
+  );
+  if (list.length > shown.length) {
+    lines.push(`- … ${list.length - shown.length} older decision${list.length - shown.length === 1 ? "" : "s"} omitted; run \`orchestrate decisions\` for the rest.`);
+  }
+  return lines.join("\n");
 }
 
 export function renderAttachments(paths) {
@@ -63,22 +100,41 @@ export function renderAttachments(paths) {
 export function renderDependencies(dependencies) {
   const list = asArray(dependencies).filter((dependency) => dependency && dependency.id);
   if (!list.length) return "No completed blockers. Start from the campaign brief and the repository.";
-  return list
-    .map((dependency) => {
-      const lines = [`- **${dependency.id} ${dependency.title || dependency.id}** — ${dependency.summary || "completed"}`];
-      const touched = asArray(dependency.touched).filter(Boolean);
-      lines.push(`  files: ${touched.length ? touched.join(", ") : "not reported"}`);
-      const acceptance = asArray(dependency.acceptance).filter((result) => result && result.criterion);
-      if (acceptance.length) {
-        lines.push(
-          `  acceptance: ${acceptance
-            .map((result) => `${result.criterion} (${result.status || "reported"}${result.evidence ? `: ${result.evidence}` : ""})`)
-            .join("; ")}`,
-        );
-      }
-      return lines.join("\n");
-    })
-    .join("\n");
+  const shown = list.slice(0, PROMPT_LIMITS.dependencies);
+  const blocks = shown.map((dependency) => {
+    const lines = [
+      `- **${dependency.id} ${dependency.title || dependency.id}** — ${clip(
+        dependency.summary || "completed",
+        PROMPT_LIMITS.dependencySummaryChars,
+        "summary truncated",
+      )}`,
+    ];
+    const touched = asArray(dependency.touched).filter(Boolean);
+    lines.push(`  files: ${touched.length ? touched.map((file) => clip(file, 300, "path truncated")).join(", ") : "not reported"}`);
+    const checks = asArray(dependency.checks).filter((check) => check && check.name);
+    if (checks.length) {
+      lines.push(`  checks already run (worker report): ${checks.map((check) => `${check.name} (${check.ok === false ? "fail" : "pass"})`).join(", ")}`);
+    }
+    if (dependency.next) lines.push(`  handoff: ${clip(dependency.next, 500, "handoff truncated")}`);
+    const acceptance = asArray(dependency.acceptance).filter((result) => result && result.criterion);
+    if (acceptance.length) {
+      lines.push(
+        `  acceptance: ${acceptance
+          .map(
+            (result) =>
+              `${clip(result.criterion, 300, "criterion truncated")} (${result.status || "reported"}${
+                result.evidence ? `: ${clip(result.evidence, PROMPT_LIMITS.acceptanceEvidenceChars, "evidence truncated")}` : ""
+              })`,
+          )
+          .join("; ")}`,
+      );
+    }
+    return clip(lines.join("\n"), PROMPT_LIMITS.dependencyChars, "dependency context truncated");
+  });
+  if (list.length > shown.length) {
+    blocks.push(`- … ${list.length - shown.length} more completed blocker${list.length - shown.length === 1 ? "" : "s"} omitted; run \`orchestrate context --ticket <id> --packet\` for the rest.`);
+  }
+  return blocks.join("\n");
 }
 
 const QUESTION_RULE = [
@@ -115,12 +171,12 @@ export function workerPrompt({
     RUN_ID: runId,
     WORKDIR: workdir,
     BASE: base,
-    TICKET_BODY: data.what,
+    TICKET_BODY: clip(data.what, PROMPT_LIMITS.ticketBodyChars, "ticket body truncated"),
     ACCEPTANCE: renderCriteria(data),
     ATTACHMENTS: renderAttachments(attachments),
     READING: renderReading(sections),
-    BRIEF: (sections.brief || "(none)").trim(),
-    CONSTRAINTS: (sections.constraints || "(none)").trim(),
+    BRIEF: clip((sections.brief || "(none)").trim(), PROMPT_LIMITS.briefChars, "brief truncated"),
+    CONSTRAINTS: clip((sections.constraints || "(none)").trim(), PROMPT_LIMITS.constraintsChars, "constraints truncated"),
     DECISIONS: renderDecisions(decisions),
     DEPENDENCIES: renderDependencies(dependencies),
     QUESTION_RULE,

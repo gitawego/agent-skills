@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import { sandbox, project, writeConsole, writeCampaign, MODELS, SKILL } from "./helpers.mjs";
+import { sandbox, project, writeConsole, writeCampaign, writeTicket, MODELS, SKILL } from "./helpers.mjs";
 
 const CLI = path.join(SKILL, "scripts", "orchestrate.mjs");
 
@@ -52,6 +52,45 @@ test("ticket edit records a coverage claim and an amendment reason", () => {
   const events = fs.readFileSync(path.join(dir, ".orchestration", "events.jsonl"), "utf8");
   assert.match(events, /"type":"ticket.amended"/);
   assert.match(events, /claim the campaign criterion/);
+});
+
+test("context --packet emits a compact handoff for a ticket", () => {
+  const box = sandbox();
+  const dir = project(path.join(box, "repo"));
+  writeConsole();
+  writeCampaign(
+    dir,
+    "demo",
+    {
+      campaign: "demo",
+      stage: "running",
+      autonomy: "trusted",
+      plan_gate: "human",
+      landing: "branch",
+      base: "main",
+      checks: [],
+      budget: { tokens: null, dollars: null },
+      max_autoship_lines: 200,
+      kinds: {},
+    },
+    "## Goal\n\nShip.\n\n## Brief\n\nB.\n\n## Acceptance criteria\n\n- [ ] ok\n\n## Constraints\n\nnone\n\n## What to read first\n\n- **Files:** README.md\n",
+  );
+  writeTicket(dir, "demo", "01-a.md", { id: "01", kind: "code", touches: ["src/a/**"] }, "## What to build\n\nA.\n\n## Acceptance criteria\n\n- [ ] A.");
+  writeTicket(
+    dir,
+    "demo",
+    "02-b.md",
+    { id: "02", kind: "code", touches: ["src/b/**"], blocked_by: ["01"], sources: ["README.md"] },
+    "## What to build\n\nB.\n\n## Acceptance criteria\n\n- [ ] B.",
+  );
+  const res = cli(dir, ["context", "--ticket", "02", "--packet"]);
+  assert.equal(res.status, 0, res.stderr);
+  const packet = JSON.parse(res.stdout);
+  assert.equal(packet.version, 1);
+  assert.equal(packet.ticket.id, "02");
+  assert.deepEqual(packet.ticket.blocked_by, ["01"]);
+  assert.deepEqual(packet.read_first, ["README.md"]);
+  assert.ok(Array.isArray(packet.do_not_recheck));
 });
 
 test("cleanup previews and removes merged campaign branches, keeping the base", () => {

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { workerPrompt, reviewPrompt, judgePrompt, mergePrompt, systemPromptFiles, systemPromptDigest, promptDigest } from "../scripts/lib/prompts.mjs";
+import { workerPrompt, reviewPrompt, judgePrompt, mergePrompt, systemPromptFiles, systemPromptDigest, promptDigest, promptAudit } from "../scripts/lib/prompts.mjs";
 
 const TICKET = {
   what: "Build the thing.",
@@ -18,6 +18,14 @@ test("every role has a contract file and the contract comes first", () => {
     assert.match(files[1], new RegExp(`references/roles/${role}\\.md$`));
     for (const file of files) assert.ok(fs.existsSync(file), `${file} exists`);
   }
+});
+
+test("the contract tells workers to hand a bounded packet to a subagent", () => {
+  const text = fs.readFileSync(systemPromptFiles("code")[0], "utf8");
+  assert.match(text, /Delegating to a subagent/);
+  assert.match(text, /bounded context packet/);
+  assert.match(text, /do-not-recheck/);
+  assert.match(text, /never your transcript/);
 });
 
 test("a custom kind falls back to the general role", () => {
@@ -60,6 +68,8 @@ test("a dependent ticket receives the completed blocker's outcome and evidence",
         title: "Storage slice",
         summary: "Added the file store and its append/read API.",
         touched: ["src/store/store.mjs"],
+        checks: [{ name: "npm test -- store", ok: true }],
+        next: "Wire the CLI to the store API.",
         acceptance: [
           { criterion: "A note survives a restart", status: "passed", evidence: "ran the store test" },
         ],
@@ -70,8 +80,41 @@ test("a dependent ticket receives the completed blocker's outcome and evidence",
   assert.match(text, /01 Storage slice/);
   assert.match(text, /Added the file store/);
   assert.match(text, /src\/store\/store\.mjs/);
+  assert.match(text, /checks already run \(worker report\): npm test -- store \(pass\)/);
+  assert.match(text, /handoff: Wire the CLI/);
   assert.match(text, /A note survives a restart/);
   assert.match(text, /not authority to widen this ticket/);
+});
+
+test("long dependency context and decisions are clipped, not silently dropped", () => {
+  const text = workerPrompt({
+    campaign: "demo",
+    ticket: "02",
+    ticketTitle: "Use the store",
+    runId: "r-2",
+    workdir: "/tmp/wt",
+    base: "main",
+    kind: "code",
+    decisions: Array.from({ length: 20 }, (_, index) => ({
+      text: `Decision ${index} ${"x".repeat(900)}`,
+      cite: `source-${index}`,
+    })),
+    sections: { brief: "b".repeat(7000), constraints: "c".repeat(5000) },
+    data: TICKET,
+    dependencies: [
+      {
+        id: "01",
+        title: "Storage slice",
+        summary: "s".repeat(2000),
+        touched: ["src/store/store.mjs"],
+        checks: [],
+        acceptance: [{ criterion: "A note survives", status: "passed", evidence: "e".repeat(1200) }],
+      },
+    ],
+  });
+  assert.match(text, /truncated/);
+  assert.match(text, /older decisions omitted/);
+  assert.ok(text.length < 25_000, `prompt remained too large: ${text.length}`);
 });
 
 test("a ticket with no completed blockers says so instead of inventing one", () => {
@@ -122,6 +165,19 @@ test("the judge and merge prompts interpolate every placeholder", () => {
   const merge = mergePrompt({ root: "/tmp/wt", slug: "demo", ticket: "03", conflict: "CONFLICT (content)" });
   assert.doesNotMatch(merge, /\{\{[A-Z_]+\}\}/);
   assert.match(merge, /CONFLICT \(content\)/);
+});
+
+test("prompt cost is recorded, including dependency and decision weight", () => {
+  const audit = promptAudit("abcd".repeat(250), {
+    dependencies: [{ id: "01", summary: "done" }],
+    decisions: [{ text: "reuse the filter" }],
+  });
+  assert.equal(audit.promptChars, 1000);
+  assert.equal(audit.promptTokensEstimate, 250);
+  assert.equal(audit.dependencyCount, 1);
+  assert.equal(audit.decisionCount, 1);
+  assert.ok(audit.dependencyChars > 0);
+  assert.ok(audit.decisionChars > 0);
 });
 
 test("the prompt digest is stable and content-addressed", () => {

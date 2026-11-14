@@ -139,7 +139,7 @@ The queue clears on the next supervisor tick after the agent runs the command. T
 
 The drawer and History label what they know. **Actual** means the provider reported the dollars, **estimated** means tokens multiplied by the current price table, and **included** means a subscription run with an API-equivalent value that was never billed. A missing price says `cost unknown`, never `$0.00`.
 
-The same block shows context used against the model's window (when the catalog knows it), cached-read share, and output tokens per second. Runs record adapter, adapter version and host so a later catalog or machine change cannot rewrite what produced a report. When a harness reports subagents or child runs, they appear under **Child runs** with their own model, status, tokens and dollars. They are observation only: the scheduler never turns them into tickets.
+The same block shows context used against the model's window (when the catalog knows it), cached-read share, output tokens per second, and the recorded prompt estimate with dependency/decision sizes. Runs record adapter, adapter version and host so a later catalog or machine change cannot rewrite what produced a report. When a harness reports subagents or child runs, they appear under **Child runs** with their own model, status, tokens and dollars. They are observation only: the scheduler never turns them into tickets.
 
 ## Rules
 

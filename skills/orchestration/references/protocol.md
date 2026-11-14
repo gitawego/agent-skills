@@ -98,7 +98,11 @@ tickets:
 
 The budget warning names the cost: `N tickets` means at least `2N` work/review runs and `N` separate context reconstructions. A ticket with one touched path and one acceptance criterion is a *small slice*; four or more small slices making up at least half the plan is fragmentation, and `plan import` refuses unless `--accept-fragmented` is passed. The draft also warns about merge candidates (same or nested paths behind a dependency) and a single serial chain of four or more tickets. See [ADR-001](../docs/ADR-001-ticket-sizing-and-context.md).
 
-When a ticket is blocked by another, its worker prompt includes the completed blocker's summary, reported files and acceptance evidence. That packet is context, not authority to widen the ticket.
+When a ticket is blocked by another, its worker prompt includes the completed blocker's summary, reported files, checks already run, handoff note and acceptance evidence. That packet is context, not authority to widen the ticket.
+
+`orchestrate context --ticket <id> --packet` emits the same handoff as bounded JSON for a subagent: ticket, dependencies, verified facts with sources, decisions, artifacts, commands already run, open questions, `read_first`, `do_not_recheck`, and integration stats. `verified_facts` come only from passed acceptance evidence; a summary alone is never promoted to a fact.
+
+Prompts are bounded. Decisions, dependency summaries, acceptance evidence, briefs, constraints, reading lists and ticket bodies are clipped with an explicit `… [truncated]` marker. Every run records `promptChars`, `promptTokensEstimate`, `dependencyChars`, `decisionChars` and their counts in `run.json`, so a prompt-size regression is visible in telemetry instead of guessed.
 
 `import` validates the whole plan first and writes nothing on error. It assigns ids in file order, resolves `blocked_by` by ticket `key` (or a numeric id in the plan), and records the `key` on each ticket. Always set `key`: it is the stable identity across revisions. Re-import is idempotent by `key`: ids and filenames stay stable, only changed files are rewritten. `--prune` removes keyed tickets missing from the plan, but refuses when a removed ticket has runs.
 
