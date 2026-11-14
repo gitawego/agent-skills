@@ -100,6 +100,26 @@ async function until(root, slug, predicate, { ticks = 120, wait = 60 } = {}) {  
   );
 }
 
+test("the campaign view names its project, campaign, ticket and close paths", () => {
+  const { dir, slug } = setup();
+  const view = campaignView(dir, slug);
+  assert.equal(view.root, dir);
+  assert.equal(view.project, path.basename(dir));
+  assert.equal(view.paths.campaign, path.join(dir, "orchestration", slug));
+  assert.equal(view.paths.campaignFile, path.join(dir, "orchestration", slug, "campaign.md"));
+  assert.equal(view.paths.campaignFileExists, true);
+  assert.equal(view.paths.tickets, path.join(dir, "orchestration", slug, "tickets"));
+  assert.equal(view.paths.ticketsExists, true);
+  assert.equal(view.paths.close, path.join(dir, "orchestration", slug, "CLOSE.md"));
+  assert.equal(view.paths.closeExists, false, "a running campaign has no close report yet");
+  assert.equal(view.paths.planDraft, path.join(dir, ".orchestration", "campaigns", slug, "plan.yml"));
+  assert.equal(view.paths.planDraftExists, false);
+  assert.equal(view.paths.planAppliedExists, false);
+  assert.equal(view.paths.contextExists, false, "no context has been captured yet");
+  fs.writeFileSync(view.paths.close, "# close\n\nDelivered.\n");
+  assert.equal(campaignView(dir, slug).paths.closeExists, true, "the close report is seen once written");
+});
+
 test("three parallel tickets reach done, land on an integration branch, and deliver", async () => {
   const { dir, slug } = setup();
   scenario({ work: [ready("wrote it"), ready("wrote it"), ready("wrote it")], review: [ready("clean"), ready("clean"), ready("clean")] });

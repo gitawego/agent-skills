@@ -406,6 +406,25 @@ textarea.doc:focus { border-bottom-color: var(--ink); }
 .eyebrow { font: 500 0.7rem/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.44rem; }
 .campaign-head { margin-bottom: 0.62rem; }
 .campaign-head h1 { font: 500 2.2rem/1.05 var(--display); margin: 0; letter-spacing: -0.015em; }
+.campaign-location-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.55rem;
+  margin-top: 0.5rem;
+  font: 0.7rem/1.5 var(--mono);
+  color: var(--muted);
+}
+.campaign-location-line .label {
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.campaign-location-line code {
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.campaign-location-line .btn { padding: 0.06rem 0.4rem; font-size: 0.62rem; }
 .campaign-meta {
   font: 0.76rem/1.6 var(--mono);
   color: var(--muted);
@@ -562,54 +581,6 @@ textarea.doc:focus { border-bottom-color: var(--ink); }
   .chain-row:nth-child(2), .kind-row:nth-child(2) { border-top: 1px solid var(--rule-soft); }
   .limit-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-
-.band { border-top: 1px solid var(--rule); }
-.band-head { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; gap: 0.62rem; align-items: center; padding: 0.56rem 0 0.44rem; }
-.band-head .mark { width: 7px; height: 7px; background: var(--rule); }
-.band[data-family="active"] .band-head .mark { background: var(--ink); }
-.band[data-family="person"] .band-head .mark { background: var(--signal); }
-.band[data-family="done"] .band-head .mark { background: var(--ok); }
-.band-head h2 { font: 500 0.73rem/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; margin: 0; color: var(--ink-2); }
-.band-head .count { font: 0.76rem/1 var(--mono); color: var(--muted); margin-left: 0.38rem; }
-.strips { list-style: none; margin: 0; padding: 0; border-bottom: 1px solid var(--rule-soft); }
-.strip {
-  display: grid;
-  grid-template-columns: 2.1rem minmax(0, 1fr) 4.2rem minmax(0, 18rem);
-  gap: 0.75rem;
-  align-items: baseline;
-  padding: 0.44rem 0 0.44rem 0.62rem;
-  border-top: 1px solid var(--rule-soft);
-  cursor: pointer;
-  position: relative;
-}
-.strip:first-child { border-top: 0; }
-.strip:hover { background: var(--sel); }
-.strip:hover::before, .strip::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: transparent;
-}
-.strip:hover::before { background: var(--ink); }
-.strip[data-family="person"]::before { background: var(--signal); }
-.strip .num {
-  font: 400 0.82rem/1.3 var(--mono);
-  color: var(--muted);
-  border-right: 1px dashed var(--rule);
-  margin-right: -0.25rem;
-  padding-right: 0.62rem;
-  align-self: stretch;
-  display: flex;
-  align-items: baseline;
-}
-.strip .title { font: 500 0.93rem/1.35 var(--ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.strip .kind { font: 0.7rem/1.4 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
-.strip .tele { font: 0.76rem/1.4 var(--mono); color: var(--muted); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.strip.fresh { animation: ink 900ms ease-out; }
-@keyframes ink { from { background: color-mix(in srgb, var(--signal) 14%, transparent); } to { background: transparent; } }
 
 /* --- campaign ------------------------------------------------------------- */
 
@@ -1090,6 +1061,48 @@ pre.log {
 .overview-health .count[data-family="person"] b { color: var(--signal); }
 .overview-health .count[data-family="done"] b { color: var(--ok); }
 
+.project-info {
+  border-top: 1px solid var(--rule);
+  padding: 0.62rem 0 0.2rem;
+  margin: 0 0 1.2rem;
+}
+.project-info > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.32rem;
+}
+.project-info h2 {
+  margin: 0;
+  font: 500 0.7rem/1 var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.project-info .hint { margin: 0; }
+.path-list { display: grid; }
+.path-row {
+  display: grid;
+  grid-template-columns: 7.4rem minmax(0, 1fr) auto auto;
+  gap: 0.7rem;
+  align-items: baseline;
+  padding: 0.32rem 0;
+  border-top: 1px solid var(--rule-soft);
+  font: 0.72rem/1.45 var(--mono);
+}
+.path-row:first-child { border-top: 0; }
+.path-label {
+  font: 500 0.6rem/1.6 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.path-value { color: var(--ink-2); overflow-wrap: anywhere; }
+.path-flag { color: var(--muted); font-size: 0.64rem; white-space: nowrap; }
+.path-copy { padding: 0.04rem 0.38rem; font-size: 0.62rem; }
+.delivery-row .path-value { color: var(--ink); }
+
 .briefing { max-width: 74ch; margin-top: 1.12rem; }
 .doc-block { border-top: 1px solid var(--rule-soft); padding: 0.9rem 0 0.2rem; margin: 0 0 1.12rem; }
 .doc-block:first-child { border-top: 0; padding-top: 0; }
@@ -1129,6 +1142,8 @@ pre.log {
   margin-bottom: 0.4rem;
 }
 .ticket-counts { display: flex; gap: 0.7rem; flex-wrap: wrap; font: 0.72rem/1.4 var(--mono); color: var(--muted); }
+.ticket-toolbar[data-view="board"] .ticket-counts,
+.ticket-toolbar[data-view="graph"] .ticket-counts { display: none; }
 .ticket-counts .count b { color: var(--ink); font-weight: 500; }
 .ticket-counts .count[data-family="person"] b { color: var(--signal); }
 .ticket-toolbar select,
@@ -1174,7 +1189,7 @@ pre.log {
 .ticket-table .badge[data-family="person"] { color: var(--signal); border-color: color-mix(in srgb, var(--signal) 45%, transparent); }
 .ticket-table .badge[data-family="done"] { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
 
-.ticket-board { margin-top: 0.6rem; }
+.ticket-board { margin-top: 0.9rem; }
 
 .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 2.75rem; align-items: start; }
 .config-fields { display: grid; gap: 0.8rem; }
@@ -1230,10 +1245,14 @@ pre.log {
   .tabs { order: 3; grid-column: 1 / -1; overflow-x: auto; }
   .link { order: 2; }
   .view { padding: 1rem 1rem 64px; }
-  .strip, .ticket-head { grid-template-columns: 28px minmax(0, 1fr) 60px; }
-  .strip .tele, .ticket-head .tele { display: none; }
   .answer { grid-template-columns: 1fr; }
   .new-ticket .grid { grid-template-columns: 1fr; }
+  .path-row { grid-template-columns: 1fr auto; row-gap: 0.08rem; padding: 0.45rem 0; }
+  .path-label { grid-column: 1 / -1; }
+  .path-value { grid-column: 1; }
+  .path-row .path-flag { grid-column: 1; }
+  .path-copy { grid-column: 2; grid-row: 2 / span 2; align-self: center; }
+  .project-info > header { flex-wrap: wrap; gap: 0.3rem; }
   .next-action code { width: 100%; margin-left: 0; }
   .command-row .command-label { min-width: 100%; }
   .command-row .btn { margin-left: 0; }
@@ -1296,20 +1315,140 @@ pre.log {
 .steer-list p { margin: 0.2rem 0 0.25rem; color: var(--ink-2); white-space: pre-wrap; }
 .steer-list .btn { margin-top: 0.15rem; }
 
-/* Kanban columns: every stage is a lane, not a full-width section. */
+/* Kanban: four status lanes, one card per ticket. */
 .ticket-board {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 0.65rem;
-  align-items: start;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.9rem;
+  align-items: stretch;
 }
-.ticket-board .band {
+.kanban-lane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--rule-soft);
+  border-radius: 8px;
+  background: var(--recess);
+  padding: 0.5rem;
+}
+.kanban-lane-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.15rem 0.25rem 0.55rem;
+}
+.kanban-dot { width: 0.46rem; height: 0.46rem; border-radius: 50%; background: var(--muted); flex: none; }
+.kanban-lane[data-family="active"] .kanban-dot { background: var(--ink); }
+.kanban-lane[data-family="person"] .kanban-dot { background: var(--signal); }
+.kanban-lane[data-family="done"] .kanban-dot { background: var(--ok); }
+.kanban-lane-head h2 {
+  margin: 0;
+  font: 500 0.7rem/1 var(--mono);
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.kanban-count {
+  margin-left: auto;
+  min-width: 1.4rem;
+  text-align: center;
+  padding: 0.12rem 0.4rem;
   border: 1px solid var(--rule);
-  background: var(--surface);
-  padding: 0 0.55rem 0.55rem;
+  border-radius: 999px;
+  background: var(--paper);
+  font: 500 0.66rem/1.2 var(--mono);
+  color: var(--muted);
 }
-.ticket-board .band-head { padding-top: 0.5rem; }
-.ticket-board .strips { max-height: 58vh; overflow: auto; border-bottom: 0; }
+.kanban-cards { display: grid; gap: 0.55rem; flex: 1; align-content: start; }
+.kanban-card {
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  background: var(--surface);
+  padding: 0.62rem 0.68rem 0.5rem;
+  cursor: pointer;
+  min-width: 0;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.kanban-card:hover,
+.kanban-card:focus-visible { border-color: var(--ink-2); background: var(--paper); }
+.kanban-card.fresh { animation: ink 900ms ease-out; }
+@keyframes ink { from { background: color-mix(in srgb, var(--signal) 16%, var(--surface)); } to { background: var(--surface); } }
+.kanban-card-top { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.kanban-id { font: 500 0.66rem/1.3 var(--mono); letter-spacing: 0.08em; color: var(--muted); }
+.kanban-kind {
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 0.04rem 0.3rem;
+  background: var(--paper);
+  font: 500 0.58rem/1.5 var(--mono);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.kanban-title {
+  margin: 0.38rem 0 0.34rem;
+  font: 500 0.9rem/1.28 var(--ui);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.kanban-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.11rem 0.42rem 0.11rem 0.34rem;
+  border-radius: 999px;
+  font: 500 0.6rem/1.4 var(--mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 10%, transparent);
+}
+.kanban-status i { width: 0.34rem; height: 0.34rem; border-radius: 50%; background: currentColor; }
+.kanban-status[data-family="active"] { color: var(--ink); background: color-mix(in srgb, var(--ink) 9%, transparent); }
+.kanban-status[data-family="person"] { color: var(--signal); background: color-mix(in srgb, var(--signal) 10%, transparent); }
+.kanban-status[data-family="done"] { color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.kanban-summary {
+  margin: 0.42rem 0 0;
+  font: 0.75rem/1.45 var(--ui);
+  color: var(--ink-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.kanban-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding-top: 0.38rem;
+  border-top: 1px solid var(--rule-soft);
+  font: 0.62rem/1.45 var(--mono);
+  color: var(--muted);
+}
+.kanban-owner { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kanban-stats { text-align: right; flex: none; max-width: 55%; }
+.kanban-empty {
+  margin: 0;
+  border: 1px dashed var(--rule);
+  border-radius: 7px;
+  padding: 0.85rem 0.5rem;
+  text-align: center;
+  font: 0.66rem/1.4 var(--mono);
+  color: var(--muted);
+}
+@media (max-width: 1120px) {
+  .ticket-board {
+    grid-template-columns: repeat(4, minmax(15rem, 1fr));
+    overflow-x: auto;
+    padding-bottom: 0.45rem;
+  }
+}
+@media (max-width: 860px) {
+  .ticket-board { grid-template-columns: 1fr; overflow: visible; padding-bottom: 0; }
+  .kanban-cards { min-height: 0; }
+}
 
 /* Dependency graph. The SVG is wider than the pane when the graph branches. */
 .ticket-graph-wrap {
@@ -1320,6 +1459,31 @@ pre.log {
   padding: 0.55rem;
 }
 .ticket-graph-wrap .hint { margin: 0 0 0.4rem; }
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 1.1rem;
+  margin: 0 0 0.42rem;
+  font: 0.66rem/1.4 var(--mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.graph-legend span { display: inline-flex; align-items: center; gap: 0.36rem; }
+.graph-legend .legend-edge { width: 1.15rem; border-top: 1.5px solid var(--muted); }
+.graph-legend .legend-independent {
+  width: 0.44rem;
+  height: 0.44rem;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.graph-independent {
+  font: 500 0.55rem/1 var(--mono);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  fill: var(--muted);
+}
 .ticket-graph { display: block; min-width: 100%; }
 .graph-edge { fill: none; stroke: var(--muted); stroke-width: 1.2; opacity: 0.72; }
 .graph-node { cursor: pointer; }

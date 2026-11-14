@@ -424,7 +424,12 @@ orchestrate up
 The panel shows:
 
 - campaign stage, next action, slots, spend and cache rate;
-- the ticket manifest in list, kanban and dependency-graph views;
+- project root, campaign and ticket directories, context, plan file, close
+  report and delivery branch/base on the campaign overview;
+- the ticket manifest in list, kanban and dependency-graph views; kanban uses
+  **Queued**, **Working**, **Needs you** and **Done** lanes with counts and
+  cards; the graph marks a ticket **independent** when it has no blockers and
+  nothing depends on it;
 - the ticket drawer, including steering and evidence;
 - acceptance evidence, findings, reviewed SHA and integration state in the
   ticket drawer;

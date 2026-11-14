@@ -14,6 +14,13 @@ const STAGES = [
   { id: "dropped", label: "Dropped", family: "done" },
 ];
 
+const KANBAN_LANES = [
+  { id: "queued", label: "Queued", stages: ["blocked", "queued"], family: "idle", empty: "Nothing queued" },
+  { id: "working", label: "Working", stages: ["working"], family: "active", empty: "No run in flight" },
+  { id: "attention", label: "Needs you", stages: ["needs_answer", "needs_changes", "failed"], family: "person", empty: "Nothing needs you" },
+  { id: "done", label: "Done", stages: ["done", "dropped"], family: "done", empty: "Nothing landed yet" },
+];
+
 const params = new URLSearchParams(location.search);
 let token = params.get("token") || localStorage.getItem("orch.token") || "";
 if (params.get("token")) {
@@ -1096,6 +1103,13 @@ function campaignHeader(c) {
   return `<div class="campaign-head">
       <div class="eyebrow">${esc(c.project)} / ${esc(c.slug)} · ${esc(c.stage)}</div>
       <h1>${esc(goal || c.slug)}</h1>
+      <div class="campaign-location-line">
+        <span class="label">Project</span>
+        <code>${esc(c.root)}</code>
+        <button class="btn ghost" data-act="copy" data-command="${esc(c.root)}" aria-label="Copy project path">Copy</button>
+        <span class="label">Campaign</span>
+        <code>orchestration/${esc(c.slug)}</code>
+      </div>
     </div>
     <div class="campaign-meta">
       <span class="meter" title="${slots} of ${cap} slots busy">${meter}<b>${slots}/${cap}</b> slots</span>
@@ -1240,9 +1254,58 @@ function planAuditBlock(c) {
   </section>`;
 }
 
+function pathRow(label, value, note = "") {
+  if (!value) return "";
+  return `<div class="path-row">
+    <span class="path-label">${esc(label)}</span>
+    <code class="path-value">${esc(value)}</code>
+    ${note ? `<span class="path-flag">${esc(note)}</span>` : "<span></span>"}
+    <button class="btn ghost path-copy" data-act="copy" data-command="${esc(value)}" aria-label="Copy ${esc(label)} path">Copy</button>
+  </div>`;
+}
+
+function deliveryLine(c) {
+  const delivery = c.delivery;
+  const branch = delivery?.branch || (c.landing === "branch" ? `orch/${c.slug}/integration` : "");
+  const mode = delivery?.mode || (c.landing === "branch" ? "branch" : "direct");
+  const target = branch ? `${branch} → ${c.base}` : c.base;
+  const integration = c.integration
+    ? `integration ${c.integration.status}${c.integration.head ? ` ${c.integration.head.slice(0, 8)}` : ""}`
+    : "";
+  return `<div class="path-row delivery-row">
+    <span class="path-label">Delivery</span>
+    <code class="path-value">${esc(mode)} · ${esc(target)}</code>
+    <span class="path-flag">${esc(integration)}</span>
+    <span></span>
+  </div>`;
+}
+
+function projectInfo(c) {
+  const paths = c.paths || {};
+  const plan = paths.planDraftExists
+    ? { label: "Plan draft", value: paths.planDraft, note: "not applied" }
+    : paths.planAppliedExists
+      ? { label: "Applied plan", value: paths.planApplied, note: "" }
+      : { label: "Plan draft", value: paths.planDraft, note: "not written yet" };
+  return `<section class="project-info">
+    <header><h2>Project and files</h2><span class="hint">${esc(c.project || c.root || "")} · on disk</span></header>
+    <div class="path-list">
+      ${pathRow("Project root", c.root)}
+      ${pathRow("Campaign", paths.campaign)}
+      ${pathRow("Campaign file", paths.campaignFile, paths.campaignFileExists === false ? "missing" : "")}
+      ${pathRow("Tickets", paths.tickets, paths.ticketsExists === false ? "missing" : "")}
+      ${pathRow("Context", paths.context, paths.contextExists === false ? "not captured yet" : "")}
+      ${pathRow(plan.label, plan.value, plan.note)}
+      ${pathRow("Close report", paths.close, paths.closeExists ? "" : "written on close")}
+      ${deliveryLine(c)}
+    </div>
+  </section>`;
+}
+
 function campaignOverview(c) {
   const open = (c.inbox || []).filter((item) => item.status === "open").length;
-  return `<div class="overview-health">
+  return `${projectInfo(c)}
+    <div class="overview-health">
       ${stageCounts(c) || `<span class="hint">${c.draft?.exists ? "No applied tickets." : "No tickets yet."}</span>`}
       <span class="spacer"></span>
       <span>${open} open question${open === 1 ? "" : "s"}</span>
@@ -1282,38 +1345,74 @@ function ledger(c, limit = 9) {
     </section>`;
 }
 
-function band(stage, tickets) {
-  return `<section class="band" data-family="${esc(stage.family)}">
-    <header class="band-head">
-      <span class="mark"></span>
-      <h2>${esc(stage.label)} <span class="count">${tickets.length}</span></h2>
-      <span></span>
-    </header>
-    <ol class="strips">
-      ${tickets.map((t) => strip(t, stage.family)).join("")}
-    </ol>
-  </section>`;
+function stageMeta(stage) {
+  return STAGES.find((entry) => entry.id === stage) || { id: stage, label: stage, family: "idle" };
 }
 
-function strip(t, family = "idle") {
-  const current = t.run && t.run.status === "live" ? t.run : null;
-  const tele = current
-    ? `<span class="elapsed" data-since="${esc(current.startedAt)}">${esc(elapsed(current.startedAt))}</span> · ${esc(current.model || "")}`
-    : t.waitingOn
-      ? `lane ${esc(t.waitingOn)}`
-      : `${esc(t.model || "—")}${t.attempts > 1 ? ` · ${t.attempts}×` : ""}`;
-  return `<li class="strip${fresh.has(t.id) ? " fresh" : ""}" data-family="${family}" tabindex="0" role="button"
-      data-act="open-ticket" data-root="${esc(selected.root)}" data-campaign="${esc(selected.campaign)}" data-ticket="${esc(t.id)}">
-      <span class="num">${esc(t.id)}</span>
-      <span class="title">${esc(t.title)}</span>
-      <span class="kind">${esc(t.kind)}</span>
-      <span class="tele">${tele}</span>
-    </li>`;
+function shortModel(model) {
+  const text = String(model || "").replace(/^[^/]+\//, "").trim();
+  return text || "unbound";
+}
+
+function cardSummary(t) {
+  const text =
+    t.stage === "blocked" || t.stage === "queued" || t.stage === "needs_changes"
+      ? t.queue?.text || t.summary || t.body
+      : t.summary || t.queue?.text || t.body;
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+function cardStats(t) {
+  const stats = [];
+  if (t.blockedBy?.length) stats.push(`after ${t.blockedBy.join(", ")}`);
+  if (t.attempts > 1) stats.push(`${t.attempts} tries`);
+  else if (t.gateCycles) stats.push(`${t.gateCycles} gate${t.gateCycles === 1 ? "" : "s"}`);
+  const cost = t.cost?.text;
+  if (cost && (t.stage === "done" || t.stage === "dropped") && stats.length < 2) stats.push(cost);
+  return stats.slice(0, 2);
+}
+
+function kanbanCard(t) {
+  const stage = stageMeta(t.stage);
+  const summary = cardSummary(t);
+  const model = shortModel(t.model || t.workerModel);
+  const stats = cardStats(t);
+  const owner =
+    t.run?.status === "live" && t.run.startedAt
+      ? `<span class="elapsed" data-since="${esc(t.run.startedAt)}">${esc(elapsed(t.run.startedAt))}</span> · ${esc(model)}`
+      : esc(model);
+  return `<article class="kanban-card${fresh.has(t.id) ? " fresh" : ""}" data-family="${esc(stage.family)}" data-stage="${esc(t.stage)}"
+      tabindex="0" role="button" data-act="open-ticket" data-root="${esc(selected.root)}" data-campaign="${esc(selected.campaign)}" data-ticket="${esc(t.id)}">
+    <div class="kanban-card-top">
+      <span class="kanban-id">${esc(t.id)}</span>
+      <span class="kanban-kind">${esc(t.kind)}</span>
+    </div>
+    <h3 class="kanban-title">${esc(t.title)}</h3>
+    <span class="kanban-status" data-family="${esc(stage.family)}"><i aria-hidden="true"></i>${esc(stage.label)}</span>
+    ${summary ? `<p class="kanban-summary">${esc(summary)}</p>` : ""}
+    <div class="kanban-meta">
+      <span class="kanban-owner" title="${esc(model)}">${owner}</span>
+      <span class="kanban-stats">${stats.map(esc).join(" · ")}</span>
+    </div>
+  </article>`;
+}
+
+function kanbanLane(lane, tickets) {
+  return `<section class="kanban-lane" data-family="${esc(lane.family)}" data-lane="${esc(lane.id)}" data-count="${tickets.length}" aria-label="${esc(lane.label)} lane">
+    <header class="kanban-lane-head">
+      <span class="kanban-dot" aria-hidden="true"></span>
+      <h2>${esc(lane.label)}</h2>
+      <span class="kanban-count">${tickets.length}</span>
+    </header>
+    <div class="kanban-cards">
+      ${tickets.length ? tickets.map(kanbanCard).join("") : `<p class="kanban-empty">${esc(lane.empty)}</p>`}
+    </div>
+  </section>`;
 }
 
 function ticketFilter(c) {
   const kinds = [...new Set(c.tickets.map((t) => t.kind))].sort();
-  return `<div class="ticket-toolbar">
+  return `<div class="ticket-toolbar" data-view="${esc(ticketView)}">
       <div class="ticket-counts">${stageCounts(c)}</div>
       <div class="segmented" role="group" aria-label="Ticket view">
         <button data-act="ticket-view" data-view="list" aria-pressed="${ticketView === "list"}">List</button>
@@ -1367,16 +1466,22 @@ function ticketList(c, tickets) {
 }
 
 function ticketBoard(c, tickets) {
-  const byStage = Object.fromEntries(STAGES.map((stage) => [stage.id, []]));
-  for (const ticket of tickets) (byStage[ticket.stage] || (byStage[ticket.stage] = [])).push(ticket);
-  return `<div class="ticket-board">${STAGES.filter((stage) => byStage[stage.id]?.length)
-    .map((stage) => band(stage, byStage[stage.id]))
-    .join("")}</div>`;
+  return `<div class="ticket-board">${KANBAN_LANES.map((lane) =>
+    kanbanLane(lane, tickets.filter((ticket) => lane.stages.includes(ticket.stage))),
+  ).join("")}</div>`;
 }
 
 function ticketGraph(c, tickets) {
   if (!tickets.length) return `<div class="ticket-graph-wrap"><p class="hint">No tickets match.</p></div>`;
   const byId = new Map(tickets.map((ticket) => [ticket.id, ticket]));
+  const allById = new Map(c.tickets.map((ticket) => [ticket.id, ticket]));
+  const dependentIds = new Set();
+  for (const ticket of c.tickets) {
+    for (const blocker of ticket.blockedBy || []) {
+      if (allById.has(blocker)) dependentIds.add(blocker);
+    }
+  }
+  const isIndependent = (ticket) => !(ticket.blockedBy || []).length && !dependentIds.has(ticket.id);
   const depth = new Map();
   const visiting = new Set();
   const depthOf = (id) => {
@@ -1423,18 +1528,24 @@ function ticketGraph(c, tickets) {
   for (const ticket of tickets) {
     const point = pos.get(ticket.id);
     const title = ticket.title.length > 29 ? `${ticket.title.slice(0, 28)}…` : ticket.title;
-    nodes.push(`<g class="graph-node" data-family="${esc(family(ticket.stage))}" tabindex="0" role="button"
+    const independent = isIndependent(ticket);
+    nodes.push(`<g class="graph-node" data-family="${esc(family(ticket.stage))}" data-independent="${independent}" tabindex="0" role="button"
         data-act="open-ticket" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" data-ticket="${esc(ticket.id)}">
-        <title>${esc(`${ticket.id} ${ticket.title} · ${ticket.stage}`)}</title>
+        <title>${esc(`${ticket.id} ${ticket.title} · ${ticket.stage}${independent ? " · independent" : ""}`)}</title>
         <rect x="${point.x}" y="${point.y}" width="${nodeW}" height="${nodeH}" rx="4" />
         <text class="graph-id" x="${point.x + 12}" y="${point.y + 21}">${esc(ticket.id)}</text>
+        ${independent ? `<text class="graph-independent" x="${point.x + nodeW - 10}" y="${point.y + 21}" text-anchor="end">independent</text>` : ""}
         <text class="graph-title" x="${point.x + 12}" y="${point.y + 41}">${esc(title)}</text>
         <text class="graph-meta" x="${point.x + 12}" y="${point.y + 57}">${esc(ticket.kind)} · ${esc(ticket.stage)}</text>
       </g>`);
   }
   return `<div class="ticket-graph-wrap">
-    <p class="hint">Relationships from <span class="mono">blocked_by</span>; left blocks right. Click a ticket to open it.</p>
-    <svg class="ticket-graph" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="Ticket dependency graph">
+    <div class="graph-legend">
+      <span><i class="legend-edge" aria-hidden="true"></i> blocked_by edge</span>
+      <span><i class="legend-independent" aria-hidden="true"></i> independent ticket</span>
+    </div>
+    <p class="hint">Arrows run from a blocker to the ticket it blocks. A ticket with no arrows declared no <span class="mono">blocked_by</span> and nothing depends on it. Click a ticket to open it.</p>
+    <svg class="ticket-graph" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" preserveAspectRatio="xMinYMin meet" role="img" aria-label="Ticket dependency graph">
       <defs><marker id="graph-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker></defs>
       ${edges.join("")}
       ${nodes.join("")}
@@ -1980,7 +2091,7 @@ function markFresh() {
   if (fresh.size) {
     setTimeout(() => {
       fresh = new Set();
-      if (view === "campaign" && campaignTab === "tickets") document.querySelectorAll(".strip.fresh").forEach((el) => el.classList.remove("fresh"));
+      if (view === "campaign" && campaignTab === "tickets") document.querySelectorAll(".kanban-card.fresh").forEach((el) => el.classList.remove("fresh"));
     }, 1400);
   }
 }
@@ -2797,7 +2908,7 @@ tabsEl.addEventListener("click", (event) => {
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeDrawer();
-  const stripEl = event.target.closest?.(".strip");
+  const stripEl = event.target.closest?.(".kanban-card");
   if (stripEl && (event.key === "Enter" || event.key === " ")) {
     event.preventDefault();
     openTicket(stripEl.dataset.root, stripEl.dataset.campaign, stripEl.dataset.ticket);

@@ -261,6 +261,12 @@ export function campaignView(root, slug) {
   const campaignEvents = readEvents(root).filter((event) => event.campaign === slug);
   const attention = attentionOf(campaignEvents);
   const context = readContext(root, slug);
+  const campaignDir = path.join(root, "orchestration", slug);
+  const campaignFile = path.join(campaignDir, "campaign.md");
+  const closeFile = path.join(campaignDir, "CLOSE.md");
+  const stateDir = path.join(projectStateDir(root), "campaigns", slug);
+  const planDraftFile = path.join(stateDir, "plan.yml");
+  const planAppliedFile = path.join(stateDir, "plan.applied.yml");
   const draft = readDraft(root, slug);
   const readiness = draftReadiness(draft);
   const draftWarnings = draft.plan
@@ -350,6 +356,24 @@ export function campaignView(root, slug) {
   });
   return {
     slug,
+    root,
+    project: projectName(root),
+    paths: {
+      campaign: campaignDir,
+      campaignFile,
+      campaignFileExists: exists(campaignFile),
+      tickets: path.join(campaignDir, "tickets"),
+      ticketsExists: exists(path.join(campaignDir, "tickets")),
+      context: context.file,
+      contextExists: exists(context.file),
+      close: closeFile,
+      closeExists: exists(closeFile),
+      planDraft: planDraftFile,
+      planDraftExists: exists(planDraftFile),
+      planApplied: planAppliedFile,
+      planAppliedExists: exists(planAppliedFile),
+      state: path.join(stateDir, "state.json"),
+    },
     stage: state.stage,
     reason: state.reason,
     autonomy: campaign.data.autonomy || "supervised",

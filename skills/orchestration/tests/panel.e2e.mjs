@@ -264,6 +264,9 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
 
     await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo` });
     await sleep(900);
+    fs.writeFileSync(path.join(dir, "orchestration", "demo", "CLOSE.md"), "# demo — close\n\nDelivered.\n");
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo` });
+    await sleep(900);
     const overview = await send("Runtime.evaluate", {
       expression: `JSON.stringify({
         h1: document.querySelector("h1")?.textContent || "",
@@ -273,6 +276,9 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
         next: document.querySelector(".next-action")?.textContent || "",
         briefing: Boolean(document.querySelector(".briefing-details")),
         briefingOpen: Boolean(document.querySelector(".briefing-details")?.open),
+        location: document.querySelector(".campaign-location-line")?.textContent || "",
+        project: document.querySelector(".project-info")?.textContent || "",
+        delivery: document.querySelector(".delivery-row")?.textContent || "",
       })`,
       returnByValue: true,
     });
@@ -284,6 +290,13 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     assert.equal(overviewPage.briefing, true, "the briefing is a disclosure");
     assert.equal(overviewPage.briefingOpen, false, "healthy briefing is collapsed");
     assert.match(overviewPage.next, /Approve the plan|delivery is waiting|draft plan/, "the next action names the agent step");
+    assert.ok(overviewPage.location.includes(dir), "the campaign header shows the project root");
+    assert.match(overviewPage.location, /orchestration\/demo/, "the campaign header shows the campaign directory");
+    assert.ok(overviewPage.project.includes(dir), "the overview lists the project root");
+    assert.match(overviewPage.project, /orchestration\/demo/);
+    assert.match(overviewPage.project, /CLOSE\.md/, "the overview points at the close report");
+    assert.match(overviewPage.project, /Tickets/);
+    assert.match(overviewPage.delivery, /branch · orch\/demo\/integration → main/, "the overview names the delivery branch and base");
 
     const evidenceStateDir = path.join(dir, ".orchestration", "campaigns", "demo");
     fs.mkdirSync(evidenceStateDir, { recursive: true });
@@ -374,13 +387,35 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
       expression: `(() => {
         document.querySelector('[data-act="close-drawer"]')?.click();
         document.querySelector('[data-act="ticket-view"][data-view="board"]')?.click();
-        return JSON.stringify({ board: Boolean(document.querySelector(".ticket-board")), strips: document.querySelectorAll(".ticket-board .strip").length });
+        const lane = (id) => document.querySelector(\`[data-lane="\${id}"]\`);
+        return JSON.stringify({
+          board: Boolean(document.querySelector(".ticket-board")),
+          lanes: document.querySelectorAll(".ticket-board .kanban-lane").length,
+          cards: document.querySelectorAll(".ticket-board .kanban-card").length,
+          title: document.querySelector(".kanban-card .kanban-title")?.textContent || "",
+          kind: document.querySelector(".kanban-card .kanban-kind")?.textContent || "",
+          status: document.querySelector(".kanban-card .kanban-status")?.textContent || "",
+          model: document.querySelector(".kanban-card .kanban-owner")?.textContent || "",
+          queued: lane("queued")?.dataset.count,
+          working: lane("working")?.dataset.count,
+          attention: lane("attention")?.dataset.count,
+          done: lane("done")?.dataset.count,
+        });
       })()`,
       returnByValue: true,
     });
     const boardPage = JSON.parse(board.result.result.value);
     assert.equal(boardPage.board, true, "the kanban board renders");
-    assert.equal(boardPage.strips, 1, "the kanban board has the ticket strip");
+    assert.equal(boardPage.lanes, 4, "the kanban board has four lanes");
+    assert.equal(boardPage.cards, 1, "the kanban board has one card");
+    assert.match(boardPage.title, /work/i, "the card shows the ticket title");
+    assert.match(boardPage.kind, /code/, "the card shows the kind");
+    assert.match(boardPage.status, /Done/, "the card shows the stage");
+    assert.match(boardPage.model, /strong/, "the card shows the bound model");
+    assert.equal(boardPage.queued, "0");
+    assert.equal(boardPage.working, "0");
+    assert.equal(boardPage.attention, "0");
+    assert.equal(boardPage.done, "1", "the done lane counts its card");
 
     const graph = await send("Runtime.evaluate", {
       expression: `(() => {
@@ -389,6 +424,9 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
           graph: Boolean(document.querySelector(".ticket-graph")),
           nodes: document.querySelectorAll(".ticket-graph .graph-node").length,
           edges: document.querySelectorAll(".ticket-graph .graph-edge").length,
+          independent: document.querySelector('.ticket-graph .graph-node[data-independent="true"]')?.querySelector("title")?.textContent || "",
+          badge: document.querySelector(".ticket-graph .graph-independent")?.textContent || "",
+          legend: document.querySelector(".graph-legend")?.textContent || "",
         });
       })()`,
       returnByValue: true,
@@ -396,6 +434,9 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     const graphPage = JSON.parse(graph.result.result.value);
     assert.equal(graphPage.graph, true, "the dependency graph renders");
     assert.equal(graphPage.nodes, 1, "the graph renders the ticket node");
+    assert.match(graphPage.independent, /independent/, "a ticket with no edges is marked independent");
+    assert.equal(graphPage.badge, "independent", "the node carries the independent marker");
+    assert.match(graphPage.legend, /independent ticket/, "the graph legend explains independent tickets");
 
     const ticketSearch = await send("Runtime.evaluate", {
       expression: `(() => {
@@ -637,6 +678,7 @@ tickets:
         return JSON.stringify({
           nodes: document.querySelectorAll(".ticket-graph .graph-node").length,
           edges: document.querySelectorAll(".ticket-graph .graph-edge").length,
+          independent: document.querySelectorAll('.ticket-graph .graph-node[data-independent="true"]').length,
         });
       })()`,
       returnByValue: true,
@@ -644,6 +686,52 @@ tickets:
     const edgePage = JSON.parse(edges.result.result.value);
     assert.equal(edgePage.nodes, 2, "the graph renders both tickets");
     assert.equal(edgePage.edges, 1, "the graph renders the blocked_by relationship");
+    assert.equal(edgePage.independent, 0, "connected tickets are not marked independent");
+
+    const laneState = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    laneState.tickets = { "01": { stage: "working" }, "02": { stage: "needs_answer" } };
+    fs.writeFileSync(stateFile, JSON.stringify(laneState));
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo/tickets` });
+    await sleep(700);
+    const lanes = await send("Runtime.evaluate", {
+      expression: `(() => {
+        document.querySelector('[data-act="ticket-view"][data-view="board"]')?.click();
+        const lane = (id) => document.querySelector(\`[data-lane="\${id}"]\`);
+        return JSON.stringify({
+          queued: lane("queued")?.dataset.count,
+          working: lane("working")?.dataset.count,
+          attention: lane("attention")?.dataset.count,
+          done: lane("done")?.dataset.count,
+          workingTitle: lane("working")?.querySelector(".kanban-title")?.textContent || "",
+          attentionStatus: lane("attention")?.querySelector(".kanban-status")?.textContent || "",
+        });
+      })()`,
+      returnByValue: true,
+    });
+    const lanePage = JSON.parse(lanes.result.result.value);
+    assert.equal(lanePage.queued, "0");
+    assert.equal(lanePage.working, "1", "a working ticket lands in the working lane");
+    assert.equal(lanePage.attention, "1", "a waiting ticket lands in the needs-you lane");
+    assert.equal(lanePage.done, "0");
+    assert.match(lanePage.workingTitle, /work/i);
+    assert.match(lanePage.attentionStatus, /Waiting for you/, "the card keeps the exact stage label");
+
+    await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 900, deviceScaleFactor: 1, mobile: true });
+    await sleep(400);
+    const mobile = await send("Runtime.evaluate", {
+      expression: `(() => {
+        const lanes = [...document.querySelectorAll(".kanban-lane")];
+        return JSON.stringify({
+          count: lanes.length,
+          stacked: lanes.every((lane, index) => index === 0 || lane.getBoundingClientRect().top >= lanes[index - 1].getBoundingClientRect().bottom - 1),
+        });
+      })()`,
+      returnByValue: true,
+    });
+    const mobilePage = JSON.parse(mobile.result.result.value);
+    assert.equal(mobilePage.count, 4);
+    assert.equal(mobilePage.stacked, true, "the kanban lanes stack on a narrow viewport");
+    await send("Emulation.clearDeviceMetricsOverride");
     ws.close();
   } finally {
     browser.kill("SIGKILL");
