@@ -416,6 +416,75 @@ test("a budget ceiling pauses the campaign instead of stalling it", async () => 
   assert.ok(view.inbox.some((i) => /budget/.test(i.title)));
 });
 
+test("a hard steer interrupts the live turn, keeps the session, and resumes with the note", async () => {
+  const { dir, slug } = setup({ tickets: 1 });
+  process.env.FAKE_DELAY_MS = "500";
+  scenario({ work: [ready("first"), ready("second")], review: [ready("clean")] });
+  tick({ root: dir });
+  let live = null;
+  for (let i = 0; i < 40; i++) {
+    live = Object.values(loadState(dir, slug).runs).find((run) => run.status === "live" && run.role === "work");
+    if (live) break;
+    await sleep(20);
+  }
+  assert.ok(live, "the first work run started");
+  const firstSession = live.sessionId;
+  const result = applyCommand(
+    dir,
+    { type: "steer", campaign: slug, ticket: "01", text: "Use the existing filter object." },
+    loadConsole(),
+  );
+  assert.equal(result.interrupted, true);
+  assert.equal(loadState(dir, slug).tickets["01"].attempts, 1, "steering does not consume an attempt");
+  assert.equal(loadState(dir, slug).tickets["01"].steers[0].status, "pending");
+  assert.equal(loadState(dir, slug).runs[live.id].killed, "steered");
+  delete process.env.FAKE_DELAY_MS;
+
+  await until(dir, slug, (v) => v.tickets[0].stage === "done");
+  const state = loadState(dir, slug);
+  const workRuns = Object.values(state.runs)
+    .filter((run) => run.role === "work")
+    .sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)));
+  assert.equal(workRuns.length, 2);
+  assert.equal(workRuns[1].sessionId, firstSession, "the same worker session resumed");
+  assert.equal(workRuns[1].steer, true);
+  const prompt = fs.readFileSync(
+    path.join(dir, ".orchestration", "campaigns", slug, "runs", workRuns[1].id, "prompt.md"),
+    "utf8",
+  );
+  assert.match(prompt, /Use the existing filter object/);
+  assert.equal(state.tickets["01"].steers[0].status, "delivered");
+});
+
+test("a soft steer waits, then expires if the ticket lands without another turn", async () => {
+  const { dir, slug } = setup({ tickets: 1 });
+  scenario({ work: [ready("first")], review: [ready("clean")] });
+  tick({ root: dir });
+  const result = applyCommand(
+    dir,
+    { type: "steer", campaign: slug, ticket: "01", text: "Consider the existing filter.", wait: true },
+    loadConsole(),
+  );
+  assert.equal(result.interrupted, false);
+  const view = await until(dir, slug, (v) => v.stage === "delivered");
+  assert.equal(view.tickets[0].steers[0].status, "expired");
+  assert.equal(
+    Object.values(loadState(dir, slug).runs).filter((run) => run.role === "work").length,
+    1,
+    "soft steering did not start another work turn",
+  );
+});
+
+test("cancelling pending steering removes it without changing the plan", () => {
+  const { dir, slug } = setup({ tickets: 1 });
+  applyCommand(dir, { type: "steer", campaign: slug, ticket: "01", text: "Use the filter.", wait: true }, loadConsole());
+  assert.equal(loadState(dir, slug).tickets["01"].steers[0].status, "pending");
+  const result = applyCommand(dir, { type: "steer.cancel", campaign: slug, ticket: "01" }, loadConsole());
+  assert.equal(result.cancelled, 1);
+  assert.equal(loadState(dir, slug).tickets["01"].steers[0].status, "cancelled");
+  assert.equal(campaignView(dir, slug).tickets[0].stage, "queued");
+});
+
 test("several failed tickets share one campaign failure item", async () => {
   const { dir, slug } = setup({ tickets: 2 });
   scenario({

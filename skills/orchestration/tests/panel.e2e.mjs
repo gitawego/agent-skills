@@ -312,6 +312,16 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
             workerModel: MODELS.strong,
             reviewSameAsWorker: false,
             gateCycles: 1,
+            steers: [
+              {
+                id: "s-1",
+                text: "Use the existing filter object.",
+                at: "2026-11-14T10:00:00Z",
+                by: "human",
+                mode: "interrupt",
+                status: "pending",
+              },
+            ],
           },
         },
         runs: {},
@@ -343,6 +353,7 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
           commands: document.querySelectorAll("#drawer .command-row").length,
           title: document.querySelector("#drawer h1")?.textContent || "",
           evidence: document.querySelector("#drawer .evidence")?.textContent || "",
+          steering: document.querySelector("#drawer .steering")?.textContent || "",
         });
       })()`,
       returnByValue: true,
@@ -356,6 +367,8 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     assert.match(drawerPage.evidence, /argv is sliced twice/, "findings are in the drawer");
     assert.match(drawerPage.evidence, /abc12345/, "the reviewed revision is in the drawer");
     assert.match(drawerPage.evidence, new RegExp(MODELS.backup.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(drawerPage.steering, /Use the existing filter object/, "pending steering is in the drawer");
+    assert.match(drawerPage.steering, /Cancel pending/, "pending steering can be cancelled from the drawer");
 
     const board = await send("Runtime.evaluate", {
       expression: `(() => {
@@ -366,8 +379,23 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
       returnByValue: true,
     });
     const boardPage = JSON.parse(board.result.result.value);
-    assert.equal(boardPage.board, true, "the ticket board renders");
-    assert.equal(boardPage.strips, 1, "the board has the ticket strip");
+    assert.equal(boardPage.board, true, "the kanban board renders");
+    assert.equal(boardPage.strips, 1, "the kanban board has the ticket strip");
+
+    const graph = await send("Runtime.evaluate", {
+      expression: `(() => {
+        document.querySelector('[data-act="ticket-view"][data-view="graph"]')?.click();
+        return JSON.stringify({
+          graph: Boolean(document.querySelector(".ticket-graph")),
+          nodes: document.querySelectorAll(".ticket-graph .graph-node").length,
+          edges: document.querySelectorAll(".ticket-graph .graph-edge").length,
+        });
+      })()`,
+      returnByValue: true,
+    });
+    const graphPage = JSON.parse(graph.result.result.value);
+    assert.equal(graphPage.graph, true, "the dependency graph renders");
+    assert.equal(graphPage.nodes, 1, "the graph renders the ticket node");
 
     const ticketSearch = await send("Runtime.evaluate", {
       expression: `(() => {
@@ -593,6 +621,29 @@ tickets:
     assert.match(mergedText, /Preview cleanup/);
     assert.match(mergedText, /Remove branches and worktree/);
     assert.match(mergedText, /orchestrate cleanup demo --dry-run/);
+
+    writeTicket(
+      dir,
+      "demo",
+      "02-blocked.md",
+      { id: "02", kind: "code", touches: ["src/b/**"], blocked_by: ["01"] },
+      "## What to build\n\nB.\n\n## Acceptance criteria\n\n- [ ] B.",
+    );
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo/tickets` });
+    await sleep(600);
+    const edges = await send("Runtime.evaluate", {
+      expression: `(() => {
+        document.querySelector('[data-act="ticket-view"][data-view="graph"]')?.click();
+        return JSON.stringify({
+          nodes: document.querySelectorAll(".ticket-graph .graph-node").length,
+          edges: document.querySelectorAll(".ticket-graph .graph-edge").length,
+        });
+      })()`,
+      returnByValue: true,
+    });
+    const edgePage = JSON.parse(edges.result.result.value);
+    assert.equal(edgePage.nodes, 2, "the graph renders both tickets");
+    assert.equal(edgePage.edges, 1, "the graph renders the blocked_by relationship");
     ws.close();
   } finally {
     browser.kill("SIGKILL");

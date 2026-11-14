@@ -38,6 +38,7 @@ A campaign is one paragraph of intent plus a set of tickets with blocking edges.
 | 26 | Human attention is a budget | One approval for a clean `plan_gate: auto` plan; one question at a time; one delivery decision; `CLOSE.md` and History count approvals, answers, reviews and cleanups |
 | 27 | One ticket is the default; splitting is earned | A ticket is one user-visible outcome. Split only for independently demoable slices or real parallel isolation. Four tickets warns, six asks for a reason, sixteen is refused. A blocked ticket receives its completed blockers' summary, files and evidence, and generic ticket failures aggregate into one campaign item. See [ADR-001](ADR-001-ticket-sizing-and-context.md) |
 | 28 | Children receive bounded context packets, not transcripts | `context --packet` carries dependencies, evidence-only facts, decisions, commands, paths and a do-not-recheck list. Prompt fields are clipped and every run records prompt cost. See [ADR-002](ADR-002-bounded-context-packets.md) |
+| 29 | Steering is a human note to a running ticket, not a chat box | A hard steer interrupts the turn, keeps the session/worktree and does not consume an attempt; a wait note expires if the ticket lands. The panel shows and cancels notes, but the sentence is written in the agent. See [ADR-003](ADR-003-ticket-steering.md) |
 
 ## Refinements made while writing
 

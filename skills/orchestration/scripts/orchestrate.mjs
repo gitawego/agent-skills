@@ -61,7 +61,7 @@ import { decisionsFor, promoteDecision, readDecisions, summaryLine } from "./lib
 import { appendEvent, readEvents } from "./lib/ledger.mjs";
 import { campaignBranches, cleanupCampaignBranches, diffStats, integrationBranch, integrationWorktree } from "./lib/landing.mjs";
 import { priceLabel } from "./lib/pricing.mjs";
-import { approveCampaign, tick, writeClose } from "./lib/engine.mjs";
+import { applyCommand, approveCampaign, tick, writeClose } from "./lib/engine.mjs";
 import { enqueue } from "./lib/commands.mjs";
 import { listItems } from "./lib/inbox.mjs";
 import { campaignView, projectView } from "./lib/view.mjs";
@@ -1048,6 +1048,39 @@ const commands = {
     }
   },
 
+  steer({ flags, positional }) {
+    const root = rootDir(flags);
+    const slug = resolveCampaign(root, flags.campaign);
+    const ticket = String(flags.ticket || positional[0] || "").padStart(2, "0");
+    if (!ticket || ticket === "00") {
+      throw new UserError("Usage: orchestrate steer <ticket> \"message\" [--campaign <slug>] [--wait] | --cancel");
+    }
+    const text = positional.slice(1).join(" ").trim() || String(flags.text || "").trim();
+    const result = applyCommand(
+      root,
+      {
+        type: flags.cancel ? "steer.cancel" : "steer",
+        campaign: slug,
+        ticket,
+        text,
+        wait: Boolean(flags.wait),
+      },
+      loadConsole(),
+    );
+    if (flags.json) {
+      console.log(JSON.stringify({ campaign: slug, ticket, ...result }, null, 2));
+      return;
+    }
+    if (flags.cancel) {
+      console.log(`cancelled ${result.cancelled} pending steer${result.cancelled === 1 ? "" : "s"} on ${ticket}`);
+    } else {
+      console.log(
+        `steered ${ticket}: ${result.mode}${result.interrupted ? " (interrupted)" : ""}; ${result.pending} pending`,
+      );
+    }
+    tickNow(root, { quiet: true });
+  },
+
   inbox({ flags }) {
     const root = rootDir(flags);
     const items = listCampaigns(root).flatMap((slug) =>
@@ -1469,6 +1502,7 @@ const commands = {
   decisions [campaign] [--all]          list decisions, with ids
   promote <decision-id> [campaign]      share one decision with every campaign
   ticket add|edit|remove ...            change the plan; edit accepts --covers and --reason
+  steer <ticket> "message"              steer a working/queued ticket; --wait, --cancel, --json
   cancel [campaign]                     stop every live run and pause
   archive [campaign]                    close a delivered campaign
   cleanup <campaign> [--dry-run]        preview or remove ticket/integration branches and the integration worktree

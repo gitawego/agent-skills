@@ -10,7 +10,9 @@ test("counts the human actions a campaign needed", () => {
     { type: "inbox.answered", data: { kind: "failure" } },
     { type: "inbox.answered", data: { kind: "review" } },
     { type: "branches.cleaned", data: { branches: ["orch/demo/01"] } },
+    { type: "ticket.steered", data: { mode: "interrupt" } },
+    { type: "ticket.steered", data: { mode: "wait" } },
     { type: "run.reported", data: {} },
   ];
-  assert.deepEqual(attentionOf(events), { approvals: 1, answers: 2, reviews: 1, cleanups: 1, total: 5 });
+  assert.deepEqual(attentionOf(events), { approvals: 1, answers: 2, reviews: 1, cleanups: 1, steers: 1, total: 6 });
 });

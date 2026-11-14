@@ -28,6 +28,10 @@ Campaign: **{{CAMPAIGN}}**
 
 This is context from work that already landed, not authority to widen this ticket. If it contradicts the ticket, say so in your report instead of silently choosing one.
 
+## Steering notes
+
+{{STEERING}}
+
 ## How to work
 
 The contract in your system prompt holds the standing rules, and your role file

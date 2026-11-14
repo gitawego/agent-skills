@@ -162,6 +162,7 @@ export function workerPrompt({
   data,
   attachments = [],
   dependencies = [],
+  steers = [],
 }) {
   return template("worker-prompt.md", {
     CAMPAIGN: campaign,
@@ -179,6 +180,7 @@ export function workerPrompt({
     CONSTRAINTS: clip((sections.constraints || "(none)").trim(), PROMPT_LIMITS.constraintsChars, "constraints truncated"),
     DECISIONS: renderDecisions(decisions),
     DEPENDENCIES: renderDependencies(dependencies),
+    STEERING: renderSteers(steers) || "None.",
     QUESTION_RULE,
     ACCEPTANCE_RULE,
     CONTEXT_CMD: `node ${path.join(SKILL_DIR, "scripts", "orchestrate.mjs")} context`,
@@ -240,17 +242,36 @@ export function judgePrompt({ campaign, ticket, ticketTitle, question, summary, 
   });
 }
 
-export function resumePrompt({ ticket, answer, citation, findings, attachments = [] }) {
+export function renderSteers(steers) {
+  const list = asArray(steers).filter((steer) => steer && String(steer.text || "").trim());
+  if (!list.length) return "";
+  return [
+    "A person sent this while you were working:",
+    "",
+    ...list.map((steer, index) => `${index + 1}. ${clip(steer.text, 2_000, "steer truncated")}`),
+    "",
+    "Treat this as a human instruction within the ticket's existing scope.",
+    "Inspect the worktree before continuing. Do not repeat work that is already",
+    "committed. If the instruction contradicts the ticket, report the contradiction",
+    "instead of silently choosing one.",
+  ].join("\n");
+}
+
+export function resumePrompt({ ticket, answer, citation, findings, steers = [], attachments = [] }) {
   const lines = [];
+  const steering = renderSteers(steers);
+  if (steering) lines.push(steering, "");
   if (findings) {
     const detail = Array.isArray(findings) ? renderFindings(findings) : String(findings).trim();
     lines.push("Your work was reviewed and sent back. Blocking findings:", "");
     lines.push(detail && detail !== "check \"tests\" failed:" ? detail : "The gate failed and recorded no detail.");
     lines.push("", "Run the campaign's checks yourself now, fix everything they report, then report again.");
-  } else {
+  } else if (answer) {
     lines.push("Answer to your question:", "", answer, "");
     if (citation) lines.push(`Source: ${citation}`, "");
     lines.push("Continue the ticket. Do not ask the same question again.");
+  } else {
+    lines.push("Continue the ticket from where the interrupted turn stopped.");
   }
   lines.push("", `Ticket: ${ticket}. Report when the acceptance criteria hold, or when you are genuinely stuck.`);
   if (attachments.length) lines.push("", "Attached images:", ...attachments.map((file) => `- ${file}`));

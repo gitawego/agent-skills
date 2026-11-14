@@ -28,6 +28,7 @@ Read the reference for a branch before acting on it:
 - [references/panel.md](references/panel.md): screens, actions, HTTP and SSE surface.
 - [docs/ADR-001-ticket-sizing-and-context.md](docs/ADR-001-ticket-sizing-and-context.md): one-ticket default, dependency context, failure aggregation.
 - [docs/ADR-002-bounded-context-packets.md](docs/ADR-002-bounded-context-packets.md): subagent handoff packets and prompt budgets.
+- [docs/ADR-003-ticket-steering.md](docs/ADR-003-ticket-steering.md): steering a working ticket without losing its session.
 - [references/memory.md](references/memory.md): decisions, supersession, promotion, the context command, the close report.
 - [references/worker-prompt.md](references/worker-prompt.md): what a worker is told.
 
@@ -93,6 +94,8 @@ Run the supervisor (`run`) or let a timer drive it (`tick`). From here the loop 
 
 Answer questions with a decision, not with advice. A worker resumes from the answer in its own session, so it already knows what it asked — and the answer is written to the campaign's decision log, so the next worker on those paths inherits it instead of asking again.
 
+If a ticket is already running and you must correct it, steer it with `orchestrate steer <ticket> "message"`. A hard steer interrupts the current turn but keeps the session and worktree; it does not consume an attempt. Use `--wait` to queue the note without interrupting. Do not rewrite the ticket or stop the run just to deliver a sentence.
+
 A `ready` report carries one passed acceptance result for every ticket criterion, each with the evidence that proves it. A review pass is bound to the commit it judged; a branch that changes afterwards is parked for a fresh review. When every ticket is done, the campaign checks run once on the final integration tip, and delivery is a computed audit over that evidence. Failed acceptance, a stale review, or a failed integration check becomes one failure item, never a silent delivery.
 
 **Done when:** every ticket is `done` or `dropped`, the integration checks pass at the delivered tip, the delivery audit has no blockers, and the campaign stage is `delivered`.
@@ -124,6 +127,7 @@ The script is the source of truth; the skill's slash commands are conveniences o
 | `ticket add "<title>" --kind code --touches "<globs>" [--attachments img.png] [--blocked-by 01] [--what ...] [--accept ...] [--covers ...]` | Add one ticket with the next number |
 | `ticket edit <id> [--title ...] [--kind ...] [--touches ...] [--blocked-by ...] [--what ...] [--accept ...] [--covers ...] [--reason ...]` | Change a ticket; a change that would break the plan is rolled back, and the ledger records why |
 | `ticket remove <id>` | Delete a ticket, refused while it still blocks another |
+| `steer <ticket> "message" [--wait] [--cancel]` | Send a human note to a working/queued ticket; hard steer keeps the session and does not consume an attempt |
 | `cancel [campaign]` | Stop every live run and pause, keeping the branches |
 | `archive [campaign]` | Close a delivered campaign |
 | `cleanup <campaign> [--dry-run]` | After the integration branch is merged, remove ticket/integration branches and the integration worktree; keep the base checkout |

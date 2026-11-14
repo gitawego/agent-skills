@@ -147,6 +147,8 @@ export function ensureTickets(state, plan) {
         attempts: 0,
         gateCycles: 0,
         run: null,
+        steers: [],
+        steerCount: 0,
         updated: nowIso(),
       };
     }
@@ -158,7 +160,9 @@ export function ensureTickets(state, plan) {
 }
 
 export function ticketState(state, id) {
-  if (!state.tickets[id]) state.tickets[id] = { stage: "queued", attempts: 0, gateCycles: 0, run: null };
+  if (!state.tickets[id]) {
+    state.tickets[id] = { stage: "queued", attempts: 0, gateCycles: 0, run: null, steers: [], steerCount: 0 };
+  }
   return state.tickets[id];
 }
 

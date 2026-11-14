@@ -54,6 +54,24 @@ test("ticket edit records a coverage claim and an amendment reason", () => {
   assert.match(events, /claim the campaign criterion/);
 });
 
+test("steer sends and cancels a pending note from the CLI", () => {
+  const box = sandbox();
+  const dir = project(path.join(box, "repo"));
+  writeConsole();
+  assert.equal(cli(dir, ["init"]).status, 0);
+  assert.equal(cli(dir, ["start", "Steering", "--campaign", "demo"]).status, 0);
+  assert.equal(
+    cli(dir, ["ticket", "add", "One", "--campaign", "demo", "--kind", "code", "--touches", "src/**", "--accept", "works"]).status,
+    0,
+  );
+  const steered = cli(dir, ["steer", "01", "Use the existing filter.", "--campaign", "demo"]);
+  assert.equal(steered.status, 0, steered.stderr);
+  assert.match(steered.stdout, /steered 01: wait/);
+  const cancelled = cli(dir, ["steer", "01", "--cancel", "--campaign", "demo"]);
+  assert.equal(cancelled.status, 0, cancelled.stderr);
+  assert.match(cancelled.stdout, /cancelled 1 pending steer/);
+});
+
 test("context --packet emits a compact handoff for a ticket", () => {
   const box = sandbox();
   const dir = project(path.join(box, "repo"));

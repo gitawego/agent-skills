@@ -305,6 +305,35 @@ reading lists are clipped with an explicit truncation marker, and every run
 records `promptChars`, an estimated prompt token count, and dependency/decision
 sizes in `run.json`.
 
+## Steering
+
+When a ticket is already running and you need to correct it:
+
+```bash
+orchestrate steer 03 "Use the existing filter object; do not add a second query path."
+```
+
+The default is a hard steer: the current turn is interrupted, the session and
+worktree are kept, and the worker resumes with the note. It does **not** consume
+an attempt or change the model chain.
+
+Use `--wait` to queue the note without interrupting the current turn:
+
+```bash
+orchestrate steer 03 "Also update the README." --wait
+```
+
+A soft note expires if the ticket lands before the next worker turn. Pending
+notes can be cancelled:
+
+```bash
+orchestrate steer 03 --cancel
+```
+
+Steering is done from the agent chat/CLI. The panel shows pending notes in the
+ticket drawer with a **Cancel** action, and no text editor. Tickets waiting for
+an answer use `orchestrate answer`; failed tickets use `orchestrate retry`.
+
 ## Evidence contract
 
 A work run ends by writing `report.json` through `scripts/report.mjs`.
@@ -395,7 +424,8 @@ orchestrate up
 The panel shows:
 
 - campaign stage, next action, slots, spend and cache rate;
-- the ticket manifest, board and drawer;
+- the ticket manifest in list, kanban and dependency-graph views;
+- the ticket drawer, including steering and evidence;
 - acceptance evidence, findings, reviewed SHA and integration state in the
   ticket drawer;
 - draft coverage and **Approve and run** for a clean draft;
@@ -475,6 +505,7 @@ integration worktree; the delivery manifest is the integration artifact.
 | `plan import <campaign> [--submit]` | Apply only; `--submit` ticks |
 | `approve <campaign>` | Apply a clean draft, approve, dispatch |
 | `ticket add\|edit\|remove` | Change one ticket |
+| `steer <ticket> "message"` | Send a note to a working/queued ticket; `--wait` queues, `--cancel` clears pending |
 | `run` / `tick` | Supervisor loop or one pass |
 | `up` / `panel` | Start or locate the panel |
 | `status [campaign]` | Stages, spend, coverage, integration |
@@ -512,6 +543,7 @@ Key references:
 - [docs/SPEC.md](docs/SPEC.md) — design decisions
 - [docs/ADR-001-ticket-sizing-and-context.md](docs/ADR-001-ticket-sizing-and-context.md) — one-ticket default, dependency context, failure aggregation
 - [docs/ADR-002-bounded-context-packets.md](docs/ADR-002-bounded-context-packets.md) — subagent handoff packets, prompt budgets, context telemetry
+- [docs/ADR-003-ticket-steering.md](docs/ADR-003-ticket-steering.md) — steering a working ticket without losing its session
 - [docs/SPEC-evidence-and-approval.md](docs/SPEC-evidence-and-approval.md) — evidence and one-decision approval spec
 
 ## When not to use it

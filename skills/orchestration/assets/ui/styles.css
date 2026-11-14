@@ -1287,3 +1287,47 @@ pre.log {
 .evidence-table { width: 100%; border-collapse: collapse; }
 .evidence-table th, .evidence-table td { text-align: left; padding: 0.25rem 0.4rem; border-bottom: 1px solid var(--rule); font-size: 0.78rem; }
 .evidence-table tr[data-status="failed"] td { color: var(--bad, #9b4040); }
+
+.steering { border-top: 1px solid var(--rule); padding-top: 0.5rem; margin-top: 0.8rem; }
+.steer-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+.steer-list li { border-left: 2px solid var(--rule); padding: 0.15rem 0 0.15rem 0.55rem; }
+.steer-list li[data-status="pending"] { border-left-color: var(--signal); }
+.steer-list li[data-status="delivered"] { border-left-color: var(--ok); }
+.steer-list p { margin: 0.2rem 0 0.25rem; color: var(--ink-2); white-space: pre-wrap; }
+.steer-list .btn { margin-top: 0.15rem; }
+
+/* Kanban columns: every stage is a lane, not a full-width section. */
+.ticket-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.65rem;
+  align-items: start;
+}
+.ticket-board .band {
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  padding: 0 0.55rem 0.55rem;
+}
+.ticket-board .band-head { padding-top: 0.5rem; }
+.ticket-board .strips { max-height: 58vh; overflow: auto; border-bottom: 0; }
+
+/* Dependency graph. The SVG is wider than the pane when the graph branches. */
+.ticket-graph-wrap {
+  margin-top: 0.5rem;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  overflow: auto;
+  padding: 0.55rem;
+}
+.ticket-graph-wrap .hint { margin: 0 0 0.4rem; }
+.ticket-graph { display: block; min-width: 100%; }
+.graph-edge { fill: none; stroke: var(--muted); stroke-width: 1.2; opacity: 0.72; }
+.graph-node { cursor: pointer; }
+.graph-node rect { fill: var(--paper); stroke: var(--rule); stroke-width: 1.2; }
+.graph-node:hover rect, .graph-node:focus rect { stroke: var(--ink); stroke-width: 1.8; }
+.graph-node[data-family="active"] rect { stroke: var(--ink); }
+.graph-node[data-family="person"] rect { stroke: var(--signal); }
+.graph-node[data-family="done"] rect { stroke: var(--ok); }
+.graph-id { font: 500 0.68rem/1 var(--mono); fill: var(--muted); letter-spacing: 0.08em; }
+.graph-title { font: 500 0.78rem/1.2 var(--ui); fill: var(--ink); }
+.graph-meta { font: 0.64rem/1.2 var(--mono); fill: var(--muted); letter-spacing: 0.05em; text-transform: uppercase; }

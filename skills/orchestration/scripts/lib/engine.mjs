@@ -200,6 +200,100 @@ function ensureFailureItem(root, slug, { ticket = null, title, brief, findings =
   return updateItem(root, slug, existing.id, failureDigest(details, title));
 }
 
+const STEER_LIMITS = { chars: 2_000, pending: 5 };
+
+function steerList(entry) {
+  if (!Array.isArray(entry.steers)) entry.steers = [];
+  return entry.steers;
+}
+
+function pendingSteers(entry) {
+  return steerList(entry).filter((steer) => steer.status === "pending");
+}
+
+function liveSessionId(root, slug, run) {
+  if (run.sessionId) return run.sessionId;
+  const session = readJson(path.join(runDir(root, slug, run.id), "session.json"), null);
+  if (session?.sessionId) return session.sessionId;
+  /* ACP records its session at the first event, before the prompt returns. */
+  const log = readText(path.join(runDir(root, slug, run.id), "log.jsonl"), "");
+  for (const line of log.split("\n").reverse()) {
+    try {
+      const event = JSON.parse(line);
+      if (event.type === "acp.session" && event.sessionId) return event.sessionId;
+    } catch {
+      /* a partial line is not a session record */
+    }
+  }
+  return null;
+}
+
+function canResumeRun(root, slug, run) {
+  if (!run) return false;
+  try {
+    const adapter = getAdapter(run.adapter || "pi");
+    const capabilities = adapter.capabilities ? adapter.capabilities() : {};
+    if (!capabilities.resume) return false;
+  } catch {
+    return false;
+  }
+  if ((run.adapter || "pi") === "pi") return true;
+  return Boolean(liveSessionId(root, slug, run));
+}
+
+function markSteersDelivered(root, slug, entry, ticketId, runId) {
+  const at = nowIso();
+  const delivered = pendingSteers(entry);
+  if (!delivered.length) {
+    delete entry.steerInterrupted;
+    return;
+  }
+  for (const steer of delivered) {
+    steer.status = "delivered";
+    steer.deliveredAt = at;
+    steer.run = runId;
+    appendEvent(root, {
+      campaign: slug,
+      ticket: ticketId,
+      run: runId,
+      type: "steer.delivered",
+      data: { steerId: steer.id, chars: steer.text.length },
+    });
+  }
+  delete entry.steerInterrupted;
+}
+
+function expireSteers(root, slug, entry, ticketId) {
+  let expired = 0;
+  for (const steer of pendingSteers(entry)) {
+    steer.status = "expired";
+    expired++;
+    appendEvent(root, {
+      campaign: slug,
+      ticket: ticketId,
+      type: "steer.expired",
+      data: { steerId: steer.id, chars: steer.text.length },
+    });
+  }
+  delete entry.steerInterrupted;
+  return expired;
+}
+
+function cancelSteers(root, slug, entry, ticketId) {
+  let cancelled = 0;
+  for (const steer of pendingSteers(entry)) {
+    steer.status = "cancelled";
+    cancelled++;
+    appendEvent(root, {
+      campaign: slug,
+      ticket: ticketId,
+      type: "steer.cancelled",
+      data: { steerId: steer.id, chars: steer.text.length },
+    });
+  }
+  return cancelled;
+}
+
 function dismissFailure(root, slug, titlePrefix) {
   for (const item of listItems(root, slug, { status: "open" })) {
     if (item.kind === "failure" && String(item.title || "").startsWith(titlePrefix)) {
@@ -590,6 +684,7 @@ function collectWork({ root, slug, state, plan, kinds, consoleConfig, run, summa
       });
     }
     case "dropped":
+      expireSteers(root, slug, entry, ticketId);
       setStage(root, slug, state, ticketId, "dropped", { reason: report.summary });
       dropTicketWorktree(root, slug, ticketId);
       return;
@@ -640,6 +735,7 @@ function collectReview({ root, slug, state, plan, kinds, consoleConfig, run, sum
     const land = landTicket({ root, slug, ticketId, data, reviewedHead: entry.reviewedHead });
     if (land.ok) {
       entry.reviewStale = false;
+      expireSteers(root, slug, entry, ticketId);
       setStage(root, slug, state, ticketId, "done", { reason: "gates passed" });
       const counts = findingCounts(verification.findings);
       appendEvent(root, {
@@ -785,7 +881,9 @@ function collectJudge({ root, slug, state, plan, run, summary }) {
 
 function collectMerge({ root, slug, state, run, summary }) {
   const ticketId = run.ticket;
+  const entry = ticketState(state, ticketId);
   if (summary.report?.status === "ready") {
+    expireSteers(root, slug, entry, ticketId);
     setStage(root, slug, state, ticketId, "done", { reason: "merged" });
     appendEvent(root, { campaign: slug, ticket: ticketId, run: run.id, type: "merge.done", data: {} });
     dropTicketWorktree(root, slug, ticketId);
@@ -971,8 +1069,9 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
     entry.mergeRetries = 0;
   }
 
-  const attempt = (entry.attempts || 0) + 1;
-  const runId = newRunId(id, "work", attempt);
+  const steeredRun = Boolean(entry.steerInterrupted || (resume?.steers?.length && !resume.findings && !resume.answer));
+  const attempt = steeredRun ? entry.attempts || 0 : (entry.attempts || 0) + 1;
+  const runId = newRunId(id, "work", steeredRun ? `steer${entry.steerCount || 1}` : attempt);
   const sessionId =
     adapterId === "pi"
       ? resume
@@ -1036,12 +1135,14 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
     })
     .filter(Boolean);
   const decisions = decisionsFor(root, slug, asArray(ticket.data.touches));
+  const resumeSteers = resume?.steers || pendingSteers(entry);
   const prompt = resume
     ? resumePrompt({
         ticket: id,
         answer: resume.answer,
         citation: resume.citation,
         findings: resume.findings,
+        steers: resume.steers || [],
         attachments: attached.items.map((item) => item.path),
       })
     : workerPrompt({
@@ -1057,6 +1158,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
         data: ticket,
         attachments: attached.items.map((item) => item.path),
         dependencies,
+        steers: resumeSteers,
       });
   writePrompt(root, slug, runId, prompt);
 
@@ -1064,6 +1166,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
   const run = {
     id: runId,
     policyVersion: POLICY_VERSION,
+    steer: steeredRun,
     campaign: slug,
     ticket: id,
     role: "work",
@@ -1115,6 +1218,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
   entry.run = runId;
   entry.chainIndex = chainIndex;
   delete entry.pendingResume;
+  markSteersDelivered(root, slug, entry, id, runId);
   setStage(root, slug, state, id, "working", { run: runId, reason: resume ? "resumed" : "dispatched" });
   appendEvent(root, {
     campaign: slug,
@@ -1583,20 +1687,27 @@ function dispatchFrontier(root, slug, state, plan, kinds, consoleConfig, data) {
   for (const ticket of plan.ordered) {
     const id = ticket.data.id;
     const entry = ticketState(state, id);
-    const resumable = entry.stage === "queued" && entry.pendingResume;
+    const steers = pendingSteers(entry);
+    const hasHistory = Boolean(entry.sessionId || entry.attempts);
+    const resumable =
+      entry.stage === "queued" &&
+      (entry.pendingResume || entry.steerInterrupted || (hasHistory && steers.length > 0));
     if (entry.stage !== "queued" && entry.stage !== "needs_changes") continue;
-    const humanResume = entry.pendingResume?.from === "human";
+    const humanResume =
+      entry.pendingResume?.from === "human" || entry.steerInterrupted || (hasHistory && steers.length > 0);
     const cap = consoleConfig.limits.max_concurrent + (humanResume ? consoleConfig.limits.human_slot_extra : 0);
     if (total >= cap) continue;
     const kind = kinds[ticket.data.kind];
     if (!kind) continue;
     if ((perKind[ticket.data.kind] || 0) >= kind.max_concurrent) continue;
 
-    const resume = resumable
-      ? entry.pendingResume
+    const resume = entry.pendingResume
+      ? { ...entry.pendingResume, steers }
       : entry.stage === "needs_changes"
-        ? { findings: entry.findings }
-        : null;
+        ? { findings: entry.findings, steers }
+        : resumable
+          ? { steers }
+          : null;
 
     const overlaps = asArray(ticket.data.touches).filter((glob) =>
       touched.some((other) => touchesOverlap([glob], [other])),
@@ -1879,6 +1990,7 @@ export function writeClose(root, slug, state, plan, data) {
     `- questions answered: ${attention.answers}`,
     `- deliveries reviewed: ${attention.reviews}`,
     `- cleanups: ${attention.cleanups}`,
+    `- steers: ${attention.steers || 0}`,
     `- total human actions: ${attention.total}`,
     "",
     "## What was hard",
@@ -1998,6 +2110,104 @@ export function approveCampaign(root, slug, consoleConfig, { automatic = false, 
   appendEvent(root, { campaign: slug, type: "campaign.approved", data: { automatic, drafted: draft.exists } });
   writeStageToPlan(root, slug, "running");
   return state;
+}
+
+function applySteer({ root, slug, command, consoleConfig }) {
+  const state = loadState(root, slug);
+  const plan = loadPlan(root, slug);
+  const id = String(command.ticket || "").padStart(2, "0");
+  const ticket = plan.byId.get(id);
+  if (!ticket) throw new UserError(`No ticket "${id}" in ${slug}`);
+  const entry = ticketState(state, id);
+  const at = nowIso();
+
+  if (command.cancel) {
+    const cancelled = cancelSteers(root, slug, entry, id);
+    saveState(root, slug, state);
+    return { ok: true, cancelled, steers: pendingSteers(entry) };
+  }
+
+  const text = String(command.text || "").trim();
+  if (!text) throw new UserError("A steer needs a message", ['orchestrate steer 03 "Use the existing filter object"']);
+  if (text.length > STEER_LIMITS.chars) {
+    throw new UserError(`A steer is limited to ${STEER_LIMITS.chars} characters`, [
+      "Split it into the decision and the context; the full context belongs in the ticket or a decision.",
+    ]);
+  }
+  const pending = pendingSteers(entry);
+  if (pending.length >= STEER_LIMITS.pending) {
+    throw new UserError(`Ticket ${id} already has ${pending.length} pending steers`, [
+      "Wait for the next turn, cancel one, or put the context in the ticket.",
+    ]);
+  }
+  if (entry.stage === "needs_answer") {
+    throw new UserError(`Ticket ${id} is waiting for an answer`, [`Use: orchestrate answer <item-id> "…"`]);
+  }
+  if (entry.stage === "failed") {
+    throw new UserError(`Ticket ${id} is failed`, [`Use: orchestrate retry ${id}`, "Or add a follow-up ticket."]);
+  }
+  if (DONE.has(entry.stage)) {
+    throw new UserError(`Ticket ${id} is ${entry.stage} already`, ["A landed ticket is history; add a follow-up ticket."]);
+  }
+  if (!["working", "queued", "needs_changes"].includes(entry.stage)) {
+    throw new UserError(`Ticket ${id} is ${entry.stage}; steering needs a ticket that is working, queued or sent back`);
+  }
+
+  const run = entry.run ? state.runs[entry.run] : null;
+  const liveWork = run?.status === "live" && run.role === "work";
+  const alreadyReported = run ? exists(path.join(runDir(root, slug, run.id), "report.json")) : false;
+  const interrupt = !command.wait && liveWork && !alreadyReported;
+  if (interrupt && !canResumeRun(root, slug, run)) {
+    throw new UserError(`Ticket ${id} cannot be steered without losing its session`, [
+      "Wait for its report, then use the gate findings to continue.",
+      `Or stop it and retry with a fresh session: orchestrate stop ${id}`,
+    ]);
+  }
+
+  const mode = interrupt ? "interrupt" : "wait";
+  const steer = {
+    id: `s-${Date.now().toString(36)}-${(entry.steerCount || 0) + 1}`,
+    text,
+    at,
+    by: "human",
+    mode,
+    status: "pending",
+  };
+  steerList(entry).push(steer);
+  entry.steerCount = (entry.steerCount || 0) + 1;
+  appendEvent(root, {
+    campaign: slug,
+    ticket: id,
+    run: run?.id,
+    type: "ticket.steered",
+    data: {
+      steerId: steer.id,
+      preview: firstLine(text),
+      chars: text.length,
+      mode,
+      interrupted: interrupt,
+    },
+  });
+  if (interrupt) {
+    const session = liveSessionId(root, slug, run);
+    if (session) entry.sessionId = session;
+    killRun(run);
+    run.status = "done";
+    run.endedAt = nowIso();
+    run.killed = "steered";
+    saveRunRecord(root, slug, run.id, { ...run });
+    delete state.slots[id];
+    entry.steerInterrupted = true;
+    setStage(root, slug, state, id, "queued", { reason: "steered" });
+  }
+  saveState(root, slug, state);
+  return {
+    ok: true,
+    steer,
+    mode,
+    interrupted: interrupt,
+    pending: pendingSteers(entry).length,
+  };
 }
 
 export function applyCommand(root, command, consoleConfig) {
@@ -2253,6 +2463,14 @@ export function applyCommand(root, command, consoleConfig) {
       applyCommand(root, { type: "review.approve", campaign: slug, item: item.id, text: command.text }, consoleConfig);
     }
     return { ok: true, approved: items.length };
+  }
+  if (type === "steer" || type === "steer.cancel") {
+    return applySteer({
+      root,
+      slug,
+      command: { ...command, cancel: type === "steer.cancel" || Boolean(command.cancel) },
+      consoleConfig,
+    });
   }
   if (type === "answer" || type === "review.approve" || type === "review.reject") {
     const item = findItem(root, slug, command.item);

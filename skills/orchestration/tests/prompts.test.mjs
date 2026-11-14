@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { workerPrompt, reviewPrompt, judgePrompt, mergePrompt, systemPromptFiles, systemPromptDigest, promptDigest, promptAudit } from "../scripts/lib/prompts.mjs";
+import { workerPrompt, resumePrompt, reviewPrompt, judgePrompt, mergePrompt, systemPromptFiles, systemPromptDigest, promptDigest, promptAudit } from "../scripts/lib/prompts.mjs";
 
 const TICKET = {
   what: "Build the thing.",
@@ -131,6 +131,18 @@ test("a ticket with no completed blockers says so instead of inventing one", () 
     data: TICKET,
   });
   assert.match(text, /No completed blockers/);
+});
+
+test("a resumed worker receives steering before gate findings", () => {
+  const text = resumePrompt({
+    ticket: "03",
+    steers: [{ text: "Use the existing filter object" }],
+    findings: "The filter is dropped on page two.",
+  });
+  assert.match(text, /A person sent this while you were working/);
+  assert.match(text, /Use the existing filter object/);
+  assert.match(text, /human instruction within the ticket's existing scope/);
+  assert.ok(text.indexOf("Use the existing filter object") < text.indexOf("filter is dropped"));
 });
 
 test("the review prompt names the diff to read instead of leaving a placeholder", () => {

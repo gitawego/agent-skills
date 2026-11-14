@@ -327,6 +327,9 @@ export function campaignView(root, slug) {
       reviewSameAsWorker: Boolean(entry.reviewSameAsWorker),
       reviewStale: Boolean(entry.reviewStale),
       reviewRound: entry.reviewRound || null,
+      steers: Array.isArray(entry.steers) ? entry.steers : [],
+      pendingSteers: (Array.isArray(entry.steers) ? entry.steers : []).filter((steer) => steer.status === "pending")
+        .length,
       answer: entry.answer || null,
       sources: asArray(ticket.data.sources),
       model: entry.model || chain[0]?.model || null,

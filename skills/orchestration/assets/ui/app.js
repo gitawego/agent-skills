@@ -1089,6 +1089,10 @@ function campaignHeader(c) {
   const integration = c.integration
     ? `<span class="quality-chip" data-state="${esc(c.integration.status)}">integration ${esc(c.integration.status)}${c.integration.head ? ` ${esc(c.integration.head.slice(0, 8))}` : ""}</span>`
     : "";
+  const steering = c.tickets.reduce((count, ticket) => count + Number(ticket.pendingSteers || 0), 0);
+  const steeringChip = steering
+    ? `<span class="quality-chip" data-state="pending">steering ${steering}</span>`
+    : "";
   return `<div class="campaign-head">
       <div class="eyebrow">${esc(c.project)} / ${esc(c.slug)} · ${esc(c.stage)}</div>
       <h1>${esc(goal || c.slug)}</h1>
@@ -1097,6 +1101,7 @@ function campaignHeader(c) {
       <span class="meter" title="${slots} of ${cap} slots busy">${meter}<b>${slots}/${cap}</b> slots</span>
       <span>${c.tickets.length} ticket${c.tickets.length === 1 ? "" : "s"}${c.draft?.tickets ? ` · ${c.draft.tickets} draft` : ""}</span>
       ${reviewedChip}
+      ${steeringChip}
       ${integration}
       <span>${num(c.spend.tokens)} tok · ${usd(c.spend.dollars)}${c.spend.unmetered ? ` · ${esc(c.spend.unmetered)} unmetered` : ""}</span>
       <span>${c.cacheHit == null ? "cache —" : `${(c.cacheHit * 100).toFixed(1)}% cached`}</span>
@@ -1312,7 +1317,8 @@ function ticketFilter(c) {
       <div class="ticket-counts">${stageCounts(c)}</div>
       <div class="segmented" role="group" aria-label="Ticket view">
         <button data-act="ticket-view" data-view="list" aria-pressed="${ticketView === "list"}">List</button>
-        <button data-act="ticket-view" data-view="board" aria-pressed="${ticketView === "board"}">Board</button>
+        <button data-act="ticket-view" data-view="board" aria-pressed="${ticketView === "board"}">Kanban</button>
+        <button data-act="ticket-view" data-view="graph" aria-pressed="${ticketView === "graph"}">Graph</button>
       </div>
       <select data-role="ticket-kind" aria-label="Filter by kind">
         <option value="all">all kinds</option>
@@ -1366,6 +1372,74 @@ function ticketBoard(c, tickets) {
   return `<div class="ticket-board">${STAGES.filter((stage) => byStage[stage.id]?.length)
     .map((stage) => band(stage, byStage[stage.id]))
     .join("")}</div>`;
+}
+
+function ticketGraph(c, tickets) {
+  if (!tickets.length) return `<div class="ticket-graph-wrap"><p class="hint">No tickets match.</p></div>`;
+  const byId = new Map(tickets.map((ticket) => [ticket.id, ticket]));
+  const depth = new Map();
+  const visiting = new Set();
+  const depthOf = (id) => {
+    if (depth.has(id)) return depth.get(id);
+    if (visiting.has(id)) return 0;
+    visiting.add(id);
+    const ticket = byId.get(id);
+    const blockers = (ticket?.blockedBy || []).filter((blocker) => byId.has(blocker));
+    const value = blockers.length ? 1 + Math.max(...blockers.map(depthOf)) : 0;
+    visiting.delete(id);
+    depth.set(id, value);
+    return value;
+  };
+  for (const ticket of tickets) depthOf(ticket.id);
+  const maxDepth = Math.max(0, ...tickets.map((ticket) => depth.get(ticket.id) || 0));
+  const columns = Array.from({ length: maxDepth + 1 }, () => []);
+  for (const ticket of tickets) columns[depth.get(ticket.id) || 0].push(ticket);
+  for (const column of columns) column.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+
+  const nodeW = 230, nodeH = 68, gapX = 64, gapY = 18, pad = 24;
+  const rows = Math.max(1, ...columns.map((column) => column.length));
+  const width = pad * 2 + (maxDepth + 1) * nodeW + maxDepth * gapX;
+  const height = pad * 2 + rows * nodeH + (rows - 1) * gapY;
+  const pos = new Map();
+  columns.forEach((column, index) => {
+    column.forEach((ticket, row) => {
+      pos.set(ticket.id, { x: pad + index * (nodeW + gapX), y: pad + row * (nodeH + gapY) });
+    });
+  });
+  const family = (stage) => (STAGES.find((entry) => entry.id === stage) || {}).family || "idle";
+  const edges = [];
+  for (const ticket of tickets) {
+    for (const blocker of ticket.blockedBy || []) {
+      const from = pos.get(blocker);
+      const to = pos.get(ticket.id);
+      if (!from || !to) continue;
+      const x1 = from.x + nodeW, y1 = from.y + nodeH / 2;
+      const x2 = to.x, y2 = to.y + nodeH / 2;
+      const bend = Math.max(24, (x2 - x1) / 2);
+      edges.push(`<path class="graph-edge" d="M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}" marker-end="url(#graph-arrow)" />`);
+    }
+  }
+  const nodes = [];
+  for (const ticket of tickets) {
+    const point = pos.get(ticket.id);
+    const title = ticket.title.length > 29 ? `${ticket.title.slice(0, 28)}…` : ticket.title;
+    nodes.push(`<g class="graph-node" data-family="${esc(family(ticket.stage))}" tabindex="0" role="button"
+        data-act="open-ticket" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" data-ticket="${esc(ticket.id)}">
+        <title>${esc(`${ticket.id} ${ticket.title} · ${ticket.stage}`)}</title>
+        <rect x="${point.x}" y="${point.y}" width="${nodeW}" height="${nodeH}" rx="4" />
+        <text class="graph-id" x="${point.x + 12}" y="${point.y + 21}">${esc(ticket.id)}</text>
+        <text class="graph-title" x="${point.x + 12}" y="${point.y + 41}">${esc(title)}</text>
+        <text class="graph-meta" x="${point.x + 12}" y="${point.y + 57}">${esc(ticket.kind)} · ${esc(ticket.stage)}</text>
+      </g>`);
+  }
+  return `<div class="ticket-graph-wrap">
+    <p class="hint">Relationships from <span class="mono">blocked_by</span>; left blocks right. Click a ticket to open it.</p>
+    <svg class="ticket-graph" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="Ticket dependency graph">
+      <defs><marker id="graph-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker></defs>
+      ${edges.join("")}
+      ${nodes.join("")}
+    </svg>
+  </div>`;
 }
 
 function newTicketForm(c) {
@@ -1425,7 +1499,8 @@ function addTicket(root, slug) {
 
 function campaignTickets(c) {
   const tickets = filteredTickets(c);
-  const body = ticketView === "board" ? ticketBoard(c, tickets) : ticketList(c, tickets);
+  const body =
+    ticketView === "graph" ? ticketGraph(c, tickets) : ticketView === "board" ? ticketBoard(c, tickets) : ticketList(c, tickets);
   const empty = !c.tickets.length
     ? `<div class="empty">
       <h2>${c.draft?.exists ? "No applied tickets yet." : "No tickets yet."}</h2>
@@ -1454,7 +1529,8 @@ function paintTickets() {
   const box = document.getElementById("ticket-list");
   if (!c || !box) return;
   const tickets = filteredTickets(c);
-  box.innerHTML = ticketView === "board" ? ticketBoard(c, tickets) : ticketList(c, tickets);
+  box.innerHTML =
+    ticketView === "graph" ? ticketGraph(c, tickets) : ticketView === "board" ? ticketBoard(c, tickets) : ticketList(c, tickets);
   const counts = document.querySelector(".ticket-counts");
   if (counts) counts.innerHTML = stageCounts(c);
 }
@@ -1594,6 +1670,7 @@ function attentionBlock(c) {
       <dt>Questions answered</dt><dd>${attention.answers}</dd>
       <dt>Deliveries reviewed</dt><dd>${attention.reviews}</dd>
       <dt>Cleanups</dt><dd>${attention.cleanups}</dd>
+      <dt>Steers</dt><dd>${attention.steers || 0}</dd>
       <dt>Total</dt><dd><b>${attention.total}</b></dd>
     </dl>
   </section>`;
@@ -1952,6 +2029,23 @@ function acceptanceHtml(t) {
     .join("")}</tbody></table>`;
 }
 
+function steersHtml(c, t) {
+  const steers = t.steers || [];
+  if (!steers.length) return `<p class="hint">No steering notes.</p>`;
+  return `<ul class="steer-list">${steers
+    .slice()
+    .reverse()
+    .map(
+      (steer) =>
+        `<li data-status="${esc(steer.status)}"><span class="mono">${esc(steer.id)}</span> <span class="badge" data-family="${steer.status === "pending" ? "person" : steer.status === "delivered" ? "active" : "idle"}">${esc(steer.status)}</span> <span class="hint">${esc(steer.mode)} · ${esc(clockOf(steer.at))}</span><p>${esc(String(steer.text || "").slice(0, 500))}${String(steer.text || "").length > 500 ? "…" : ""}</p>${
+          steer.status === "pending"
+            ? `<button class="btn ghost" data-act="steer-cancel" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" data-ticket="${esc(t.id)}">Cancel pending</button>`
+            : ""
+        }</li>`,
+    )
+    .join("")}</ul>`;
+}
+
 function drawerHtml(c, t) {
   const runs = (c.runs || []).filter((r) => r.ticket === t.id).reverse();
   const latest = runs[0];
@@ -1999,6 +2093,10 @@ function drawerHtml(c, t) {
         <dt>integration</dt><dd>${esc(c.integration ? `${c.integration.status}${c.integration.head ? ` ${c.integration.head.slice(0, 8)}` : ""}` : "not run")}</dd>
       </dl>
     </details>
+    <section class="steering">
+      <h2>Steering <span class="hint">person notes for the worker</span></h2>
+      ${steersHtml(c, t)}
+    </section>
     <h2>Runs</h2>
     <table><thead><tr><th>Run</th><th>Role</th><th>Model</th><th>Report</th><th class="num">Cost</th></tr></thead><tbody>
       ${runs
@@ -2491,7 +2589,7 @@ document.addEventListener("click", (event) => {
       return render();
     }
     case "ticket-view":
-      ticketView = target.dataset.view === "board" ? "board" : "list";
+      ticketView = ["board", "graph"].includes(target.dataset.view) ? target.dataset.view : "list";
       return render();
     case "fleet-status":
       fleetStatus = target.dataset.status;
@@ -2582,6 +2680,8 @@ document.addEventListener("click", (event) => {
       return command(root, { type: "retry", campaign, ticket });
     case "stop":
       return command(root, { type: "stop", campaign, ticket });
+    case "steer-cancel":
+      return command(root, { type: "steer.cancel", campaign, ticket });
     case "pause":
       return command(root, { type: "pause", campaign });
     case "resume":

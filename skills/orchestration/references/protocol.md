@@ -133,6 +133,14 @@ A parked ticket remembers its session id. An answer, or a rejection with finding
 
 The answer is delivered as a single turn: the decision, then one line naming what changed. A worker that asked one question gets one answer.
 
+### Steering a working run
+
+`orchestrate steer <ticket> "message"` attaches a human note. The default is a hard steer: the live work turn is killed, the same session and worktree are kept, and the next dispatch resumes with the note. A steer does not consume `attempts`, does not change the model chain, and does not create a repair ticket. `--wait` queues the note for the next natural resume; if the ticket lands first, the note is `expired`, never reopening the ticket. `--cancel` clears pending notes.
+
+A hard steer is refused before killing when the adapter cannot resume a session or no session id is known, and when the report already exists but has not been collected. Three states accept steering: `working`, `queued`, `needs_changes`. `needs_answer` uses `answer`; `failed` uses `retry`; done or dropped tickets need a follow-up ticket. Text is limited to 2,000 characters and 5 pending notes per ticket; pending notes are combined into one resumed turn.
+
+The full text lives in `state.tickets[id].steers`; the ledger carries `ticket.steered`, `steer.delivered`, `steer.cancelled` and `steer.expired` with a preview, length and status. A hard steer counts as a human action; a `--wait` note does not.
+
 ## Reports
 
 `report.json`, written by the worker through `scripts/report.mjs`, validated against this schema.
