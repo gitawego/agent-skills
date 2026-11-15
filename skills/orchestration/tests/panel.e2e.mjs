@@ -284,7 +284,7 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     });
     const overviewPage = JSON.parse(overview.result.result.value);
     assert.equal(overviewPage.h1, "Panel.", "the goal is the page title");
-    assert.deepEqual(overviewPage.tabs.slice(0, 3), ["Overview", "Tickets 1", "Configure"], "the campaign has sections");
+    assert.deepEqual(overviewPage.tabs.slice(0, 4), ["Overview", "Tickets 1", "Sessions", "Configure"], "the campaign has sections");
     assert.equal(overviewPage.briefInput, 0, "the brief is read-only");
     assert.equal(overviewPage.chains, false, "chains are not on the overview");
     assert.equal(overviewPage.briefing, true, "the briefing is a disclosure");
@@ -598,7 +598,7 @@ tickets:
     });
     const legacyCampaignPage = JSON.parse(legacyCampaign.result.result.value);
     assert.match(legacyCampaignPage.hash, /#campaign\/demo/);
-    assert.equal(legacyCampaignPage.tabs, 4, "an old #campaign link lands on the campaign overview");
+    assert.equal(legacyCampaignPage.tabs, 5, "an old #campaign link lands on the campaign overview");
 
     await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo/configure` });
     await sleep(600);
@@ -688,8 +688,22 @@ tickets:
     assert.equal(edgePage.edges, 1, "the graph renders the blocked_by relationship");
     assert.equal(edgePage.independent, 0, "connected tickets are not marked independent");
 
+    const sessionsDir = path.join(stateDir, "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionsDir, "2026-01-01T00-00-00-000Z_orch-demo-01.jsonl"),
+      [
+        { type: "session", id: "orch-demo-01", cwd: dir, version: 3, timestamp: "2026-01-01T00:00:00Z" },
+        { type: "model_change", provider: "test", modelId: MODELS.strong },
+        { type: "message", timestamp: "2026-01-01T00:00:01Z", message: { role: "user", content: [{ type: "text", text: "Build the fixture." }] } },
+        { type: "message", timestamp: "2026-01-01T00:00:02Z", message: { role: "assistant", content: [{ type: "text", text: "fixture session message" }, { type: "toolCall", name: "bash", arguments: { command: "echo ok" } }] } },
+      ].map((event) => JSON.stringify(event)).join("\n") + "\n",
+    );
     const laneState = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-    laneState.tickets = { "01": { stage: "working" }, "02": { stage: "needs_answer" } };
+    laneState.tickets = {
+      "01": { stage: "working", sessionId: "orch-demo-01", workdir: dir },
+      "02": { stage: "needs_answer" },
+    };
     fs.writeFileSync(stateFile, JSON.stringify(laneState));
     await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo/tickets` });
     await sleep(700);
@@ -732,6 +746,25 @@ tickets:
     assert.equal(mobilePage.count, 4);
     assert.equal(mobilePage.stacked, true, "the kanban lanes stack on a narrow viewport");
     await send("Emulation.clearDeviceMetricsOverride");
+
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo/sessions` });
+    await sleep(1200);
+    const sessions = await send("Runtime.evaluate", {
+      expression: `JSON.stringify({
+        workspace: Boolean(document.querySelector(".sessions-workspace")),
+        rows: document.querySelectorAll(".session-row").length,
+        transcript: document.getElementById("session-transcript")?.innerText || "",
+        takeover: Boolean(document.querySelector('[data-act="session-takeover"]')),
+        token: document.getElementById("terminal-status")?.textContent || "",
+      })`,
+      returnByValue: true,
+    });
+    const sessionsPage = JSON.parse(sessions.result.result.value);
+    assert.equal(sessionsPage.workspace, true, "the campaign has a Sessions workspace");
+    assert.equal(sessionsPage.rows, 2, "each ticket has a session row");
+    assert.match(sessionsPage.transcript, /fixture session message/, "the pi transcript is visible");
+    assert.equal(sessionsPage.takeover, true, "a working ticket offers takeover");
+    assert.ok(sessionsPage.token.length > 0, "the terminal pane reports its state");
     ws.close();
   } finally {
     browser.kill("SIGKILL");

@@ -1143,6 +1143,8 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
         citation: resume.citation,
         findings: resume.findings,
         steers: resume.steers || [],
+        handback: Boolean(resume.handback),
+        handbackNote: resume.note || "",
         attachments: attached.items.map((item) => item.path),
       })
     : workerPrompt({
@@ -1609,6 +1611,10 @@ function annotateQueue(root, slug, state, plan, kinds, consoleConfig, data, disp
   for (const ticket of plan.ordered) {
     const id = ticket.data.id;
     const entry = ticketState(state, id);
+    if (entry.owner === "human") {
+      entry.queue = { code: "human", text: "owned by a human session", at: nowIso() };
+      continue;
+    }
     if (!["queued", "blocked", "needs_changes"].includes(entry.stage)) {
       delete entry.queue;
       continue;
@@ -1687,6 +1693,7 @@ function dispatchFrontier(root, slug, state, plan, kinds, consoleConfig, data) {
   for (const ticket of plan.ordered) {
     const id = ticket.data.id;
     const entry = ticketState(state, id);
+    if (entry.owner === "human") continue;
     const steers = pendingSteers(entry);
     const hasHistory = Boolean(entry.sessionId || entry.attempts);
     const resumable =
@@ -1945,6 +1952,11 @@ export function writeClose(root, slug, state, plan, data) {
   const integrationText = state.integration
     ? `${state.integration.status}${state.integration.head ? ` at ${state.integration.head.slice(0, 8)}` : ""} (${(state.integration.checks || []).length} check${(state.integration.checks || []).length === 1 ? "" : "s"})`
     : "not run";
+  const humanSessions = readJsonl(path.join(path.dirname(campaignStateFile(root, slug)), "human-sessions.jsonl"));
+  const humanSpend = humanSessions.reduce(
+    (sum, entry) => ({ tokens: sum.tokens + Number(entry.tokens || 0), dollars: sum.dollars + Number(entry.dollars || 0) }),
+    { tokens: 0, dollars: 0 },
+  );
   const lines = [
     `# ${slug} — close`,
     "",
@@ -1968,6 +1980,7 @@ export function writeClose(root, slug, state, plan, data) {
     ),
     "",
     `Checks: ${checks}. Spend: ${state.spend.tokens} tokens, $${state.spend.dollars.toFixed(4)}.`,
+    `Human sessions: ${humanSessions.length ? `${humanSessions.length} terminal turn${humanSessions.length === 1 ? "" : "s"}, ${humanSpend.tokens} tokens, $${humanSpend.dollars.toFixed(4)}` : "none"}.`,
     "",
     "## Quality",
     "",
@@ -2399,6 +2412,75 @@ export function applyCommand(root, command, consoleConfig) {
       }
     }
     return { ok: true };
+  }
+  if (type === "session.takeover") {
+    const state = loadState(root, slug);
+    const id = String(command.ticket).padStart(2, "0");
+    const entry = ticketState(state, id);
+    if (DONE.has(entry.stage)) {
+      throw new UserError(`Ticket ${id} is ${entry.stage} already`, [
+        "A landed ticket is history. Add a new ticket for follow-up work.",
+      ]);
+    }
+    const rid = entry.run;
+    const run = rid ? state.runs[rid] : null;
+    if (run?.status === "live") {
+      killRun(run);
+      run.status = "done";
+      run.endedAt = nowIso();
+      run.killed = "takeover";
+      delete state.slots[id];
+      appendEvent(root, {
+        campaign: slug,
+        ticket: id,
+        run: run.id,
+        type: "run.stopped",
+        data: { reason: "takeover" },
+      });
+    }
+    entry.owner = "human";
+    entry.lease = { owner: "human", at: nowIso(), by: command.by || "panel" };
+    entry.queue = { code: "human", text: "owned by a human session", at: nowIso() };
+    setStage(root, slug, state, id, "working", { reason: "human session" });
+    saveState(root, slug, state);
+    appendEvent(root, {
+      campaign: slug,
+      ticket: id,
+      type: "session.takeover",
+      data: { sessionId: entry.sessionId || null },
+    });
+    return { ok: true, owner: "human", sessionId: entry.sessionId || null };
+  }
+  if (type === "session.handback") {
+    const state = loadState(root, slug);
+    const id = String(command.ticket).padStart(2, "0");
+    const entry = ticketState(state, id);
+    if (entry.owner !== "human") {
+      throw new UserError(`Ticket ${id} is not owned by a human session`, [
+        "Take over the session before handing it back.",
+      ]);
+    }
+    const rid = entry.run;
+    const running = rid ? state.runs[rid] : null;
+    if (running?.status === "live") {
+      throw new UserError(`Ticket ${id} still has a live run`, [
+        "Stop the terminal session before handing it back.",
+      ]);
+    }
+    const note = String(command.note || "").trim();
+    entry.owner = null;
+    delete entry.lease;
+    entry.pendingResume = { handback: true, note, from: "human" };
+    entry.steerInterrupted = true;
+    setStage(root, slug, state, id, "queued", { reason: "handed back by a person" });
+    saveState(root, slug, state);
+    appendEvent(root, {
+      campaign: slug,
+      ticket: id,
+      type: "session.handback",
+      data: { note: firstLine(note), sessionId: entry.sessionId || null },
+    });
+    return { ok: true, queued: true };
   }
   if (type === "stop") {
     const state = loadState(root, slug);

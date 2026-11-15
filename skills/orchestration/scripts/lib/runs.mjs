@@ -25,6 +25,20 @@ export function sessionIdFor(slug, ticketId, role) {
   return base.replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "");
 }
 
+/* pi stores a session as <timestamp>_<session-id>.jsonl. Resolve by exact
+   suffix so a partial id cannot pick the wrong file. */
+export function sessionFileFor(sessionsDir, sessionId) {
+  if (!sessionsDir || !sessionId) return null;
+  try {
+    const file = fs
+      .readdirSync(sessionsDir)
+      .find((name) => name === `${sessionId}.jsonl` || name.endsWith(`_${sessionId}.jsonl`));
+    return file ? path.join(sessionsDir, file) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function validateReport(report) {
   const errors = [];
   if (!report || typeof report !== "object") return ["report is not an object"];

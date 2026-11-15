@@ -5,9 +5,10 @@ run each ticket through a worker and a cold review, and land only work that
 carries evidence.
 
 Orchestration is an agent skill with a zero-dependency Node supervisor and a
-local panel. The agent plans, revises, approves and answers; the supervisor
-dispatches, checks, reviews, merges and records. You make the decisions that
-need a human, not the command calls.
+local panel. The embedded worker terminal is optional and uses `node-pty` and
+`ws`; the rest of the panel runs without them. The agent plans, revises,
+approves and answers; the supervisor dispatches, checks, reviews, merges and
+records. You make the decisions that need a human, not the command calls.
 
 ## Why it exists
 
@@ -430,14 +431,42 @@ The panel shows:
   **Queued**, **Working**, **Needs you** and **Done** lanes with counts and
   cards; the graph marks a ticket **independent** when it has no blockers and
   nothing depends on it;
+- a **Sessions** tab for each campaign: one pi thread per ticket, a readable
+  transcript, a read-only fork, an explicit **Stop and take over**, and
+  **Hand back**; hand-back still runs the checks, report, review and
+  integration;
 - the ticket drawer, including steering and evidence;
 - acceptance evidence, findings, reviewed SHA and integration state in the
   ticket drawer;
 - draft coverage and **Approve and run** for a clean draft;
 - inbox questions, failures and delivery reviews.
 
-The panel never hosts a chat and never calls a model. It enqueues commands; the
+The panel does not host campaign decisions or a general chat. It hosts the
+worker session terminal; approvals, answers and delivery reviews still go
+through the agent or a binary action. The panel enqueues commands; the
 supervisor is the only writer of runtime state.
+
+### Embedded worker terminal
+
+The **Sessions** tab can host a real pi terminal in the browser. The browser
+assets are vendored; the PTY bridge is optional:
+
+```bash
+cd /path/to/your/project
+npm install node-pty ws
+```
+
+Install them in the project root, not inside the skill folder. If they are
+elsewhere, point `ORCH_TERMINAL_MODULES` at the `node_modules` directory before
+starting the panel. Without them the panel still works and the Sessions tab
+offers a copyable `pi --session-id ...` command instead.
+
+The terminal is loopback-only. Use an SSH tunnel for remote access. A live run
+cannot be attached to directly: the panel offers **Fork** or **Stop and take
+over**. On hand-back it terminates the PTY, resumes the same pi session to
+write the report, then runs the normal review and integration. Human-owned
+tickets are never dispatched by the supervisor.
+
 
 ## Files
 

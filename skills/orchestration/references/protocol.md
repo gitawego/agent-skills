@@ -21,6 +21,19 @@ Two invariants: a stage change is always caused by an event in the ledger, and n
 
 A ticket that fails and then receives a human answer returns to `queued`, not to `working`, until a supervisor picks it up again.
 
+## Runtime
+
+All new work, review, judge and merge runs use `pi`. Gemini is a pi model binding (`opencode-go/gemini-4-argon` in this environment), not an ACP call. `agy-acp` and `opencode-acp` are frozen for legacy campaigns: an existing campaign may finish and archive on its adapter, but `bind` refuses a new ACP binding unless the campaign already carries one or `--force` is explicit. Legacy ACP campaigns have no pi terminal.
+
+## Human sessions
+
+A ticket may be owned by a person. `state.tickets[id].owner = "human"` is a dispatch barrier: the supervisor never claims it, and the queue reason says so.
+
+- **Takeover** stops the live run, keeps the worktree and session, sets `working` with `owner: "human"`, and does not consume an attempt.
+- **Hand-back** writes a note into `pendingResume`, resumes the same pi session, asks the worker to inspect the worktree, run the checks and write a report, then follows the normal review and integration path. It does not bypass the gate.
+- A terminal turn's tokens and dollars are appended to `human-sessions.jsonl` in the campaign state directory and reported separately in History and `CLOSE.md`; they are not folded into a run's cost.
+- A dead PTY leaves the ticket human-owned. There is no auto-resume into a half-edited worktree.
+
 ## Campaign stages
 
 `draft` → `awaiting_approval` → `running` ⇄ `paused` → `delivered` → `archived`. `cancel` stops every live run and lands in `paused`; `archive` is only reachable from `delivered` or `paused`, and only when nothing is alive. `paused` stops dispatch; runs already alive finish, and their gates are evaluated, but nothing new starts. A budget exhaustion, a human pause, and a config error all use `paused`, with the reason on the campaign. A console-wide dispatch pause stops new claims in every campaign without changing any campaign's stage.

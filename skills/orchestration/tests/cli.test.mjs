@@ -210,6 +210,10 @@ test("init, start, catalog, bind, plan and approve work from the CLI", () => {
   assert.equal(bind.status, 0, bind.stderr);
   assert.match(fs.readFileSync(campaignFile, "utf8"), /model-strong/);
 
+  const frozen = cli(dir, ["bind", "make-the-thing-work", "code", `${MODELS.strong}:high`, "--adapter", "agy-acp"]);
+  assert.equal(frozen.status, 1, "new ACP bindings are frozen");
+  assert.match(frozen.stderr, /frozen for new work/);
+
   const approveNoTickets = cli(dir, ["approve", "make-the-thing-work"]);
   assert.equal(approveNoTickets.status, 1);
   assert.match(approveNoTickets.stderr, /no tickets/);

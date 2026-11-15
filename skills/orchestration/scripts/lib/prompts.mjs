@@ -257,21 +257,30 @@ export function renderSteers(steers) {
   ].join("\n");
 }
 
-export function resumePrompt({ ticket, answer, citation, findings, steers = [], attachments = [] }) {
+export function resumePrompt({ ticket, answer, citation, findings, steers = [], attachments = [], handback = false, handbackNote = "" }) {
   const lines = [];
-  const steering = renderSteers(steers);
-  if (steering) lines.push(steering, "");
-  if (findings) {
-    const detail = Array.isArray(findings) ? renderFindings(findings) : String(findings).trim();
-    lines.push("Your work was reviewed and sent back. Blocking findings:", "");
-    lines.push(detail && detail !== "check \"tests\" failed:" ? detail : "The gate failed and recorded no detail.");
-    lines.push("", "Run the campaign's checks yourself now, fix everything they report, then report again.");
-  } else if (answer) {
-    lines.push("Answer to your question:", "", answer, "");
-    if (citation) lines.push(`Source: ${citation}`, "");
-    lines.push("Continue the ticket. Do not ask the same question again.");
+  if (handback) {
+    lines.push("A human took over this ticket in a terminal and handed it back.");
+    if (handbackNote) lines.push("", "Their note:", "", handbackNote);
+    lines.push(
+      "",
+      "Inspect the current worktree and the changes made in this session. Run the campaign's checks, fix anything broken, and produce a complete report with acceptance evidence. Do not redo work that is already correct.",
+    );
   } else {
-    lines.push("Continue the ticket from where the interrupted turn stopped.");
+    const steering = renderSteers(steers);
+    if (steering) lines.push(steering, "");
+    if (findings) {
+      const detail = Array.isArray(findings) ? renderFindings(findings) : String(findings).trim();
+      lines.push("Your work was reviewed and sent back. Blocking findings:", "");
+      lines.push(detail && detail !== "check \"tests\" failed:" ? detail : "The gate failed and recorded no detail.");
+      lines.push("", "Run the campaign's checks yourself now, fix everything they report, then report again.");
+    } else if (answer) {
+      lines.push("Answer to your question:", "", answer, "");
+      if (citation) lines.push(`Source: ${citation}`, "");
+      lines.push("Continue the ticket. Do not ask the same question again.");
+    } else {
+      lines.push("Continue the ticket from where the interrupted turn stopped.");
+    }
   }
   lines.push("", `Ticket: ${ticket}. Report when the acceptance criteria hold, or when you are genuinely stuck.`);
   if (attachments.length) lines.push("", "Attached images:", ...attachments.map((file) => `- ${file}`));

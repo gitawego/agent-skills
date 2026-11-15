@@ -1,7 +1,7 @@
 /* Orchestration panel. No framework, no build step: state in, DOM out. */
 
 const VIEWS = ["fleet", "inbox", "acceptance", "settings"];
-const CAMPAIGN_TABS = ["overview", "tickets", "configure", "history"];
+const CAMPAIGN_TABS = ["overview", "tickets", "sessions", "configure", "history"];
 const FLEET_STATUS = ["all", "running", "queued", "acceptance", "done"];
 const STAGES = [
   { id: "blocked", label: "Blocked", family: "idle" },
@@ -75,6 +75,16 @@ let refreshTimer = null;
 let previous = new Map();
 let fresh = new Set();
 let clock = null;
+let sessionTicket = null;
+let sessionTerm = null;
+let sessionFit = null;
+let sessionSocket = null;
+let sessionStatus = null;
+let sessionTranscriptKey = null;
+let sessionTranscriptData = null;
+let sessionTermKey = null;
+let sessionTermMode = null;
+let sessionTakeoverTimer = null;
 const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 let drafts = {};
 let dirtyViews = new Set();
@@ -874,10 +884,23 @@ function renderChrome() {
 }
 
 function render({ preserveScroll = false } = {}) {
+  if (sessionTerm && selected.root && selected.campaign && sessionTermKey && !sessionTermKey.startsWith(`${selected.root}|${selected.campaign}/`)) {
+    disposeTerminal();
+  }
+  if (!(view === "campaign" && campaignTab === "sessions")) {
+    if (sessionTerm || sessionSocket) disposeTerminal();
+    sessionStatus = null;
+    sessionTranscriptKey = null;
+    sessionTranscriptData = null;
+  }
   const scroll = preserveScroll ? window.scrollY : 0;
   const fleetScroll = preserveScroll ? document.querySelector(".fleet-wrap")?.scrollLeft || 0 : 0;
   renderChrome();
   if (!state) return;
+  if (view === "campaign" && campaignTab === "sessions" && sessionTerm) {
+    refreshSessionStatus();
+    return;
+  }
   if (view === "fleet") {
     app.innerHTML = viewFleet();
     paintFleet();
@@ -886,6 +909,7 @@ function render({ preserveScroll = false } = {}) {
   else if (view === "acceptance") app.innerHTML = viewAcceptance(acceptanceItems());
   else if (view === "settings") app.innerHTML = viewSettings();
 
+  if (view === "campaign" && campaignTab === "sessions") setTimeout(mountSessions, 0);
   markFresh();
   if (preserveScroll) {
     window.scrollTo(0, scroll);
@@ -1073,6 +1097,7 @@ function campaignSubnav(c) {
   const items = [
     ["overview", "Overview"],
     ["tickets", `Tickets ${c.tickets.length}${c.draft?.tickets ? ` · ${c.draft.tickets} draft` : ""}`],
+    ["sessions", "Sessions"],
     ["configure", "Configure"],
     ["history", "History"],
   ];
@@ -1100,6 +1125,9 @@ function campaignHeader(c) {
   const steeringChip = steering
     ? `<span class="quality-chip" data-state="pending">steering ${steering}</span>`
     : "";
+  const legacyChip = (c.legacyAdapters || []).length
+    ? `<span class="quality-chip" data-state="legacy">legacy ${esc(c.legacyAdapters.join(", "))}</span>`
+    : "";
   return `<div class="campaign-head">
       <div class="eyebrow">${esc(c.project)} / ${esc(c.slug)} · ${esc(c.stage)}</div>
       <h1>${esc(goal || c.slug)}</h1>
@@ -1117,7 +1145,9 @@ function campaignHeader(c) {
       ${reviewedChip}
       ${steeringChip}
       ${integration}
+      ${legacyChip}
       <span>${num(c.spend.tokens)} tok · ${usd(c.spend.dollars)}${c.spend.unmetered ? ` · ${esc(c.spend.unmetered)} unmetered` : ""}</span>
+      ${c.humanSpend?.tokens ? `<span>human ${num(c.humanSpend.tokens)} tok · ${usd(c.humanSpend.dollars)}</span>` : ""}
       <span>${c.cacheHit == null ? "cache —" : `${(c.cacheHit * 100).toFixed(1)}% cached`}</span>
       <span class="spacer"></span>
       ${campaignControls(c)}
@@ -1789,6 +1819,8 @@ function attentionBlock(c) {
 
 function campaignHistory(c) {
   const spend = c.spendByModel || [];
+  const human = c.humanSpend || { tokens: 0, dollars: 0, turns: 0 };
+  const humanRows = (c.humanSessions || []).slice().reverse();
   return `${planAuditBlock(c)}
     ${draftBlock(c)}
     ${attentionBlock(c)}
@@ -1806,6 +1838,21 @@ function campaignHistory(c) {
           }
         </tbody>
       </table>
+    </section>
+    <section class="history-spend">
+      <header><h2 class="page">Human sessions</h2><span class="hint">${human.turns} terminal session${human.turns === 1 ? "" : "s"} · ${num(human.tokens)} tokens · ${usd(human.dollars)}</span></header>
+      ${
+        humanRows.length
+          ? `<table class="ticket-table">
+              <thead><tr><th>#</th><th>Mode</th><th class="num">Tokens</th><th class="num">Cost</th><th>When</th></tr></thead>
+              <tbody>${humanRows
+                .map(
+                  (row) => `<tr><td class="mono" data-label="#">${esc(row.ticket)}</td><td class="mono" data-label="Mode">${esc(row.mode || "attach")}</td><td class="num" data-label="Tokens">${num(row.tokens)}</td><td class="num" data-label="Cost">${usd(row.dollars)}</td><td class="mono" data-label="When">${esc(clockOf(row.at))}</td></tr>`,
+                )
+                .join("")}</tbody>
+            </table>`
+          : `<p class="hint">No human terminal sessions recorded. Hand-back reports are attributed to the ticket's normal runs.</p>`
+      }
     </section>
     ${ledger(c, 40)}
     <section class="settings-block">
@@ -1830,17 +1877,425 @@ function campaignHistory(c) {
     ${deliveryBlock(c)}`;
 }
 
+function sessionTickets(c) {
+  return (c.tickets || []).filter((ticket) => ticket.session?.id || ticket.session?.exists);
+}
+
+function sessionState(ticket) {
+  if (ticket.owner === "human") return { label: "human", family: "person" };
+  if (ticket.session?.live) return { label: "live", family: "active" };
+  if (ticket.session?.exists) return { label: "idle", family: "done" };
+  return { label: "no session", family: "idle" };
+}
+
+function sessionRow(c, ticket, active) {
+  const state = sessionState(ticket);
+  return `<button class="session-row${active ? " active" : ""}" data-act="session-select" data-ticket="${esc(ticket.id)}" aria-current="${active}">
+    <span class="session-row-top"><span class="mono">${esc(ticket.id)}</span><span class="session-pill" data-family="${esc(state.family)}">${esc(state.label)}</span></span>
+    <span class="session-row-title">${esc(ticket.title)}</span>
+    <span class="session-row-meta">${esc(ticket.model || ticket.session?.model || "unbound")}</span>
+  </button>`;
+}
+
+function campaignSessions(c) {
+  const tickets = sessionTickets(c);
+  const chosen = tickets.find((ticket) => ticket.id === sessionTicket) || tickets[0] || c.tickets[0] || null;
+  if (chosen) sessionTicket = chosen.id;
+  if (!c.tickets.length) {
+    return `<div class="empty"><h2>No sessions yet.</h2><p>A ticket gets a pi session after its first work run.</p></div>`;
+  }
+  const sessionId = chosen?.session?.id || "";
+  const owner = chosen?.owner === "human";
+  const live = Boolean(chosen?.session?.live);
+  const hasSession = Boolean(chosen?.session?.exists);
+  const legacy = chosen?.session?.adapter && chosen.session.adapter !== "pi";
+  const question = (c.inbox || []).find(
+    (item) => item.status === "open" && item.ticket === chosen?.id && (item.kind === "question" || item.kind === "needs_answer"),
+  );
+  return `<div class="sessions-workspace" data-session-ticket="${esc(chosen?.id || "")}">
+    <aside class="session-list" aria-label="Ticket sessions">
+      <header><span class="eyebrow">sessions</span><span class="hint">${tickets.filter((ticket) => ticket.session?.exists).length}/${c.tickets.length} with history</span></header>
+      <div class="session-list-body">${c.tickets.map((ticket) => sessionRow(c, ticket, ticket.id === chosen?.id)).join("")}</div>
+    </aside>
+    <section class="session-room">
+      <header class="session-room-head">
+        <div>
+          <div class="eyebrow">${esc(c.slug)} / ${esc(chosen?.id || "—")} · ${esc(chosen?.stage || "")}</div>
+          <h2>${esc(chosen?.title || "Select a ticket")}</h2>
+          <div class="session-room-meta">
+            <span>${owner ? "human-owned" : live ? "supervisor running" : "read-only history"}</span>
+            <span class="mono">${esc(chosen?.model || chosen?.session?.model || "no model")}</span>
+            ${sessionId ? `<span class="mono">${esc(sessionId)}</span>` : ""}
+          </div>
+        </div>
+        <div class="actions session-actions">
+          ${hasSession && !legacy ? `<button class="btn ghost" data-act="session-fork">Fork</button>` : ""}
+          ${owner && !live ? `<button class="btn" data-act="session-attach">Attach</button>` : ""}
+          ${!owner && chosen?.session?.id && !["done", "dropped"].includes(chosen.stage) && !legacy ? `<button class="btn signal" data-act="session-takeover">Stop and take over</button>` : ""}
+          ${owner && !live ? `<button class="btn primary" data-act="session-handback">Hand back</button>` : ""}
+          ${hasSession ? `<button class="btn ghost" data-act="session-copy">Copy command</button>` : ""}
+        </div>
+      </header>
+      ${legacy ? `<div class="session-unavailable">Legacy ACP session. Use the agent or CLI; the pi terminal is not available.</div>` : ""}
+      ${!hasSession ? `<div class="session-unavailable">This ticket has no pi session yet. It gets one after the first work run.</div>` : ""}
+      ${question ? `<div class="session-question">
+        <span class="eyebrow">needs you</span>
+        <p>${esc(question.question?.text || question.title || "The worker needs an answer.")}</p>
+        ${(question.question?.options || []).length ? `<p class="hint">options: ${question.question.options.map(esc).join(" · ")}</p>` : ""}
+        <textarea id="session-answer-text" rows="2" placeholder="Answer the worker…"></textarea>
+        <div class="actions"><button class="btn primary" data-act="session-answer" data-item="${esc(question.id)}">Answer</button></div>
+      </div>` : ""}
+      <div class="session-body">
+        <section class="session-transcript" id="session-transcript" aria-label="Session transcript">
+          <p class="hint">Loading transcript…</p>
+        </section>
+        <section class="terminal-shell">
+          <header class="terminal-head">
+            <span id="terminal-status">${owner ? "terminal detached" : "read-only fork"}</span>
+            <span class="actions">
+              <button class="btn ghost" data-act="session-reconnect">Connect</button>
+            </span>
+          </header>
+          <div class="terminal-host" id="terminal-host">
+            ${hasSession && !legacy ? `<div class="terminal-placeholder">Choose <b>Fork</b> for a read-only copy, or take over to type in this session.</div>` : ""}
+          </div>
+        </section>
+      </div>
+      ${owner ? `<div class="handback-bar">
+        <textarea id="handback-note" rows="2" placeholder="What changed? Hand-back note for the supervisor…"></textarea>
+        <span class="hint">Hand back writes a report, runs the checks, then the normal review and integration.</span>
+      </div>` : ""}
+    </section>
+  </div>`;
+}
+
+function transcriptMessage(message) {
+  const role = message.role;
+  if (role === "system") return "";
+  const text = String(message.text || "");
+  if (role === "toolResult") {
+    return `<details class="thread-tool-result">
+      <summary><span class="thread-role">${esc(message.toolName || "tool")}</span> result</summary>
+      <pre>${esc(text)}</pre>
+    </details>`;
+  }
+  if (role === "user") {
+    if (text.length > 1400) {
+      return `<details class="thread-prompt"><summary><span class="thread-role">user</span> ticket prompt · ${text.length} chars</summary><pre>${esc(text)}</pre></details>`;
+    }
+    return `<div class="thread-message" data-role="user"><span class="thread-role">user</span><div class="thread-text">${esc(text)}</div></div>`;
+  }
+  const tools = (message.toolCalls || [])
+    .map((call) => {
+      const args = call.args?.command || call.args?.path || JSON.stringify(call.args || {});
+      return `<div class="thread-call"><span class="thread-tool">${esc(call.name)}</span><code>${esc(String(args).slice(0, 900))}</code></div>`;
+    })
+    .join("");
+  if (!text && !tools) return "";
+  return `<div class="thread-message" data-role="assistant">
+    <span class="thread-role">assistant</span>
+    ${text ? `<div class="thread-text">${esc(text)}</div>` : ""}
+    ${tools}
+  </div>`;
+}
+
+function renderTranscript(data) {
+  const box = document.getElementById("session-transcript");
+  if (!box) return;
+  const messages = (data.messages || []).map(transcriptMessage).filter(Boolean);
+  box.innerHTML = `<div class="thread-head"><span>${data.total || messages.length} messages</span><span>${data.truncated ? "tail only" : "full session"}</span></div>
+    ${messages.join("") || `<p class="hint">No readable messages yet.</p>`}`;
+}
+
+async function loadTranscript() {
+  const c = current();
+  const ticket = c?.tickets.find((t) => t.id === sessionTicket);
+  const box = document.getElementById("session-transcript");
+  if (!box) return;
+  if (!ticket?.session?.id || !ticket.session.exists) {
+    sessionTranscriptKey = null;
+    sessionTranscriptData = null;
+    box.innerHTML = `<p class="hint">${ticket?.session?.adapter && ticket.session.adapter !== "pi" ? "Legacy ACP session; no pi transcript." : "No pi session file yet."}</p>`;
+    return;
+  }
+  const key = `${c.slug}/${ticket.id}/${ticket.session.id}`;
+  if (key === sessionTranscriptKey) {
+    if (sessionTranscriptData) renderTranscript(sessionTranscriptData);
+    return;
+  }
+  sessionTranscriptKey = key;
+  try {
+    const data = await api(`/api/transcript?project=${encodeURIComponent(c.root)}&campaign=${encodeURIComponent(c.slug)}&session=${encodeURIComponent(ticket.session.id)}`);
+    sessionTranscriptData = data;
+    renderTranscript(data);
+  } catch (err) {
+    sessionTranscriptData = null;
+    box.innerHTML = `<p class="hint">${esc(err.message)}</p>`;
+  }
+}
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) return resolve();
+    const script = document.createElement("script");
+    script.src = src;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error(`could not load ${src}`));
+    document.head.append(script);
+  });
+}
+
+async function ensureXterm() {
+  if (!window.Terminal) await loadScript("/vendor/xterm/xterm.js");
+  if (!window.FitAddon) await loadScript("/vendor/xterm/addon-fit.js");
+  if (!window.Terminal || !window.FitAddon) throw new Error("xterm.js did not load");
+}
+
+function terminalTheme() {
+  return document.documentElement.dataset.theme === "light"
+    ? { background: "#f1f3ee", foreground: "#12171a", cursor: "#bf4128", selectionBackground: "#c2cac3" }
+    : { background: "#0a0c11", foreground: "#e9ecf3", cursor: "#ff6f4d", selectionBackground: "#232936" };
+}
+
+function setTerminalStatus(text, state = "") {
+  const el = document.getElementById("terminal-status");
+  if (!el) return;
+  el.textContent = text;
+  el.dataset.state = state;
+}
+
+function terminalCommand(c, ticket, mode) {
+  const session = ticket?.session;
+  if (!session?.id) return "";
+  const args = mode === "attach"
+    ? `--session-id ${session.id} --session-dir ${c.paths?.sessions || ".orchestration/campaigns/" + c.slug + "/sessions"}`
+    : `--fork ${session.id} --session-dir ${c.paths?.sessions || ".orchestration/campaigns/" + c.slug + "/sessions"} --tools read,grep,find,ls`;
+  return `cd ${session.workdir || c.root} && pi ${args}`;
+}
+
+function disposeTerminal({ keepStatus = false, terminate = false } = {}) {
+  const shouldTerminate = terminate || sessionTermMode === "fork";
+  clearTimeout(sessionTakeoverTimer);
+  sessionTakeoverTimer = null;
+  if (sessionSocket) {
+    if (shouldTerminate && sessionSocket.readyState === 1) {
+      try {
+        sessionSocket.send(JSON.stringify({ type: "terminate" }));
+      } catch {
+        /* already gone */
+      }
+    }
+    try {
+      sessionSocket.close(1000, shouldTerminate ? "terminate" : "detach");
+    } catch {
+      /* already closed */
+    }
+    sessionSocket = null;
+  }
+  if (sessionTerm) {
+    try {
+      sessionTerm.dispose();
+    } catch {
+      /* already disposed */
+    }
+    sessionTerm = null;
+  }
+  sessionFit = null;
+  sessionTermKey = null;
+  sessionTermMode = null;
+  const host = document.getElementById("terminal-host");
+  if (host && !keepStatus) host.innerHTML = "";
+}
+
+function fitTerminal() {
+  if (!sessionFit) return;
+  try {
+    sessionFit.fit();
+  } catch {
+    /* hidden or zero-size */
+  }
+}
+
+async function connectTerminal(mode = null) {
+  if (window.matchMedia("(max-width: 860px)").matches) {
+    toast("The embedded terminal is desktop-only; use the transcript or a native pi session");
+    return;
+  }
+  const c = current();
+  const ticket = c?.tickets.find((t) => t.id === sessionTicket);
+  if (!c || !ticket) return;
+  if (!sessionStatus) {
+    await refreshSessionStatus();
+  }
+  if (!sessionStatus?.available) {
+    setTerminalStatus(sessionStatus?.reason || "terminal unavailable", "error");
+    toast(sessionStatus?.reason || "terminal unavailable");
+    return;
+  }
+  const chosen = mode || sessionStatus.mode || "fork";
+  if (chosen === "attach" && !sessionStatus.canAttach) {
+    toast("Stop the run and take over before attaching");
+    return;
+  }
+  try {
+    await ensureXterm();
+  } catch (err) {
+    setTerminalStatus(err.message, "error");
+    return;
+  }
+  const previousMode = sessionTermMode;
+  disposeTerminal({ terminate: previousMode === "fork" });
+  const host = document.getElementById("terminal-host");
+  if (!host) return;
+  host.innerHTML = "";
+  const term = new window.Terminal({
+    convertEol: true,
+    cursorBlink: true,
+    fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+    fontSize: 12.5,
+    lineHeight: 1.25,
+    scrollback: 5000,
+    theme: terminalTheme(),
+  });
+  const fit = new window.FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(host);
+  sessionTerm = term;
+  sessionFit = fit;
+  sessionTermKey = `${c.root}|${c.slug}/${ticket.id}/${chosen}`;
+  sessionTermMode = chosen;
+  setTimeout(fitTerminal, 30);
+  const url = new URL("/api/terminal", location.origin);
+  url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  url.searchParams.set("project", c.root);
+  url.searchParams.set("campaign", c.slug);
+  url.searchParams.set("ticket", ticket.id);
+  url.searchParams.set("mode", chosen);
+  url.searchParams.set("cols", String(term.cols || 100));
+  url.searchParams.set("rows", String(term.rows || 30));
+  if (token) url.searchParams.set("token", token);
+  const ws = new WebSocket(url);
+  sessionSocket = ws;
+  setTerminalStatus(chosen === "attach" ? "connecting to session…" : "opening read-only fork…");
+  ws.onopen = () => setTerminalStatus(chosen === "attach" ? "attached · you own this session" : "fork · read-only", "live");
+  ws.onmessage = (event) => {
+    let message;
+    try {
+      message = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    if (message.type === "data") term.write(message.data);
+    if (message.type === "ready") {
+      if (message.buffer) term.write(message.buffer);
+      setTerminalStatus(chosen === "attach" ? "attached · you own this session" : "fork · read-only", "live");
+      fitTerminal();
+      ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+    }
+    if (message.type === "exit") setTerminalStatus(`session exited (${message.code ?? "?"})`, "ended");
+    if (message.type === "error") setTerminalStatus(message.error, "error");
+  };
+  ws.onerror = () => setTerminalStatus("terminal connection failed", "error");
+  ws.onclose = () => setTerminalStatus((sessionStatus?.owner === "human" ? "detached · session kept" : "fork closed"), "ended");
+  term.onData((data) => {
+    if (sessionSocket?.readyState === 1) sessionSocket.send(JSON.stringify({ type: "input", data }));
+  });
+  term.onResize(({ cols, rows }) => {
+    if (sessionSocket?.readyState === 1) sessionSocket.send(JSON.stringify({ type: "resize", cols, rows }));
+  });
+}
+
+async function refreshSessionStatus() {
+  const c = current();
+  const ticket = c?.tickets.find((t) => t.id === sessionTicket);
+  if (!c || !ticket) return;
+  try {
+    sessionStatus = await api(
+      `/api/terminal/status?project=${encodeURIComponent(c.root)}&campaign=${encodeURIComponent(c.slug)}&ticket=${encodeURIComponent(ticket.id)}`,
+    );
+  } catch (err) {
+    sessionStatus = { ok: false, available: false, reason: err.message };
+  }
+  const status = document.getElementById("terminal-status");
+  if (status && !sessionTerm) {
+    status.textContent = sessionStatus.available ? (sessionStatus.canAttach ? "terminal detached" : "read-only fork") : sessionStatus.reason;
+    status.dataset.state = sessionStatus.available ? "" : "error";
+  }
+}
+
+async function mountSessions() {
+  await refreshSessionStatus();
+  await loadTranscript();
+}
+
+function takeoverSession() {
+  const c = current();
+  const ticket = c?.tickets.find((t) => t.id === sessionTicket);
+  if (!c || !ticket) return;
+  command(c.root, { type: "session.takeover", campaign: c.slug, ticket: ticket.id });
+  sessionTranscriptKey = null;
+  sessionTranscriptData = null;
+  setTerminalStatus("stopping the run…");
+  clearInterval(sessionTakeoverTimer);
+  let tries = 0;
+  sessionTakeoverTimer = setInterval(async () => {
+    tries++;
+    await refreshSessionStatus();
+    if (sessionStatus?.canAttach) {
+      clearInterval(sessionTakeoverTimer);
+      sessionTakeoverTimer = null;
+      await load({ quiet: true });
+      await connectTerminal("attach");
+      return;
+    }
+    if (tries > 20) {
+      clearInterval(sessionTakeoverTimer);
+      sessionTakeoverTimer = null;
+      setTerminalStatus("takeover did not finish; check the ticket state", "error");
+    }
+  }, 800);
+}
+
+function handbackSession() {
+  const c = current();
+  const ticket = c?.tickets.find((t) => t.id === sessionTicket);
+  if (!c || !ticket) return;
+  const note = String(document.getElementById("handback-note")?.value || "").trim();
+  if (!note) {
+    toast("Add a hand-back note first");
+    return;
+  }
+  disposeTerminal({ terminate: true });
+  sessionTranscriptKey = null;
+  sessionTranscriptData = null;
+  setTimeout(() => {
+    command(c.root, { type: "session.handback", campaign: c.slug, ticket: ticket.id, note });
+  }, 150);
+}
+
+function copySessionCommand() {
+  const c = current();
+  const ticket = c?.tickets.find((t) => t.id === sessionTicket);
+  if (!c || !ticket) return;
+  const commandText = terminalCommand(c, ticket, sessionStatus?.canAttach ? "attach" : "fork");
+  if (!commandText) return toast("No session to open");
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(commandText).then(() => toast("Copied"), () => copyFallback(commandText));
+  else copyFallback(commandText);
+}
+
 function viewCampaign() {
   const c = current();
   if (!c) return noCampaigns();
   const body =
     campaignTab === "tickets"
       ? campaignTickets(c)
-      : campaignTab === "configure"
-        ? campaignConfigure(c)
-        : campaignTab === "history"
-          ? campaignHistory(c)
-          : campaignOverview(c);
+      : campaignTab === "sessions"
+        ? campaignSessions(c)
+        : campaignTab === "configure"
+          ? campaignConfigure(c)
+          : campaignTab === "history"
+            ? campaignHistory(c)
+            : campaignOverview(c);
   return `${campaignHeader(c)}${body}`;
 }
 
@@ -2702,6 +3157,33 @@ document.addEventListener("click", (event) => {
     case "ticket-view":
       ticketView = ["board", "graph"].includes(target.dataset.view) ? target.dataset.view : "list";
       return render();
+    case "session-select":
+      disposeTerminal();
+      sessionStatus = null;
+      sessionTranscriptKey = null;
+      sessionTranscriptData = null;
+      sessionTicket = target.dataset.ticket || null;
+      return render();
+    case "session-fork":
+      return connectTerminal("fork");
+    case "session-attach":
+      return connectTerminal("attach");
+    case "session-takeover":
+      return takeoverSession();
+    case "session-handback":
+      return handbackSession();
+    case "session-answer": {
+      const text = String(document.getElementById("session-answer-text")?.value || "").trim();
+      if (!text) {
+        toast("Write an answer first");
+        return;
+      }
+      return command(selected.root, { type: "answer", campaign: selected.campaign, item, text });
+    }
+    case "session-copy":
+      return copySessionCommand();
+    case "session-reconnect":
+      return connectTerminal(sessionStatus?.canAttach ? "attach" : "fork");
     case "fleet-status":
       fleetStatus = target.dataset.status;
       fleetLimit = 200;
@@ -2964,4 +3446,5 @@ if (!token) {
       el.textContent = elapsed(el.dataset.since);
     });
   }, 1000);
+  window.addEventListener("resize", () => fitTerminal());
 }

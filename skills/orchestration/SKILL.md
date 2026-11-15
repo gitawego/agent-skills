@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 A **campaign** turns one paragraph of intent into landed work. You plan it as **tickets** with blocking edges, approve the model binding for each **ticket kind**, then a supervisor dispatches **runs** in parallel, up to its **slots** and provider quota windows. Questions stop at the **inbox**; finished deliveries wait in **acceptance**; work that passes its **gates** lands.
 
-The supervisor is a zero-dependency Node process (`scripts/orchestrate.mjs`) plus a local panel. For the human-facing guide, see [README.md](README.md).
+The supervisor is a zero-dependency Node process (`scripts/orchestrate.mjs`) plus a local panel. The embedded worker terminal is optional and uses `node-pty` and `ws`; the rest of the panel runs without them. For the human-facing guide, see [README.md](README.md).
 
 ## Attention
 
@@ -72,7 +72,10 @@ If the draft is clean and `plan_gate: auto`, `plan import --submit` applies it a
 
 The panel is a flight deck: it shows the plan, the tickets, the next action and the telemetry, and it configures the fleet. It never hosts the conversation. It has one manual **Tickets → New ticket** form for a single one-off slice; do not send the whole plan there. Approvals, answers and delivery reviews happen in this session, with a copyable command shown in the panel. The supervisor never invents tickets.
 
-The campaign **Overview** carries the paths that used to live only in chat: project root, campaign directory, ticket directory, context, plan, close report and delivery branch/base. Point the human there instead of repeating them; **Tickets** keeps the card board and the dependency graph, and **History** keeps the delivery record.
+The campaign **Overview** carries the paths that used to live only in chat: project root, campaign directory, ticket directory, context, plan, close report and delivery branch/base. Point the human there instead of repeating them; **Tickets** keeps the card board and the dependency graph, and **History** keeps the delivery record. **Sessions** shows one pi thread per ticket: a human can fork it read-only, take over a live ticket, or hand it back. Hand-back resumes the same session to write a report and still runs the checks, review and integration; it is not a gate bypass. The embedded terminal is optional: it needs `node-pty` and `ws` installed in the project root (or `ORCH_TERMINAL_MODULES` pointing at them); without them the panel offers a copyable `pi --session-id` command.
+
+**Session authority.** While a person is attached to a worker, the leader may answer technical or implementation questions with a citation and record the answer as a decision. Escalate scope changes, acceptance criteria, budget, secrets, destructive actions and delivery. A direct chat answer never bypasses a gate.
+
 
 **Right-size the slices.** A ticket is an independently verifiable outcome, not a file, a layer, or a step. Start with **one ticket**. Split only when each slice is independently demoable and can proceed without a reasoning handoff; two or three are normal for a genuinely independent parallel effort. A fourth ticket triggers a budget warning, six or more asks for a written reason, and 16 is refused. Do not split by file, layer, or create “prepare”/“use it” pairs; merge them unless each is demoable alone. Every ticket costs a work run plus a review run and a fresh context reconstruction. See [references/protocol.md](references/protocol.md#context-and-the-plan) for the fragmentation and budget rules, and [docs/ADR-001-ticket-sizing-and-context.md](docs/ADR-001-ticket-sizing-and-context.md) for the decision.
 

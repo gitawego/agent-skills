@@ -931,6 +931,15 @@ const commands = {
     const campaign = readCampaign(root, slug);
     const runner = runnerConfig(loadConsole(), campaign.data);
     const adapterId = flags.adapter || runner.adapter;
+    const legacyCampaign = Object.values(campaign.data.kinds || {}).some((kind) =>
+      (kind.models || []).some((model) => (model.adapter || runner.adapter) !== "pi"),
+    );
+    if (adapterId !== "pi" && !legacyCampaign && !flags.force) {
+      throw new UserError(`ACP adapter "${adapterId}" is frozen for new work`, [
+        "Bind the ticket kinds to pi; Gemini is a pi model.",
+        "A legacy campaign that already has an ACP binding may keep it; --force is the explicit escape.",
+      ]);
+    }
     try {
       if (adapterId !== "pi") refreshCatalog(adapterId, { cwd: root });
     } catch (err) {

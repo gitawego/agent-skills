@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { sandbox, project, writeConsole, writeCampaign, writeTicket, commitAll, scenario, sleep, gitOut, MODELS } from "./helpers.mjs";
-import { tick, applyCommand, deliveryAudit } from "../scripts/lib/engine.mjs";
+import { tick, applyCommand, deliveryAudit, writeClose } from "../scripts/lib/engine.mjs";
 import { campaignView } from "../scripts/lib/view.mjs";
 import { loadState, saveState } from "../scripts/lib/state.mjs";
 import { loadPlan } from "../scripts/lib/plan.mjs";
@@ -110,6 +111,7 @@ test("the campaign view names its project, campaign, ticket and close paths", ()
   assert.equal(view.paths.campaignFileExists, true);
   assert.equal(view.paths.tickets, path.join(dir, "orchestration", slug, "tickets"));
   assert.equal(view.paths.ticketsExists, true);
+  assert.equal(view.paths.sessions, path.join(dir, ".orchestration", "campaigns", slug, "sessions"));
   assert.equal(view.paths.close, path.join(dir, "orchestration", slug, "CLOSE.md"));
   assert.equal(view.paths.closeExists, false, "a running campaign has no close report yet");
   assert.equal(view.paths.planDraft, path.join(dir, ".orchestration", "campaigns", slug, "plan.yml"));
@@ -118,6 +120,80 @@ test("the campaign view names its project, campaign, ticket and close paths", ()
   assert.equal(view.paths.contextExists, false, "no context has been captured yet");
   fs.writeFileSync(view.paths.close, "# close\n\nDelivered.\n");
   assert.equal(campaignView(dir, slug).paths.closeExists, true, "the close report is seen once written");
+});
+
+test("takeover stops the run, blocks dispatch, and handback resumes the same pi session", async () => {
+  const { dir, slug } = setup({ tickets: 1 });
+  scenario({ work: [ready("handback work")], review: [ready("clean")] });
+  const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60_000)"], { detached: true, stdio: "ignore" });
+  try {
+    const state = loadState(dir, slug);
+    state.stage = "running";
+    state.tickets["01"] = {
+      stage: "working",
+      attempts: 1,
+      gateCycles: 0,
+      run: "r-live",
+      sessionId: "orch-demo-01",
+      workdir: dir,
+      owner: null,
+      steers: [],
+    };
+    state.runs["r-live"] = {
+      id: "r-live",
+      ticket: "01",
+      role: "work",
+      status: "live",
+      pid: child.pid,
+      startedAt: new Date().toISOString(),
+      model: MODELS.strong,
+    };
+    state.slots["01"] = "r-live";
+    saveState(dir, slug, state);
+
+    applyCommand(dir, { type: "session.takeover", campaign: slug, ticket: "01" });
+    let view = campaignView(dir, slug);
+    assert.equal(view.tickets[0].owner, "human");
+    assert.equal(view.tickets[0].stage, "working");
+    assert.equal(loadState(dir, slug).runs["r-live"].killed, "takeover");
+
+    tick({ root: dir });
+    view = campaignView(dir, slug);
+    assert.equal(view.tickets[0].owner, "human", "the supervisor leaves a human-owned ticket alone");
+    assert.equal(view.runs.filter((run) => run.status === "live").length, 0, "takeover stopped the live run");
+
+    applyCommand(dir, { type: "session.handback", campaign: slug, ticket: "01", note: "finished the header" });
+    view = campaignView(dir, slug);
+    assert.equal(view.tickets[0].owner, null);
+    assert.equal(view.tickets[0].pendingSteers, 0);
+
+    const after = await until(dir, slug, (v) => v.tickets.every((ticket) => ticket.stage === "done"));
+    assert.equal(after.tickets[0].attempts, 1, "handback does not consume an attempt");
+    const work = Object.values(loadState(dir, slug).runs)
+      .filter((run) => run.ticket === "01" && run.role === "work")
+      .sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)))
+      .at(-1);
+    assert.equal(work.sessionId, "orch-demo-01", "handback resumes the same pi session");
+  } finally {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      /* already gone */
+    }
+  }
+});
+
+test("the close report names human terminal spend separately", () => {
+  const { dir, slug } = setup({ tickets: 1 });
+  const state = loadState(dir, slug);
+  saveState(dir, slug, state);
+  fs.writeFileSync(
+    path.join(dir, ".orchestration", "campaigns", slug, "human-sessions.jsonl"),
+    `${JSON.stringify({ ticket: "01", mode: "attach", tokens: 123, dollars: 0.01, at: "2026-01-01T00:00:00Z" })}\n`,
+  );
+  writeClose(dir, slug, state, loadPlan(dir, slug), readCampaign(dir, slug).data);
+  const close = fs.readFileSync(path.join(dir, "orchestration", slug, "CLOSE.md"), "utf8");
+  assert.match(close, /Human sessions: 1 terminal turn, 123 tokens, \$0\.0100/);
 });
 
 test("three parallel tickets reach done, land on an integration branch, and deliver", async () => {

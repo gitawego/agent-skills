@@ -1,6 +1,7 @@
 // The read model: one snapshot the panel and the CLI both render from.
 import path from "node:path";
 import {
+  campaignSessionsDir,
   consoleFile,
   exists,
   projectStateDir,
@@ -17,7 +18,7 @@ import { listItems } from "./inbox.mjs";
 import { campaignDecisionsFile } from "./util.mjs";
 import { resolveQuotas } from "./quotas.mjs";
 import { costOf, summarizeCost, telemetryOf } from "./telemetry.mjs";
-import { usageFromLog } from "./runs.mjs";
+import { sessionFileFor, usageFromLog } from "./runs.mjs";
 import { planCoverage, planFragmentation, readContext } from "./plan-import.mjs";
 import { deriveAppliedAudit, draftReadiness, planWarnings, readAppliedAudit, readDraft } from "./plan-draft.mjs";
 import { formatCoverage } from "./evidence.mjs";
@@ -221,6 +222,8 @@ export function campaignView(root, slug) {
         adapter: run.adapter || null,
         adapterVersion: run.adapterVersion || null,
         host: run.host || null,
+        sessionId: run.sessionId || null,
+        workdir: run.workdir || null,
         status: run.status,
         startedAt: run.startedAt,
         endedAt: run.endedAt,
@@ -267,6 +270,15 @@ export function campaignView(root, slug) {
   const stateDir = path.join(projectStateDir(root), "campaigns", slug);
   const planDraftFile = path.join(stateDir, "plan.yml");
   const planAppliedFile = path.join(stateDir, "plan.applied.yml");
+  const humanSessions = readJsonl(path.join(stateDir, "human-sessions.jsonl"));
+  const humanSpend = humanSessions.reduce(
+    (sum, entry) => ({
+      tokens: sum.tokens + Number(entry.tokens || 0),
+      dollars: sum.dollars + Number(entry.dollars || 0),
+      turns: sum.turns + 1,
+    }),
+    { tokens: 0, dollars: 0, turns: 0 },
+  );
   const draft = readDraft(root, slug);
   const readiness = draftReadiness(draft);
   const draftWarnings = draft.plan
@@ -291,6 +303,9 @@ export function campaignView(root, slug) {
     const workRun = [...ticketRuns].reverse().find((candidate) => candidate.role === "work") || ticketRuns[ticketRuns.length - 1];
     const chain = effectiveKinds[ticket.data.kind]?.models || [];
     const adapter = workRun?.adapter || chain[0]?.adapter || runner.adapter;
+    const sessionId = entry.sessionId || workRun?.sessionId || null;
+    const sessionFile = sessionFileFor(campaignSessionsDir(root, slug), sessionId);
+    const sessionWorkdir = entry.workdir || workRun?.workdir || root;
     const childRuns = ticketRuns
       .filter((candidate) => candidate.childTokens || candidate.childDollars)
       .map((candidate) => ({
@@ -310,6 +325,18 @@ export function campaignView(root, slug) {
       kind: ticket.data.kind,
       stage: entry.stage || "queued",
       adapter,
+      owner: entry.owner || null,
+      lease: entry.lease || null,
+      session: {
+        id: sessionId,
+        file: sessionFile,
+        exists: Boolean(sessionFile),
+        workdir: sessionWorkdir,
+        adapter,
+        role: workRun?.role || null,
+        live: workRun?.status === "live",
+        model: entry.model || workRun?.model || null,
+      },
       blockedBy: asArray(ticket.data.blocked_by).map((b) => String(b).padStart(2, "0")),
       touches: asArray(ticket.data.touches),
       attachments: asArray(ticket.data.attachments),
@@ -364,6 +391,7 @@ export function campaignView(root, slug) {
       campaignFileExists: exists(campaignFile),
       tickets: path.join(campaignDir, "tickets"),
       ticketsExists: exists(path.join(campaignDir, "tickets")),
+      sessions: campaignSessionsDir(root, slug),
       context: context.file,
       contextExists: exists(context.file),
       close: closeFile,
@@ -416,6 +444,8 @@ export function campaignView(root, slug) {
     ),
     planErrors: state.planErrors || [],
     spend: state.spend,
+    humanSpend,
+    humanSessions: humanSessions.slice(-50),
     delivery: state.delivery || null,
     integration: state.integration || null,
     deliveryAudit: state.deliveryAudit || null,
@@ -464,6 +494,7 @@ export function campaignView(root, slug) {
       acc[ticket.stage] = (acc[ticket.stage] || 0) + 1;
       return acc;
     }, {}),
+    legacyAdapters: [...new Set(tickets.map((ticket) => ticket.adapter).filter((adapter) => adapter && adapter !== "pi"))],
     spendByModel: spendByModel(runs),
     cacheHit: (() => {
       const cached = runs.reduce((n, run) => n + Number(run.cachedReadTokens || 0), 0);

@@ -4,11 +4,13 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { SKILL_DIR, consoleStateDir, ensureDir, globalPanelFile, nowIso, projectStateDir, readJson, registryFile, writeJson } from "./util.mjs";
+import { SKILL_DIR, campaignSessionsDir, consoleStateDir, ensureDir, globalPanelFile, nowIso, projectStateDir, readJson, registryFile, writeJson } from "./util.mjs";
 import { projectView, consoleView } from "./view.mjs";
 import { adaptersView, allModels, catalogsForRoot } from "./catalogs.mjs";
 import { enqueue } from "./commands.mjs";
 import { loadDispatch } from "./dispatch.mjs";
+import { readTranscript } from "./transcript.mjs";
+import { createTerminalHub } from "./terminal.mjs";
 
 const UI = path.join(SKILL_DIR, "assets", "ui");
 const MIME = {
@@ -218,6 +220,40 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
       return;
     }
 
+    if (route === "/api/terminal/status") {
+      const info = terminal.status(
+        url.searchParams.get("project"),
+        String(url.searchParams.get("campaign") || ""),
+        String(url.searchParams.get("ticket") || ""),
+      );
+      json(res, 200, info);
+      return;
+    }
+
+    if (route === "/api/transcript") {
+      const root = url.searchParams.get("project");
+      const campaign = String(url.searchParams.get("campaign") || "");
+      const sessionId = String(url.searchParams.get("session") || "");
+      if (!currentRoots().includes(root) || !/^[a-z0-9][a-z0-9-]*$/.test(campaign) || !/^[A-Za-z0-9._-]+$/.test(sessionId)) {
+        json(res, 400, { error: "unknown project, campaign or session" });
+        return;
+      }
+      try {
+        const transcript = readTranscript({
+          sessionsDir: campaignSessionsDir(root, campaign),
+          sessionId,
+        });
+        if (!transcript) {
+          json(res, 404, { error: "session not found" });
+          return;
+        }
+        json(res, 200, { ok: true, ...transcript });
+      } catch (err) {
+        json(res, 400, { error: err.message });
+      }
+      return;
+    }
+
     if (route === "/api/log") {
       const root = url.searchParams.get("project");
       const campaign = String(url.searchParams.get("campaign") || "");
@@ -346,6 +382,8 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
     json(res, 404, { error: "not found" });
   });
 
+  const terminal = createTerminalHub({ server, currentRoots, authorized, log });
+
   return new Promise((resolve, reject) => {
     let attempt = 0;
     const listen = () => {
@@ -385,6 +423,7 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
           url: `http://${bind}:${actual}/?token=${secret}`,
           close: () => {
             clearInterval(timer);
+            terminal.close();
             for (const client of clients) client.end();
             server.close();
             if (publish) {
