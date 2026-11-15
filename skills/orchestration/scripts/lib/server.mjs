@@ -3,7 +3,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { SKILL_DIR, campaignSessionsDir, consoleStateDir, ensureDir, globalPanelFile, nowIso, projectStateDir, readJson, registryFile, writeJson } from "./util.mjs";
 import { projectView, consoleView } from "./view.mjs";
 import { adaptersView, allModels, catalogsForRoot } from "./catalogs.mjs";
@@ -56,7 +56,7 @@ function readBody(req, limit = 2_000_000) {
   });
 }
 
-export function startServer({ roots = [], getRoots = null, port = 4173, bind = "127.0.0.1", token, onCommand, publish = port !== 0, log = () => {} }) {
+export function startServer({ roots = [], getRoots = null, port = 4173, bind = "127.0.0.1", token, onCommand, publish = port !== 0, cors = [], log = () => {} }) {
   /* the registry can grow while the panel runs, so read it per request */
   const extraRoots = new Set();
   const currentRoots = () => [...new Set([...(getRoots ? getRoots() : roots), ...extraRoots])];
@@ -129,6 +129,19 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
     const route = url.pathname;
+    const origin = req.headers.origin;
+    if (origin && cors.includes(origin)) {
+      res.setHeader("access-control-allow-origin", origin);
+      res.setHeader("access-control-allow-credentials", "true");
+      res.setHeader("access-control-allow-headers", "content-type,x-orch-token");
+      res.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
+      res.setHeader("vary", "Origin");
+    }
+    if (req.method === "OPTIONS" && origin && cors.includes(origin)) {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
 
     if (route !== "/" && route !== "/index.html" && !route.startsWith("/api/")) {
       const relative = path.normalize(route.replace(/^\//, ""));
@@ -217,6 +230,39 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
         clearInterval(beat);
         clients.delete(res);
       });
+      return;
+    }
+
+    if (route === "/api/app/terminal-ticket" && req.method === "POST") {
+      try {
+        const secret = process.env.ORCH_APP_SECRET;
+        if (!secret) throw new Error("this server was not started in app mode");
+        const body = await readBody(req);
+        const info = terminal.status(
+          body.root,
+          String(body.campaign || ""),
+          String(body.ticket || ""),
+        );
+        if (!info.available) throw new Error(info.reason || "terminal unavailable");
+        const mode = body.mode === "attach" ? "attach" : "fork";
+        if (mode === "attach" && !info.canAttach) throw new Error("stop the run and take over before attaching");
+        if (mode === "fork" && !info.canFork) throw new Error("this ticket has no readable session");
+        const payload = {
+          root: info.root,
+          campaign: info.campaign,
+          ticket: info.ticket,
+          sessionId: info.sessionId,
+          sessionsDir: info.sessionsDir,
+          workdir: info.workdir,
+          mode,
+          exp: Math.floor(Date.now() / 1000) + 120,
+        };
+        const body64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
+        const signature = createHmac("sha256", secret).update(body64).digest("hex");
+        json(res, 200, { ok: true, ticket: `${body64}.${signature}`, exp: payload.exp });
+      } catch (err) {
+        json(res, 400, { error: err.message });
+      }
       return;
     }
 
@@ -382,7 +428,7 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
     json(res, 404, { error: "not found" });
   });
 
-  const terminal = createTerminalHub({ server, currentRoots, authorized, log });
+  const terminal = createTerminalHub({ server, currentRoots, authorized, log, appMode: Boolean(process.env.ORCH_APP_SECRET) });
 
   return new Promise((resolve, reject) => {
     let attempt = 0;

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn as spawnDetached } from "node:child_process";
 import { createRequire } from "node:module";
+import { randomBytes } from "node:crypto";
 import {
   UserError,
   binHome,
@@ -1516,6 +1517,56 @@ const commands = {
     await new Promise(() => {});
   },
 
+  async "app-server"({ flags }) {
+    ensureConsole();
+    const config = loadConsole();
+    const rootsNow = () => registryRoots().filter((root) => exists(root));
+    const interval = Number(flags.interval || 2000);
+    let busy = false;
+    let stopped = false;
+    const tickAll = () => {
+      if (busy || stopped) return;
+      busy = true;
+      try {
+        for (const project of rootsNow()) tick({ root: project });
+      } catch (err) {
+        console.error(`tick failed: ${err.message}`);
+      } finally {
+        busy = false;
+      }
+    };
+    const token = process.env.ORCH_APP_TOKEN || randomBytes(24).toString("hex");
+    const panel = await startServer({
+      roots: rootsNow(),
+      getRoots: rootsNow,
+      port: Number(process.env.ORCH_APP_PORT || flags.port || 0),
+      bind: "127.0.0.1",
+      token,
+      publish: false,
+      cors: ["tauri://localhost", "http://tauri.localhost"],
+      onCommand: tickAll,
+      log: (line) => console.error(line),
+    });
+    console.log(
+      `ORCH_APP_READY ${JSON.stringify({
+        port: panel.port,
+        token: panel.token,
+        apiBase: `http://127.0.0.1:${panel.port}`,
+      })}`,
+    );
+    tickAll();
+    const timer = setInterval(tickAll, interval);
+    const shutdown = () => {
+      stopped = true;
+      clearInterval(timer);
+      panel.close();
+      process.exit(0);
+    };
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+    await new Promise(() => {});
+  },
+
   panel({ flags }) {
     const root = rootDir(flags);
     const global = readJson(globalPanelFile(), null);
@@ -1557,6 +1608,7 @@ const commands = {
   link                                  put an orchestrate command in ~/.local/bin
   desktop [remove]                      add a launcher to the desktop menu
   run                                   supervisor + panel for every registered project
+  app-server                            supervisor + app API on a random loopback port
   tick                                  one pass, no panel
   status [campaign] [--json]            stages, spend, plan errors
   inbox [--json]                        open questions and failures across campaigns

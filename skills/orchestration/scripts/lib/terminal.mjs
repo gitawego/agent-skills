@@ -88,7 +88,7 @@ function optionalModules(root) {
   return { pty, WebSocket };
 }
 
-export function createTerminalHub({ server, currentRoots, authorized, log = () => {} }) {
+export function createTerminalHub({ server, currentRoots, authorized, log = () => {}, appMode = false }) {
   const sessions = new Map();
   const moduleCache = new Map();
   let wss = null;
@@ -133,7 +133,7 @@ export function createTerminalHub({ server, currentRoots, authorized, log = () =
     try {
       const info = ticketInfo(root, campaign, ticketId);
       const modules = modulesFor(root);
-      if (modules.error) return { ok: false, available: false, reason: modules.error, ...info };
+      if (!appMode && modules.error) return { ok: false, available: false, reason: modules.error, ...info };
       if (info.adapter && info.adapter !== "pi") {
         return { ok: false, available: false, reason: "this ticket belongs to a legacy ACP adapter; use the agent/CLI", ...info };
       }

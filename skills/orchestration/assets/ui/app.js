@@ -22,7 +22,8 @@ const KANBAN_LANES = [
 ];
 
 const params = new URLSearchParams(location.search);
-let token = params.get("token") || localStorage.getItem("orch.token") || "";
+const API_BASE = window.__ORCH_API_BASE__ || location.origin;
+let token = window.__ORCH_TOKEN__ || params.get("token") || localStorage.getItem("orch.token") || "";
 if (params.get("token")) {
   try {
     localStorage.setItem("orch.token", token);
@@ -85,6 +86,8 @@ let sessionTranscriptData = null;
 let sessionTermKey = null;
 let sessionTermMode = null;
 let sessionTakeoverTimer = null;
+let sessionAppId = null;
+let sessionAppCleanup = [];
 const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 let drafts = {};
 let dirtyViews = new Set();
@@ -120,7 +123,7 @@ const clockOf = (iso) =>
   iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : "";
 
 function api(path, options = {}) {
-  const url = new URL(path, location.origin);
+  const url = new URL(path, API_BASE);
   if (token) url.searchParams.set("token", token);
   return fetch(url, { credentials: "same-origin", ...options }).then(async (res) => {
     const body = await res.json().catch(() => ({}));
@@ -2081,6 +2084,20 @@ function disposeTerminal({ keepStatus = false, terminate = false } = {}) {
   const shouldTerminate = terminate || sessionTermMode === "fork";
   clearTimeout(sessionTakeoverTimer);
   sessionTakeoverTimer = null;
+  if (sessionAppId && window.__TAURI__) {
+    window.__TAURI__.core.invoke("pty_close", { id: sessionAppId }).catch(() => {});
+    sessionAppId = null;
+  }
+  if (sessionAppCleanup.length) {
+    for (const cleanup of sessionAppCleanup) {
+      try {
+        cleanup();
+      } catch {
+        /* already gone */
+      }
+    }
+    sessionAppCleanup = [];
+  }
   if (sessionSocket) {
     if (shouldTerminate && sessionSocket.readyState === 1) {
       try {
@@ -2169,6 +2186,10 @@ async function connectTerminal(mode = null) {
   sessionTermKey = `${c.root}|${c.slug}/${ticket.id}/${chosen}`;
   sessionTermMode = chosen;
   setTimeout(fitTerminal, 30);
+  if (window.__ORCH_APP__ && window.__TAURI__) {
+    await connectAppTerminal(term, c, ticket, chosen);
+    return;
+  }
   const url = new URL("/api/terminal", location.origin);
   url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
   url.searchParams.set("project", c.root);
@@ -2207,6 +2228,38 @@ async function connectTerminal(mode = null) {
   term.onResize(({ cols, rows }) => {
     if (sessionSocket?.readyState === 1) sessionSocket.send(JSON.stringify({ type: "resize", cols, rows }));
   });
+}
+
+async function connectAppTerminal(term, c, ticket, mode) {
+  setTerminalStatus("requesting terminal ticket…");
+  try {
+    const issued = await api("/api/app/terminal-ticket", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ root: c.root, campaign: c.slug, ticket: ticket.id, mode }),
+    });
+    const id = await window.__TAURI__.core.invoke("pty_open", { ticket: issued.ticket });
+    sessionAppId = id;
+    const unlistenData = await window.__TAURI__.event.listen("pty:data", (event) => {
+      if (event.payload?.id === id) term.write(event.payload.data || "");
+    });
+    const unlistenExit = await window.__TAURI__.event.listen("pty:exit", (event) => {
+      if (event.payload?.id !== id) return;
+      setTerminalStatus("session exited", "ended");
+      sessionAppId = null;
+    });
+    sessionAppCleanup.push(unlistenData, unlistenExit);
+    term.onData((data) => {
+      if (sessionAppId) window.__TAURI__.core.invoke("pty_write", { id: sessionAppId, data }).catch(() => {});
+    });
+    term.onResize(({ cols, rows }) => {
+      if (sessionAppId) window.__TAURI__.core.invoke("pty_resize", { id: sessionAppId, cols, rows }).catch(() => {});
+    });
+    setTerminalStatus(mode === "attach" ? "attached · you own this session" : "fork · read-only", "live");
+    setTimeout(fitTerminal, 30);
+  } catch (err) {
+    setTerminalStatus(`terminal failed: ${err.message || err}`, "error");
+  }
 }
 
 async function refreshSessionStatus() {
@@ -3453,7 +3506,10 @@ document.addEventListener("input", (event) => {
 window.addEventListener("hashchange", routeFromHash);
 
 function connect() {
-  const source = new EventSource(`/api/events?token=${encodeURIComponent(token)}&lastId=0`);
+  const events = new URL("/api/events", API_BASE);
+  events.searchParams.set("token", token);
+  events.searchParams.set("lastId", "0");
+  const source = new EventSource(events);
   source.onopen = () => {
     connEl.className = "dot live";
     connText.textContent = "live";
