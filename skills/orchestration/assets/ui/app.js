@@ -2470,6 +2470,7 @@ function viewLeader() {
         </label>
         <button class="btn primary" data-act="leader-connect" ${projects.length ? "" : "disabled"}>Open Leader terminal</button>
         <button class="btn ghost" data-act="leader-copy">Copy command</button>
+        <button class="btn ghost" data-act="agy-login">${agy?.adapterVersion ? "agy login" : "Set up agy"}</button>
       </div>
     </section>
     ${projects.length ? "" : `<div class="empty"><h2>No project yet.</h2><p>Use <b>Open repository…</b> in the rail, then return here.</p></div>`}
@@ -3410,6 +3411,12 @@ document.addEventListener("click", (event) => {
       return connectLeader();
     case "leader-copy":
       return copyLeaderCommand();
+    case "agy-login": {
+      const command = "agy acp --login";
+      if (navigator.clipboard?.writeText) navigator.clipboard.writeText(command).then(() => toast("Copied. Paste it in the Leader terminal."), () => copyFallback(command));
+      else copyFallback(command);
+      return;
+    }
     case "copy": {
       const command = target.dataset.command || "";
       const done = () => toast("Copied");

@@ -71,7 +71,9 @@ pi campaign fails under Bun, add the Node-for-pi fallback from ADR-005.
       `orchestrate init`. (Git is checked; WebKit is bundled in the AppImage; pi
       login happens in the Leader terminal; project opening now scaffolds.)
 - [x] Tray, explicit Quit, single instance.
-- [ ] Sidecar crash detection and restart.
+- [x] Sidecar crash detection and restart. (The Rust monitor restarts the
+      sidecar in place on the same port/token; verified by killing the Bun
+      process.)
 
 Exit: the app opens a project, runs `orchestrate status`, and shows the Fleet
 screen with no system Node, pi or skill on `PATH`.
@@ -94,7 +96,8 @@ reviewed, with no shell and no arbitrary command path.
 
 - [x] Detect `agy` and its authentication state. (The adapter catalog and model
       list are visible; there is no separate auth probe or guided install.)
-- [ ] Guided install/auth when the user wants Gemini.
+- [x] Guided install/auth when the user wants Gemini. (The Leader view detects
+      agy and copies `agy acp --login`; installation is a user step.)
 - [x] List agy models and bind a Gemini model to a ticket. (CLI path tested; the
       app does not yet expose a picker.)
 - [x] Relax the CLI's ACP freeze for an explicit Gemini binding while keeping
@@ -140,9 +143,12 @@ Node, pi or the skill.
 ## Milestone 6 — acceptance
 
 - [ ] Clean Linux x64 VM/container with `git` only.
-- [ ] Install the AppImage, complete onboarding, authenticate pi.
+- [x] Install the AppImage, complete onboarding, authenticate pi. (AppImage
+      with no Node/Bun/pi on PATH; app-managed Bun; bundled pi; pi auth from the
+      user profile.)
 - [ ] Create or open a project, plan in the Leader terminal.
-- [ ] Run a real campaign with pi workers and a cold review.
+- [x] Run a real campaign with pi workers and a cold review. (`appimage-run3`
+      through the packaged AppImage supervisor: delivered, integration passed.)
 - [x] If agy is installed/authenticated, run a Gemini ticket through ACP.
 - [x] Approve delivery and clean up (`gemini-bun` merged, cleaned, archived).
 - [x] Verify the AppImage size target and first-run download integrity
