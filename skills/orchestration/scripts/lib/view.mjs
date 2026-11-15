@@ -494,7 +494,7 @@ export function campaignView(root, slug) {
       acc[ticket.stage] = (acc[ticket.stage] || 0) + 1;
       return acc;
     }, {}),
-    legacyAdapters: [...new Set(tickets.map((ticket) => ticket.adapter).filter((adapter) => adapter && adapter !== "pi"))],
+    legacyAdapters: [...new Set(tickets.map((ticket) => ticket.adapter).filter((adapter) => adapter && adapter !== "pi" && adapter !== "agy-acp"))],
     spendByModel: spendByModel(runs),
     cacheHit: (() => {
       const cached = runs.reduce((n, run) => n + Number(run.cachedReadTokens || 0), 0);

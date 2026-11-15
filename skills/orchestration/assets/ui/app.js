@@ -1957,7 +1957,11 @@ function campaignSessions(c) {
         </div>
       </header>
       ${legacy ? `<div class="session-unavailable">Legacy ACP session. Use the agent or CLI; the pi terminal is not available.</div>` : ""}
-      ${acp ? `<div class="session-unavailable">Gemini ticket through agy ACP. Read the ACP transcript here; steer it from the Leader terminal.</div>` : ""}
+      ${acp ? `<div class="session-unavailable">Gemini ticket through agy ACP. Read the ACP transcript here${["done", "dropped"].includes(chosen?.stage) ? "." : "; send a steer below or from the Leader terminal."}</div>` : ""}
+      ${acp && !["done", "dropped"].includes(chosen?.stage) ? `<div class="acp-steer">
+        <textarea id="acp-message" rows="2" placeholder="Steer this Gemini ticket…"></textarea>
+        <button class="btn" data-act="acp-steer">Send steer</button>
+      </div>` : ""}
       ${!hasSession && !acp ? `<div class="session-unavailable">This ticket has no pi session yet. It gets one after the first work run.</div>` : ""}
       ${question ? `<div class="session-question">
         <span class="eyebrow">needs you</span>
@@ -2370,6 +2374,14 @@ async function loadRawLog() {
 }
 
 async function mountSessions() {
+  const c = current();
+  const ticket = c?.tickets.find((t) => t.id === sessionTicket);
+  if (ticket?.session?.adapter === "agy-acp") {
+    terminalStatusId = "terminal-status";
+    setTerminalStatus("agy ACP session", "live");
+    await loadTranscript();
+    return;
+  }
   await refreshSessionStatus();
   await loadTranscript();
 }
@@ -2437,6 +2449,10 @@ function viewLeader() {
   const projects = leaderProjects();
   const root = leaderRoot || selected.root || projects[0]?.root || "";
   leaderRoot = root;
+  const agy = (state?.adapters || []).find((adapter) => adapter.id === "agy-acp");
+  const gemini = agy?.adapterVersion
+    ? `agy ${agy.adapterVersion} detected · Gemini tickets can bind to agy-acp`
+    : "Gemini needs agy installed and authenticated; the app detects it automatically";
   const options = projects
     .map((project) => `<option value="${esc(project.root)}" ${project.root === root ? "selected" : ""}>${esc(project.name)} · ${esc(project.root)}</option>`)
     .join("");
@@ -2446,6 +2462,7 @@ function viewLeader() {
         <div class="eyebrow">leader · pi</div>
         <h1>Plan with the orchestrator</h1>
         <p class="note">A pi session loaded with the orchestration skill. Use it to start a campaign, draft the ticket graph, approve the plan, and answer worker questions.</p>
+        <p class="hint">${esc(gemini)}</p>
       </div>
       <div class="leader-controls">
         <label class="field"><span>Project</span>
@@ -3434,6 +3451,14 @@ document.addEventListener("click", (event) => {
         return;
       }
       return command(selected.root, { type: "answer", campaign: selected.campaign, item, text });
+    }
+    case "acp-steer": {
+      const text = String(document.getElementById("acp-message")?.value || "").trim();
+      if (!text) {
+        toast("Write a steer first");
+        return;
+      }
+      return command(selected.root, { type: "steer", campaign: selected.campaign, ticket: sessionTicket, text });
     }
     case "session-copy":
       return copySessionCommand();

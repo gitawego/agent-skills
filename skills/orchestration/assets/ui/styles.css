@@ -1760,3 +1760,12 @@ pre.log {
 .graph-id { font: 500 0.68rem/1 var(--mono); fill: var(--muted); letter-spacing: 0.08em; }
 .graph-title { font: 500 0.78rem/1.2 var(--ui); fill: var(--ink); }
 .graph-meta { font: 0.64rem/1.2 var(--mono); fill: var(--muted); letter-spacing: 0.05em; text-transform: uppercase; }
+
+.acp-steer {
+  display: flex;
+  gap: 0.55rem;
+  align-items: end;
+  padding: 0.65rem 0.85rem;
+  border-top: 1px solid var(--rule);
+}
+.acp-steer textarea { min-height: 2.6rem; flex: 1; }
