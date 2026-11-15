@@ -346,6 +346,59 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
       return;
     }
 
+    if (route === "/api/acp/pending") {
+      const root = url.searchParams.get("project");
+      const campaign = String(url.searchParams.get("campaign") || "");
+      const run = String(url.searchParams.get("run") || "");
+      if (!currentRoots().includes(root) || !/^[a-z0-9][a-z0-9-]*$/.test(campaign) || !/^[A-Za-z0-9._-]+$/.test(run) || run.includes("..")) {
+        json(res, 400, { error: "unknown project, campaign or run" });
+        return;
+      }
+      const dir = path.join(projectStateDir(root), "campaigns", campaign, "runs", run);
+      try {
+        const pending = fs
+          .readdirSync(dir)
+          .filter((name) => /^permission-[A-Za-z0-9-]+\.json$/.test(name))
+          .map((name) => {
+            const id = name.slice("permission-".length, -".json".length);
+            const decision = path.join(dir, `permission-${id}.decision.json`);
+            if (fs.existsSync(decision)) return null;
+            return { ...readJson(path.join(dir, name), null), id };
+          })
+          .filter(Boolean);
+        json(res, 200, { ok: true, pending });
+      } catch (err) {
+        json(res, 404, { error: `could not read permissions: ${err.message}` });
+      }
+      return;
+    }
+
+    if (route === "/api/acp/decision" && req.method === "POST") {
+      try {
+        const body = await readBody(req);
+        const root = body.root;
+        const campaign = String(body.campaign || "");
+        const run = String(body.run || "");
+        const request = String(body.request || "");
+        const decision = body.decision === "allow" ? "allow" : "deny";
+        if (!currentRoots().includes(root) || !/^[a-z0-9][a-z0-9-]*$/.test(campaign) || !/^[A-Za-z0-9._-]+$/.test(run) || run.includes("..")) {
+          throw new Error("unknown project, campaign or run");
+        }
+        if (!/^[A-Za-z0-9-]+$/.test(request)) throw new Error("invalid permission request");
+        const dir = path.join(projectStateDir(root), "campaigns", campaign, "runs", run);
+        const requestFile = path.join(dir, `permission-${request}.json`);
+        if (!requestFile.startsWith(dir + path.sep) || !fs.existsSync(requestFile)) throw new Error("permission request not found");
+        fs.writeFileSync(
+          path.join(dir, `permission-${request}.decision.json`),
+          JSON.stringify({ request, decision, by: "app", at: nowIso() }, null, 2) + "\n",
+        );
+        json(res, 200, { ok: true, request, decision });
+      } catch (err) {
+        json(res, 400, { error: err.message });
+      }
+      return;
+    }
+
     if (route === "/api/acp-transcript") {
       const root = url.searchParams.get("project");
       const campaign = String(url.searchParams.get("campaign") || "");

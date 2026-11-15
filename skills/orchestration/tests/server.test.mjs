@@ -267,3 +267,28 @@ test("the app issues a native agy ticket for the agy work run", async () => {
     panel.close();
   }
 });
+
+test("the app lists and decides ACP permission requests", async () => {
+  const root = fixture();
+  const run = "r-20260101-01-work-1";
+  const dir = path.join(root, ".orchestration", "campaigns", "demo", "runs", run);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "permission-nonce-1.json"), JSON.stringify({ id: "nonce-1", title: "Run tests", paths: ["test.mjs"] }));
+  const panel = await startServer({ roots: [root], port: 0 });
+  try {
+    const pending = await fetch(`http://127.0.0.1:${panel.port}/api/acp/pending?project=${encodeURIComponent(root)}&campaign=demo&run=${run}&token=${panel.token}`).then((res) => res.json());
+    assert.equal(pending.pending.length, 1);
+    assert.equal(pending.pending[0].title, "Run tests");
+    const decided = await fetch(`http://127.0.0.1:${panel.port}/api/acp/decision?token=${panel.token}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ root, campaign: "demo", run, request: "nonce-1", decision: "deny" }),
+    }).then((res) => res.json());
+    assert.equal(decided.ok, true);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "permission-nonce-1.decision.json"), "utf8")).decision, "deny");
+    const after = await fetch(`http://127.0.0.1:${panel.port}/api/acp/pending?project=${encodeURIComponent(root)}&campaign=demo&run=${run}&token=${panel.token}`).then((res) => res.json());
+    assert.equal(after.pending.length, 0);
+  } finally {
+    panel.close();
+  }
+});

@@ -47,6 +47,16 @@ export function parseAcpTranscript(text) {
       session = { ...(session || {}), [event.id]: event.value };
       continue;
     }
+    if (event.type === "acp.permission") {
+      messages.push({
+        role: "permission",
+        text: `${event.decision || "denied"}${(event.paths || []).length ? ` · ${event.paths.join(", ")}` : ""}`,
+        toolCalls: [],
+        toolName: null,
+        toolCallId: null,
+      });
+      continue;
+    }
     if (event.type !== "acp.update") continue;
     const update = event.update || {};
     const kind = update.sessionUpdate || update.type || "";

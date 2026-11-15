@@ -2019,3 +2019,15 @@ td { padding: 0.32rem 0.45rem 0.32rem 0; }
   outline: 2px solid color-mix(in srgb, var(--signal) 70%, transparent);
   outline-offset: 1px;
 }
+
+.acp-permissions { display: grid; gap: 0.5rem; margin: 0.65rem 0.85rem 0; }
+.acp-permission {
+  border: 1px solid color-mix(in srgb, var(--signal) 40%, var(--rule));
+  background: color-mix(in srgb, var(--signal) 5%, var(--surface));
+  padding: 0.55rem 0.65rem;
+}
+.acp-permission-head { display: flex; align-items: baseline; gap: 0.5rem; }
+.acp-permission-head .eyebrow { margin: 0; color: var(--signal); }
+.acp-permission-head b { font: 500 0.78rem/1.2 var(--ui); }
+.acp-permission code { display: block; margin: 0.3rem 0; font: 0.66rem/1.4 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.acp-permission .actions { margin-top: 0.35rem; }

@@ -28,17 +28,21 @@ export function connect({ command, args = [], cwd, env = {}, onNotification, onS
         // Server -> client request. Only permissions matter for a worker.
         if (msg.method === "session/request_permission") {
           const options = msg.params?.options || [];
-          let option = null;
+          const respond = (chosen) => {
+            const option = options.find((o) => o.optionId === chosen) || null;
+            if (option) {
+              send({ jsonrpc: "2.0", id: msg.id, result: { outcome: { outcome: "selected", optionId: option.optionId } } });
+            } else {
+              send({ jsonrpc: "2.0", id: msg.id, result: { outcome: { outcome: "cancelled" } } });
+            }
+          };
           if (onPermission) {
-            const chosen = onPermission(msg);
-            option = options.find((o) => o.optionId === chosen) || null;
+            Promise.resolve(onPermission(msg)).then(respond).catch(() => respond(null));
           } else if (autoApprove) {
-            option = options.find((o) => /allow/i.test(`${o.optionId} ${o.name}`)) || options[0];
-          }
-          if (option) {
-            send({ jsonrpc: "2.0", id: msg.id, result: { outcome: { outcome: "selected", optionId: option.optionId } } });
+            const option = options.find((o) => /allow/i.test(`${o.optionId} ${o.name}`)) || options[0];
+            respond(option?.optionId || null);
           } else {
-            send({ jsonrpc: "2.0", id: msg.id, result: { outcome: { outcome: "cancelled" } } });
+            respond(null);
           }
           return;
         }

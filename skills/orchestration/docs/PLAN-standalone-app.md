@@ -107,8 +107,9 @@ reviewed, with no shell and no arbitrary command path.
       non-Gemini work pi-only.
 - [x] ACP client in Bun: `session/new`, `session/prompt`, `session/update`,
       permission handling, session ids. (Existing engine adapter.)
-- [x] Sessions UI adapter for agy: transcript, tool cards, steer box. No direct
-      ACP permission/stop controls yet.
+- [x] Sessions UI adapter for agy: transcript, tool cards, steer box, direct
+      **Stop run**, and **Allow / Deny** cards for ACP permission requests when
+      `runner.acpPermission` is `ask`.
 - [x] Optional native agy terminal if conversation mapping is verified.
       (`Open native agy` requests an HMAC agy ticket and runs
       `agy --conversation <session>` in Rust `portable-pty`.)
@@ -134,9 +135,10 @@ Exit: the app is a client of the existing state, not a second store.
 ## Milestone 5 — AppImage and updates
 
 - [x] Tauri AppImage build on Linux x64.
-- [ ] Signed updater artifacts and `latest.json`. **Blocked:** needs the app
-      remote, a release host and the user-owned Tauri signing key. The endpoint
-      and public key are intentionally not fabricated.
+- [x] Signed updater artifacts and `latest.json`. (Tauri updater plugin,
+      minisign key outside the repo, public key in `tauri.conf.json`, signed
+      `v0.1.1` AppImage and release workflow. The endpoint is the GitHub release
+      URL; a private repo needs public assets or auth for anonymous clients.)
 - [x] Runtime manifest for Bun and pi; both are pinned by version, URL and
       SHA-256, with `pi.lock.json` locking pi dependencies.
 - [x] First-run desktop-entry integration, optional.
@@ -145,8 +147,9 @@ Exit: the app is a client of the existing state, not a second store.
 - [x] CI builds AppImage on a clean runner. (GitHub Actions run `43769184255`
       passed on `ubuntu-24.04`; it uploaded a 103 MB unsigned AppImage and
       `SHA256SUMS.txt`. Publishing a release still needs the signing key.)
-- [ ] Update and rollback test from the previous version. **Blocked:** needs
-      signed artifacts and a previous published release.
+- [x] Update and rollback test from the previous version. (0.1.0 test build
+      checked, downloaded and installed signed 0.1.1, restarted on 0.1.1, then
+      rolled back manually to 0.1.0.)
 
 Exit: an AppImage installs, updates, and rolls back without touching system
 Node, pi or the skill.

@@ -89,6 +89,7 @@ let sessionTakeoverTimer = null;
 let sessionAppId = null;
 let sessionAppCleanup = [];
 let terminalStatusId = "terminal-status";
+let acpPermissionTimer = null;
 let leaderRoot = null;
 let paletteRows = [];
 let paletteIndex = 0;
@@ -577,6 +578,18 @@ function sandboxSelect(scope) {
   </select>`;
 }
 
+function acpPermissionFor(scope) {
+  return (scope === "console" ? state?.console?.runner?.acpPermission : current()?.runner?.acpPermission) || "auto";
+}
+
+function acpPermissionSelect(scope) {
+  const chosen = acpPermissionFor(scope);
+  return `<select name="acp_permission" aria-label="${scope} ACP permissions">
+    <option value="auto" ${chosen === "auto" ? "selected" : ""}>auto-approve inside the worktree</option>
+    <option value="ask" ${chosen === "ask" ? "selected" : ""}>ask in Sessions</option>
+  </select>`;
+}
+
 function isFree(row) {
   return Boolean(row.price) && (row.price.input || 0) === 0 && (row.price.output || 0) === 0;
 }
@@ -1051,6 +1064,7 @@ function render({ preserveScroll = false } = {}) {
   }
   const terminalView = (view === "campaign" && campaignTab === "sessions") || view === "leader";
   if (!terminalView) {
+    stopAcpPolling();
     if (sessionTerm || sessionSocket) disposeTerminal();
     sessionStatus = null;
     sessionTranscriptKey = null;
@@ -1912,6 +1926,7 @@ function campaignConfigure(c) {
             <summary>Advanced</summary>
             <div class="config-fields">
               <div class="field"><label>Sandbox</label><div class="stack">${sandboxSelect("campaign")}<span class="sub">bwrap isolates writes on Linux</span></div></div>
+              <div class="field"><label>ACP permissions</label><div class="stack">${acpPermissionSelect("campaign")}<span class="sub">ask shows Allow / Deny in Sessions</span></div></div>
               <div class="field"><label for="autoship">Autoship</label><div class="stack">
                 <input id="autoship" name="max_autoship_lines" type="number" min="0" value="${c.maxAutoshipLines}" />
                 <span class="sub">changed lines above this never ship without you.</span>
@@ -2139,10 +2154,12 @@ function campaignSessions(c) {
           ${!owner && chosen?.session?.id && !["done", "dropped"].includes(chosen.stage) && !legacy && !acp ? `<button class="btn signal" data-act="session-takeover">Stop and take over</button>` : ""}
           ${owner && !live && !acp ? `<button class="btn primary" data-act="session-handback">Hand back</button>` : ""}
           ${hasSession && !acp ? `<button class="btn ghost" data-act="session-copy">Copy command</button>` : ""}
+          ${acp && live ? `<button class="btn signal" data-act="acp-stop">Stop run</button>` : ""}
         </div>
       </header>
       ${legacy ? `<div class="session-unavailable">Legacy ACP session. Use the agent or CLI; the pi terminal is not available.</div>` : ""}
       ${acp ? `<div class="session-unavailable">Gemini ticket through agy ACP. Read the ACP transcript here${["done", "dropped"].includes(chosen?.stage) ? "." : "; send a steer below or from the Leader terminal."}</div>` : ""}
+      ${acp ? `<div id="acp-permissions" class="acp-permissions"></div>` : ""}
       ${acp && !["done", "dropped"].includes(chosen?.stage) ? `<div class="acp-steer">
         <textarea id="acp-message" rows="2" placeholder="Steer this Gemini ticket…"></textarea>
         <button class="btn" data-act="acp-steer">Send steer</button>
@@ -2192,6 +2209,9 @@ function transcriptMessage(message) {
   }
   if (role === "tool") {
     return `<div class="thread-message" data-role="assistant"><span class="thread-role">tool</span><div class="thread-text">${esc(text)}</div></div>`;
+  }
+  if (role === "permission") {
+    return `<div class="thread-message" data-role="assistant"><span class="thread-role">permission</span><div class="thread-text">${esc(text)}</div></div>`;
   }
   if (role === "toolResult") {
     return `<details class="thread-tool-result">
@@ -2611,6 +2631,64 @@ async function loadRawLog() {
   }
 }
 
+function stopAcpPolling() {
+  clearInterval(acpPermissionTimer);
+  acpPermissionTimer = null;
+}
+
+async function refreshAcpPermissions() {
+  const box = document.getElementById("acp-permissions");
+  if (!box) return;
+  const c = current();
+  const ticket = c?.tickets.find((t) => t.id === sessionTicket);
+  const run = ticket?.session?.acpRunId;
+  if (!c || !run || ticket?.session?.adapter !== "agy-acp") return;
+  try {
+    const data = await api(`/api/acp/pending?project=${encodeURIComponent(c.root)}&campaign=${encodeURIComponent(c.slug)}&run=${encodeURIComponent(run)}`);
+    const pending = data.pending || [];
+    box.innerHTML = pending.length
+      ? pending
+          .map(
+            (request) => `<div class="acp-permission">
+              <div class="acp-permission-head"><span class="eyebrow">permission</span><b>${esc(request.title || "tool call")}</b></div>
+              ${(request.paths || []).length ? `<code>${esc(request.paths.join(" · "))}</code>` : ""}
+              <div class="actions">
+                <button class="btn primary" data-act="acp-decision" data-request="${esc(request.id)}" data-decision="allow">Allow</button>
+                <button class="btn signal" data-act="acp-decision" data-request="${esc(request.id)}" data-decision="deny">Deny</button>
+              </div>
+            </div>`,
+          )
+          .join("")
+      : "";
+  } catch (err) {
+    box.innerHTML = `<p class="hint">${esc(err.message)}</p>`;
+  }
+}
+
+function startAcpPolling() {
+  stopAcpPolling();
+  refreshAcpPermissions();
+  acpPermissionTimer = setInterval(refreshAcpPermissions, 1500);
+}
+
+async function decideAcpPermission(request, decision) {
+  const c = current();
+  const ticket = c?.tickets.find((t) => t.id === sessionTicket);
+  const run = ticket?.session?.acpRunId;
+  if (!c || !run) return;
+  try {
+    await api("/api/acp/decision", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ root: c.root, campaign: c.slug, run, request, decision }),
+    });
+    toast(`${decision === "allow" ? "Allowed" : "Denied"} · ${request}`);
+    await refreshAcpPermissions();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
 async function mountSessions() {
   const c = current();
   const ticket = c?.tickets.find((t) => t.id === sessionTicket);
@@ -2618,6 +2696,7 @@ async function mountSessions() {
     terminalStatusId = "terminal-status";
     setTerminalStatus("agy ACP session", "live");
     await loadTranscript();
+    startAcpPolling();
     return;
   }
   await refreshSessionStatus();
@@ -2902,6 +2981,7 @@ function viewSettings() {
       <label class="num-field"><span>Adapter</span>${adapterSelect("console")}</label>
       <label class="num-field"><span>Spend</span>${spendSelect("console")}</label>
       <label class="num-field"><span>Sandbox</span>${sandboxSelect("console")}</label>
+      <label class="num-field"><span>ACP permissions</span>${acpPermissionSelect("console")}</label>
     </div>
     <p class="note" style="margin:8px 0 0">Subscription-only hides metered models; metered-ok shows every discovered model with its price. Changing the adapter changes which catalog the chains below can pick from.</p>
   </section>
@@ -2946,7 +3026,53 @@ function viewSettings() {
       </div>
     </div>
     <p class="note">${window.__ORCH_RUNTIME__ ? `App runtime · ${esc(runtimeLabel())}` : "Browser panel · runtime information appears in the desktop app."}</p>
+  </section>
+
+  <section class="settings-block">
+    <header><h2 class="page">Updates</h2><span class="hint" id="update-hint">signed AppImage updates</span></header>
+    <div class="actions">
+      <button class="btn" data-act="update-check">Check for updates</button>
+      <button class="btn primary" data-act="update-install" id="update-install" hidden>Install update</button>
+    </div>
+    <p class="note">The app reads the signed update manifest and verifies the AppImage signature before replacing itself.</p>
   </section>`;
+}
+
+function updateHint() {
+  return document.getElementById("update-hint");
+}
+
+async function checkUpdates() {
+  if (!window.__TAURI__?.core) return toast("Updates are available in the desktop app");
+  const hint = updateHint();
+  if (hint) hint.textContent = "checking the signed manifest…";
+  try {
+    const info = await window.__TAURI__.core.invoke("update_check");
+    if (hint) hint.textContent = info.available ? `version ${info.version} is available` : `up to date · ${info.current}`;
+    const install = document.getElementById("update-install");
+    if (install) install.hidden = !info.available;
+  } catch (err) {
+    if (hint) hint.textContent = String(err.message || err);
+    toast(String(err.message || err));
+  }
+}
+
+async function installUpdate() {
+  if (!window.__TAURI__?.core) return toast("Updates are available in the desktop app");
+  const install = document.getElementById("update-install");
+  if (install) {
+    install.disabled = true;
+    install.textContent = "Installing…";
+  }
+  try {
+    await window.__TAURI__.core.invoke("update_install");
+  } catch (err) {
+    toast(String(err.message || err));
+    if (install) {
+      install.disabled = false;
+      install.textContent = "Install update";
+    }
+  }
 }
 
 function noCampaigns() {
@@ -3004,7 +3130,7 @@ function saveCampaign(root, slug) {
     plan_gate: value("plan_gate"),
     landing: value("landing"),
     base: value("base"),
-    runner: { adapter: value("adapter") || adapterFor("campaign"), spend: value("spend") || "metered-ok", sandbox: value("sandbox") || "auto" },
+    runner: { adapter: value("adapter") || adapterFor("campaign"), spend: value("spend") || "metered-ok", sandbox: value("sandbox") || "auto", acpPermission: value("acp_permission") || "auto" },
     checks,
     allow_paths: value("allow_paths")
       .split(",")
@@ -3045,6 +3171,7 @@ function saveSettings() {
         adapter: value("adapter") || adapterFor("console"),
         spend: value("spend") || "metered-ok",
         sandbox: value("sandbox") || "auto",
+        acpPermission: value("acp_permission") || "auto",
       },
       quotas: readQuotaRows("console"),
     },
@@ -3713,6 +3840,13 @@ document.addEventListener("click", (event) => {
     }
     case "acp-native":
       return connectAgyNative();
+    case "acp-stop":
+      return command(selected.root, { type: "stop", campaign: selected.campaign, ticket: sessionTicket });
+    case "acp-decision": {
+      const request = target.dataset.request || "";
+      const decision = target.dataset.decision === "allow" ? "allow" : "deny";
+      return decideAcpPermission(request, decision);
+    }
     case "acp-steer": {
       const text = String(document.getElementById("acp-message")?.value || "").trim();
       if (!text) {
@@ -3909,6 +4043,10 @@ document.addEventListener("click", (event) => {
       return;
     case "palette-open":
       return openPalette();
+    case "update-check":
+      return checkUpdates();
+    case "update-install":
+      return installUpdate();
     case "browse-repo":
       return openFolder(null);
     case "browse-into":

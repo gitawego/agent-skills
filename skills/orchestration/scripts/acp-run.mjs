@@ -25,6 +25,8 @@ if (p.systemPrompt === "agent-config" && spec.systemPrompt) {
   });
 }
 
+let permissionSeq = 0;
+
 function record(event) {
   log.write(JSON.stringify({ ts: new Date().toISOString(), ...event }) + "\n");
 }
@@ -59,7 +61,7 @@ const client = connect({
       record({ type: "acp.update", update: msg.params?.update || null });
     }
   },
-  onPermission: (msg) => {
+  onPermission: async (msg) => {
     const tool = msg.params?.toolCall || {};
     const paths = [
       ...(tool.locations || []).map((location) => location.path),
@@ -88,8 +90,40 @@ const client = connect({
       record({ type: "acp.permission", decision: "deny", paths: [...outside, ...escapes] });
       return null;
     }
-    record({ type: "acp.permission", decision: "allow", paths });
-    return allow?.optionId || null;
+    if (spec.permission !== "ask") {
+      record({ type: "acp.permission", decision: "allow", paths });
+      return allow?.optionId || null;
+    }
+    const requestId = `${spec.nonce}-${++permissionSeq}`;
+    const requestFile = path.join(path.dirname(spec.permissionLog), `permission-${requestId}.json`);
+    const decisionFile = path.join(path.dirname(spec.permissionLog), `permission-${requestId}.decision.json`);
+    fs.writeFileSync(
+      requestFile,
+      JSON.stringify(
+        {
+          id: requestId,
+          title: tool.title || tool.kind || "tool call",
+          kind: tool.kind || null,
+          paths,
+          options: options.map((option) => ({ optionId: option.optionId, name: option.name })),
+          createdAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    record({ type: "acp.permission.request", requestId, title: tool.title || tool.kind || "tool call", paths });
+    const deadline = Date.now() + 15 * 60 * 1000;
+    while (Date.now() < deadline) {
+      if (fs.existsSync(decisionFile)) {
+        const decision = JSON.parse(fs.readFileSync(decisionFile, "utf8")).decision;
+        record({ type: "acp.permission", decision, requestId, paths });
+        return decision === "allow" ? allow?.optionId || null : null;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    record({ type: "acp.permission", decision: "timeout", requestId, paths });
+    return null;
   },
 });
 

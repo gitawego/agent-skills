@@ -89,7 +89,7 @@ export function defaultConsole() {
       human_slot_extra: 1,
     },
     kinds: structuredClone(DEFAULT_KINDS),
-    runner: { command: "pi", adapter: DEFAULT_ADAPTER, sandbox: "auto" },
+    runner: { command: "pi", adapter: DEFAULT_ADAPTER, sandbox: "auto", acpPermission: "auto" },
     quotas: [],
   };
 }
@@ -137,7 +137,8 @@ export function runnerConfig(consoleConfig, data = {}) {
   const adapter = data.runner?.adapter || consoleConfig.runner?.adapter || DEFAULT_ADAPTER;
   const spend = data.runner?.spend || consoleConfig.runner?.spend || DEFAULT_SPEND[adapter] || "metered-ok";
   const sandbox = data.runner?.sandbox || consoleConfig.runner?.sandbox || "auto";
-  return { adapter, spend, sandbox, command: consoleConfig.runner?.command || "pi" };
+  const acpPermission = data.runner?.acpPermission || consoleConfig.runner?.acpPermission || "auto";
+  return { adapter, spend, sandbox, acpPermission, command: consoleConfig.runner?.command || "pi" };
 }
 
 /* A chain entry may override the campaign adapter; otherwise it inherits. */
@@ -270,6 +271,8 @@ export function validateCampaign({ root, consoleConfig, data, tickets = [], cata
     errors.push(`runner.spend must be one of ${SPEND_MODES.join(", ")}`);
   if (!["auto", "bwrap", "none"].includes(runner.sandbox))
     errors.push('runner.sandbox must be "auto", "bwrap" or "none"');
+  if (!["auto", "ask"].includes(runner.acpPermission))
+    errors.push('runner.acpPermission must be "auto" or "ask"');
   const rowsForAdapter = (adapterId) => {
     if (Array.isArray(catalogRows)) return adapterId === runner.adapter ? catalogRows : adapterId === "pi" ? catalog() : [];
     if (catalogRows && typeof catalogRows === "object") return catalogRows[adapterId] || (adapterId === "pi" ? catalog() : []);

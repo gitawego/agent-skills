@@ -37,3 +37,13 @@ test("readAcpTranscript resolves a run inside the campaign state", () => {
   assert.equal(found.session.id, "ses_demo");
   assert.equal(readAcpTranscript({ root, campaign: "demo", run: "../escape" }), null);
 });
+
+test("permission decisions appear in the transcript", () => {
+  const parsed = parseAcpTranscript(
+    event({ type: "acp.permission", decision: "deny", paths: ["/etc/passwd"] }) +
+      event({ type: "acp.permission", decision: "allow", paths: ["src/app.js"] }),
+  );
+  assert.equal(parsed.messages[0].role, "permission");
+  assert.match(parsed.messages[0].text, /deny · \/etc\/passwd/);
+  assert.match(parsed.messages[1].text, /allow · src\/app\.js/);
+});

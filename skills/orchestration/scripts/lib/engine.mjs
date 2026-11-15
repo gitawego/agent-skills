@@ -1203,6 +1203,7 @@ function dispatchTicket({ root, slug, state, plan, ticket, kinds, consoleConfig,
     runDir: runDir(root, slug, runId),
     workdir,
     sandbox: runner.sandbox,
+    permission: runner.acpPermission,
     command: consoleConfig.runner?.command || "pi",
   });
   const record = startRun({
@@ -1372,6 +1373,7 @@ function startReview({ root, slug, state, plan, ticket, run, kinds, consoleConfi
     runDir: runDir(root, slug, runId),
     workdir: run.workdir,
     sandbox: runner.sandbox,
+    permission: runner.acpPermission,
     command: campaign.data.runner?.command || consoleConfig.runner?.command || "pi",
   });
   const record = startRun({
@@ -1480,6 +1482,7 @@ function startJudge({ root, slug, state, plan, ticket, run, report, kinds, conso
     runDir: runDir(root, slug, runId),
     workdir: root,
     sandbox: runner.sandbox,
+    permission: runner.acpPermission,
     command: consoleConfig.runner?.command || "pi",
   });
   const record = startRun({
@@ -1565,6 +1568,7 @@ function startMerge({ root, slug, state, ticketId, run, conflict, kinds, console
     runDir: runDir(root, slug, runId),
     workdir: dir,
     sandbox: runner.sandbox,
+    permission: runner.acpPermission,
     command: consoleConfig.runner?.command || "pi",
   });
   const record = startRun({
