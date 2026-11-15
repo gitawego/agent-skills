@@ -144,9 +144,9 @@ Exit: the app is a client of the existing state, not a second store.
 - [x] First-run desktop-entry integration, optional.
 - [x] FUSE/WebKitGTK checks and documented fallbacks. (The AppImage bundles
       WebKitGTK; `--appimage-extract-and-run` is the fallback.)
-- [x] CI builds AppImage on a clean runner. (GitHub Actions run `43769184255`
-      passed on `ubuntu-24.04`; it uploaded a 103 MB unsigned AppImage and
-      `SHA256SUMS.txt`. Publishing a release still needs the signing key.)
+- [x] CI builds AppImage on a clean runner and publishes a release. (Unsigned
+      run `43769184255` uploaded an artifact; tag run `43774708627` published
+      signed `v0.1.1` with `.sig`, `latest.json` and `SHA256SUMS.txt`.)
 - [x] Update and rollback test from the previous version. (0.1.0 test build
       checked, downloaded and installed signed 0.1.1, restarted on 0.1.1, then
       rolled back manually to 0.1.0.)
