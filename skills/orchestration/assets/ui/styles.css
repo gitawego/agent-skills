@@ -1655,6 +1655,30 @@ pre.log {
 }
 .handback-bar textarea { min-height: 3rem; }
 .handback-bar .hint { grid-column: 1 / -1; margin: 0; }
+.session-raw {
+  border-top: 1px solid var(--rule);
+  padding: 0.55rem 0.85rem 0.7rem;
+}
+.session-raw > summary {
+  cursor: pointer;
+  font: 500 0.64rem/1.4 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.session-raw-box { margin-top: 0.45rem; }
+.session-raw-box pre {
+  margin: 0.35rem 0 0;
+  max-height: 24rem;
+  overflow: auto;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--rule-soft);
+  background: var(--surface);
+  font: 0.64rem/1.45 var(--mono);
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 @media (max-width: 1120px) {
   .sessions-workspace { grid-template-columns: 12rem minmax(0, 1fr); }
   .session-body { grid-template-columns: 1fr; }

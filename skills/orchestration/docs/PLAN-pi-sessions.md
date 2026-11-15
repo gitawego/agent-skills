@@ -30,7 +30,7 @@ Out:
 - [x] Add `GET /api/transcript` for a pi session JSONL.
 - [x] Add `Sessions` campaign tab.
 - [x] Render one ticket thread: user/assistant messages, tool cards, usage.
-- [ ] Add a raw-log disclosure.
+- [x] Add a raw-log disclosure.
 - [x] Tests: transcript parser, view fields, session tab.
 
 ## Stage 2 — terminal vertical slice
@@ -66,7 +66,7 @@ Out:
 - [x] Authority matrix in the leader prompt: technical answers with citation;
       escalate scope, acceptance, budget, secrets, destructive actions and
       delivery.
-- [ ] Tests: inline answer resumes, spend attribution, close report.
+- [x] Tests: inline answer resumes, spend attribution, close report.
 
 ## Stage 5 — legacy and docs
 

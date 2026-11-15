@@ -755,6 +755,7 @@ tickets:
         rows: document.querySelectorAll(".session-row").length,
         transcript: document.getElementById("session-transcript")?.innerText || "",
         takeover: Boolean(document.querySelector('[data-act="session-takeover"]')),
+        raw: Boolean(document.querySelector(".session-raw")),
         token: document.getElementById("terminal-status")?.textContent || "",
       })`,
       returnByValue: true,
@@ -764,7 +765,8 @@ tickets:
     assert.equal(sessionsPage.rows, 2, "each ticket has a session row");
     assert.match(sessionsPage.transcript, /fixture session message/, "the pi transcript is visible");
     assert.equal(sessionsPage.takeover, true, "a working ticket offers takeover");
-    assert.ok(sessionsPage.token.length > 0, "the terminal pane reports its state");
+    assert.equal(sessionsPage.raw, true, "the raw run log is disclosed");
+    assert.match(sessionsPage.token, /node-pty|embedded terminal|read-only fork/, "the terminal reports its fallback state");
     ws.close();
   } finally {
     browser.kill("SIGKILL");

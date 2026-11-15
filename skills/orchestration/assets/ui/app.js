@@ -1961,6 +1961,10 @@ function campaignSessions(c) {
           </div>
         </section>
       </div>
+      <details class="session-raw">
+        <summary>Raw run log</summary>
+        <div class="session-raw-box" id="session-raw-log"><button class="btn ghost" data-act="session-raw">Load the latest run log</button></div>
+      </details>
       ${owner ? `<div class="handback-bar">
         <textarea id="handback-note" rows="2" placeholder="What changed? Hand-back note for the supervisor…"></textarea>
         <span class="hint">Hand back writes a report, runs the checks, then the normal review and integration.</span>
@@ -2220,6 +2224,30 @@ async function refreshSessionStatus() {
   if (status && !sessionTerm) {
     status.textContent = sessionStatus.available ? (sessionStatus.canAttach ? "terminal detached" : "read-only fork") : sessionStatus.reason;
     status.dataset.state = sessionStatus.available ? "" : "error";
+  }
+}
+
+async function loadRawLog() {
+  const c = current();
+  const ticket = c?.tickets.find((t) => t.id === sessionTicket);
+  const box = document.getElementById("session-raw-log");
+  if (!c || !ticket || !box) return;
+  const run = ticket.run?.id;
+  if (!run) {
+    box.innerHTML = `<p class="hint">No run log for this ticket yet.</p>`;
+    return;
+  }
+  box.innerHTML = `<p class="hint">Loading ${esc(run)}…</p>`;
+  try {
+    const data = await api(
+      `/api/log?project=${encodeURIComponent(c.root)}&campaign=${encodeURIComponent(c.slug)}&run=${encodeURIComponent(run)}&offset=0`,
+    );
+    const text = String(data.text || "");
+    const shown = text.slice(0, 80_000);
+    box.innerHTML = `<div class="hint">${esc(run)} · ${num(data.size)} bytes${shown.length < data.size ? " · first 80 KB" : ""}</div>
+      <pre>${esc(shown) || "Log is empty."}</pre>`;
+  } catch (err) {
+    box.innerHTML = `<p class="hint">${esc(err.message)}</p>`;
   }
 }
 
@@ -3182,6 +3210,8 @@ document.addEventListener("click", (event) => {
     }
     case "session-copy":
       return copySessionCommand();
+    case "session-raw":
+      return loadRawLog();
     case "session-reconnect":
       return connectTerminal(sessionStatus?.canAttach ? "attach" : "fork");
     case "fleet-status":
