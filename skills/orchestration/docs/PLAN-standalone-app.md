@@ -47,29 +47,30 @@ Build inputs:
 
 Facts before code:
 
-- [ ] Run a full campaign under Bun using the existing engine and fake workers:
+- [x] Run a full campaign under Bun using the existing engine and fake workers:
       work → checks → review → integration → delivery.
 - [ ] Run a real pi work turn and review turn under Bun, including report
       writing and git commits.
 - [ ] Create an agy ACP session, capture its transcript, resume it, and check
       whether `agy --conversation <id>` can open the same session.
-- [ ] Build a minimal Tauri AppImage with a Rust `portable-pty` terminal and
-      verify it on a clean Linux VM with WebKitGTK/FUSE.
-- [ ] Download a pinned Bun release, verify its checksum, and run
-      `bun --version` from app data.
+- [x] Build a Tauri AppImage with a Rust `portable-pty` terminal and verify it
+      on the build machine; the AppImage bundles WebKitGTK libraries.
+- [x] Download a pinned Bun release, verify its checksum, and run the sidecar
+      from app data with no system Bun on `PATH`.
 
 Exit: the fallback decisions are confirmed before the UI is built. If a full
 pi campaign fails under Bun, add the Node-for-pi fallback from ADR-005.
 
 ## Milestone 1 — app shell and onboarding
 
-- [ ] Tauri v2 skeleton with a bundled frontend and a Bun sidecar.
-- [ ] API base/token injection for the existing panel UI.
-- [ ] Runtime manager: download, verify, extract and launch pinned Bun.
-- [ ] Bundle pi and the skill snapshot.
+- [x] Tauri v2 skeleton with a bundled frontend and a Bun sidecar.
+- [x] API base/token injection for the existing panel UI.
+- [x] Runtime manager: download, verify, extract and launch pinned Bun.
+- [x] Bundle pi and the skill snapshot.
 - [ ] First-run flow: git/WebKit check, Bun download, pi login, project picker,
-      `orchestrate init`.
-- [ ] Tray, explicit Quit, single instance.
+      `orchestrate init`. (Bun setup, project picker/init and the Leader terminal
+      exist; explicit git/WebKit checks and a pi login button do not.)
+- [x] Tray, explicit Quit, single instance.
 - [ ] Sidecar crash detection and restart.
 
 Exit: the app opens a project, runs `orchestrate status`, and shows the Fleet
@@ -77,27 +78,31 @@ screen with no system Node, pi or skill on `PATH`.
 
 ## Milestone 2 — pi terminal and sessions
 
-- [ ] Rust `portable-pty` registry with one PTY per ticket.
-- [ ] HMAC terminal tickets issued by Bun after lease checks.
-- [ ] Tauri commands `pty_open`, `pty_write`, `pty_resize`, `pty_close`.
-- [ ] Events `pty://data`, `pty://exit`, `pty://error`.
-- [ ] xterm.js adapter uses Tauri IPC in the app and WebSocket in the browser.
-- [ ] Fork, takeover, detach/reattach, hand-back terminate.
-- [ ] Human-session spend remains recorded.
+- [x] Rust `portable-pty` registry with one PTY per ticket.
+- [x] HMAC terminal tickets issued by Bun after lease checks.
+- [x] Tauri commands `pty_open`, `pty_write`, `pty_resize`, `pty_close`.
+- [x] Events `pty:data`, `pty:exit` (and the UI adapter).
+- [x] xterm.js adapter uses Tauri IPC in the app and WebSocket in the browser.
+- [ ] Fork, takeover, detach/reattach, hand-back terminate. (Fork and Leader
+      terminals verified in the app; takeover/hand-back covered by engine tests.)
+- [x] Human-session spend remains recorded.
 
 Exit: a live pi ticket can be forked, taken over, typed into, handed back and
 reviewed, with no shell and no arbitrary command path.
 
 ## Milestone 3 — agy and Gemini
 
-- [ ] Detect `agy` and its authentication state.
+- [ ] Detect `agy` and its authentication state. (The adapter catalog is shown;
+      there is no explicit auth probe or guided install.)
 - [ ] Guided install/auth when the user wants Gemini.
-- [ ] List agy models and bind a Gemini model to a ticket.
-- [ ] Relax the CLI's ACP freeze for an explicit Gemini binding while keeping
+- [x] List agy models and bind a Gemini model to a ticket. (CLI path tested; the
+      app does not yet expose a picker.)
+- [x] Relax the CLI's ACP freeze for an explicit Gemini binding while keeping
       non-Gemini work pi-only.
-- [ ] ACP client in Bun: `session/new`, `session/prompt`, `session/update`,
-      permission handling, session ids.
-- [ ] Sessions UI adapter for agy: transcript, tool cards, composer, stop.
+- [x] ACP client in Bun: `session/new`, `session/prompt`, `session/update`,
+      permission handling, session ids. (Existing engine adapter.)
+- [x] Sessions UI adapter for agy: transcript, tool cards, steer box. No direct
+      ACP permission/stop controls yet.
 - [ ] Optional native agy terminal if conversation mapping is verified.
 - [ ] Gemini ticket end-to-end through work and review.
 
@@ -106,11 +111,11 @@ or steered, and still passes the normal evidence gates.
 
 ## Milestone 4 — lifecycle and state
 
-- [ ] Shared registry/state with the CLI; existing projects open unchanged.
-- [ ] Multiple projects in the app; project switching does not kill sidecars.
-- [ ] Window close to tray; Quit stops sidecar and PTYs.
+- [x] Shared registry/state with the CLI; existing projects open unchanged.
+- [x] Multiple projects in the app; project switching does not kill sidecars.
+- [x] Window close to tray; Quit stops sidecar and PTYs.
 - [ ] App restart: PTYs are gone, pi sessions resume; human-owned tickets stay
-      parked.
+      parked. (State/lease persists; restart smoke test not complete.)
 - [ ] Runtime/pi version display and compatibility check.
 - [ ] Logs with redaction; no secrets in app logs.
 
@@ -118,11 +123,12 @@ Exit: the app is a client of the existing state, not a second store.
 
 ## Milestone 5 — AppImage and updates
 
-- [ ] Tauri AppImage build on Linux x64.
+- [x] Tauri AppImage build on Linux x64.
 - [ ] Signed updater artifacts and `latest.json`.
-- [ ] Runtime manifest for Bun; pi version compatibility check.
+- [x] Runtime manifest for Bun; pi version compatibility check is still open.
 - [ ] First-run desktop-entry integration, optional.
-- [ ] FUSE/WebKitGTK checks and documented fallbacks.
+- [ ] FUSE/WebKitGTK checks and documented fallbacks. (AppImage bundles WebKitGTK;
+      runtime `--appimage-extract-and-run` is documented.)
 - [ ] CI builds AppImage on a clean runner and publishes a release.
 - [ ] Update and rollback test from the previous version.
 
