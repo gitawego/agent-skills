@@ -104,7 +104,8 @@ reviewed, with no shell and no arbitrary command path.
 - [x] Sessions UI adapter for agy: transcript, tool cards, steer box. No direct
       ACP permission/stop controls yet.
 - [ ] Optional native agy terminal if conversation mapping is verified.
-- [ ] Gemini ticket end-to-end through work and review.
+- [x] Gemini ticket end-to-end through work and review (`gemini-bun`:
+      agy/gemini work, pi/deepseek review, delivered).
 
 Exit: a Gemini ticket runs through agy, appears in Sessions, can be questioned
 or steered, and still passes the normal evidence gates.
@@ -141,8 +142,8 @@ Node, pi or the skill.
 - [ ] Install the AppImage, complete onboarding, authenticate pi.
 - [ ] Create or open a project, plan in the Leader terminal.
 - [ ] Run a real campaign with pi workers and a cold review.
-- [ ] If agy is installed/authenticated, run a Gemini ticket through ACP.
-- [ ] Approve delivery and clean up.
+- [x] If agy is installed/authenticated, run a Gemini ticket through ACP.
+- [x] Approve delivery and clean up (`gemini-bun` merged, cleaned, archived).
 - [x] Verify the AppImage size target and first-run download integrity
       (133 MB AppImage; Bun 1.4.4 SHA-256 download; app-managed runtime boot).
 
