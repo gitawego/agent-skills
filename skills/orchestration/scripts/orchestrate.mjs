@@ -1546,7 +1546,7 @@ const commands = {
       publish: false,
       cors: ["tauri://localhost", "http://tauri.localhost"],
       onCommand: tickAll,
-      log: (line) => console.error(line),
+      log: (line) => console.error(String(line).replace(/token=[^&\s]+/g, "token=<redacted>")),
     });
     console.log(
       `ORCH_APP_READY ${JSON.stringify({
