@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn as spawnDetached } from "node:child_process";
+import { createRequire } from "node:module";
 import {
   UserError,
   binHome,
@@ -24,6 +25,7 @@ import {
   globalPanelFile,
   panelToken,
   pidAlive,
+  SKILL_DIR,
 } from "./lib/util.mjs";
 import {
   catalog,
@@ -157,6 +159,26 @@ function tickNow(root, { quiet = false } = {}) {
   return result;
 }
 
+function terminalReady(root) {
+  const bases = [root, process.cwd(), SKILL_DIR];
+  for (const base of String(process.env.ORCH_TERMINAL_MODULES || "")
+    .split(path.delimiter)
+    .filter(Boolean)) {
+    bases.push(base);
+  }
+  for (const base of bases) {
+    try {
+      const req = createRequire(path.join(base, "package.json"));
+      req("node-pty");
+      req("ws");
+      return true;
+    } catch {
+      /* try the next location */
+    }
+  }
+  return false;
+}
+
 function money(value) {
   const n = Number(value || 0);
   return n > 0 && n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
@@ -228,15 +250,12 @@ const commands = {
     console.log(`state     ${path.join(root, ".orchestration")}`);
     console.log(`console   ${consoleFile()}${created ? " (created)" : ""}`);
     const adapters = adaptersView();
-    const total = adapters.reduce((n, a) => n + (a.models || 0), 0);
-    console.log(`adapters  ${adapters.map((a) => `${a.id}${a.models ? ` (${a.models})` : ""}`).join(", ")} — ${total} models`);
+    const pi = adapters.find((a) => a.id === "pi");
+    const legacy = adapters.filter((a) => a.id !== "pi");
+    console.log(`adapters  pi${pi?.models ? ` (${pi.models} models)` : " (no catalog)"}${legacy.length ? ` · legacy: ${legacy.map((a) => a.id).join(", ")}` : ""}`);
     if (created) {
-      const pi = adapters.find((a) => a.id === "pi");
-      const installed = adapters.find((a) => a.id !== "pi" && a.adapterVersion);
-      if ((!pi || !pi.models) && installed) {
-        config.runner = { ...config.runner, adapter: installed.id };
-        saveConsole(config);
-        console.log(`adapter   defaulted to ${installed.id} (no pi catalog found)`);
+      if (!pi || !pi.models) {
+        console.log("adapter   pi is not ready; install/sign in to pi, then run `orchestrate catalog --adapter pi --refresh`");
       }
       const seeded = seedConsoleDefaults({ root, config });
       if (seeded.applied.length) {
@@ -244,7 +263,7 @@ const commands = {
       }
       for (const warning of seeded.warnings) console.log(`chains    ${warning}`);
     }
-    console.log(`catalog   set the adapter with \`orchestrate adapter <id>\`, then refresh it in the panel`);
+    console.log(`catalog   orchestrate catalog --adapter pi --refresh`);
     console.log("");
     console.log('Next: orchestrate start "<goal>"');
   },
@@ -252,6 +271,12 @@ const commands = {
   adapter({ flags, positional }) {
     const id = positional[0];
     if (!ADAPTER_IDS.includes(id)) throw new UserError(`unknown adapter "${id}"`, [`one of ${ADAPTER_IDS.join(", ")}`]);
+    if (id !== "pi" && !flags.force) {
+      throw new UserError(`ACP adapter "${id}" is frozen for new work`, [
+        "The supervisor runs tickets on pi; use pi models, including Gemini.",
+        "Legacy campaigns keep their explicit bindings; --force is the explicit escape.",
+      ]);
+    }
     const spend = flags.spend;
     if (spend && !SPEND_MODES.includes(spend)) throw new UserError(`unknown spend mode "${spend}"`);
     const config = loadConsole();
@@ -306,9 +331,10 @@ const commands = {
   doctor({ flags }) {
     const root = rootDir(flags);
     let rows = adaptersView();
+    const checked = flags.all ? rows : rows.filter((row) => row.id === "pi");
     const problems = [];
     if (flags.refresh) {
-      for (const row of rows) {
+      for (const row of checked) {
         if (!row.adapterVersion) continue;
         try {
           refreshCatalog(row.id, { cwd: root });
@@ -319,20 +345,24 @@ const commands = {
       rows = adaptersView();
     }
     for (const row of rows) {
+      const legacy = row.id !== "pi";
+      if (legacy && !flags.all) {
+        console.log(`${row.id.padEnd(16)} ${"legacy".padEnd(11)} ${row.adapterVersion || "?"} ${row.models || 0} models`);
+        continue;
+      }
       if (!row.adapterVersion) problems.push(`${row.id}: harness not found`);
       if (!row.models) problems.push(`${row.id}: no catalog; run \`orchestrate catalog --adapter ${row.id} --refresh\``);
       else if (row.stale) problems.push(`${row.id}: catalog is stale; refresh it`);
-    }
-    for (const row of rows) {
       const state = !row.adapterVersion ? "missing" : !row.models ? "no catalog" : row.stale ? "stale" : "ok";
       console.log(`${row.id.padEnd(16)} ${state.padEnd(11)} ${row.adapterVersion || "?"} ${row.models || 0} models`);
     }
     console.log(`sandbox          ${bwrapAvailable() ? "bwrap available" : "path guard only (bwrap unavailable)"}`);
+    console.log(`terminal         ${terminalReady(root) ? "node-pty + ws available" : "optional deps missing; panel still works"}`);
     if (problems.length) {
       for (const problem of problems) console.error(`- ${problem}`);
       process.exitCode = 1;
     } else {
-      console.log("all adapters ready");
+      console.log("pi is ready");
     }
   },
 

@@ -27,12 +27,15 @@ runs tickets in isolated worktrees, and makes completion a checked claim:
 
 - Node.js 20 or newer
 - `git`
-- one supported harness: `pi`, `agy` (Antigravity), or `opencode`
+- `pi`, signed in to at least one provider
+- optional: `node-pty` and `ws` in the project root for the embedded worker
+  terminal
 - optional: `bwrap` for worker sandboxing, ImageMagick for image downscaling
 
-There is no `npm install`, no `package.json`, no lockfile and no `node_modules`
-inside the skill. Runtime state is written to your project and to
-`~/.config/orchestration`, never into the skill folder.
+`pi` is the only ticket runtime. `agy-acp` and `opencode-acp` are frozen for
+legacy campaigns and are not needed for a new project. The skill itself has no
+`package.json`, no lockfile and no `node_modules`; runtime state is written to
+your project and to `~/.config/orchestration`.
 
 ## Quick start with an agent
 
@@ -73,15 +76,28 @@ From the skill directory, once per machine:
 node scripts/orchestrate.mjs link
 ```
 
-In a project:
+Make sure the printed directory is on `PATH`. In a project:
 
 ```bash
 orchestrate init
-orchestrate start "Add CSV export to the reports page"
+orchestrate adapter pi
+orchestrate catalog --adapter pi --refresh
+orchestrate doctor
+
+# optional embedded terminal (project root, not the skill folder)
+npm install node-pty ws
+orchestrate down && orchestrate up
+```
+
+Then start a campaign:
+
+```bash
+orchestrate start "Add CSV export to the reports page" --campaign csv-export
 orchestrate context append csv-export --from notes.md
 orchestrate plan draft csv-export --file plan.yml
+orchestrate defaults csv-export --apply
 orchestrate approve csv-export
-orchestrate run
+orchestrate up
 ```
 
 `orchestrate approve` is the common human path: it applies a clean draft,

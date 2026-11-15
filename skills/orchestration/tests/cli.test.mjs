@@ -213,6 +213,9 @@ test("init, start, catalog, bind, plan and approve work from the CLI", () => {
   const frozen = cli(dir, ["bind", "make-the-thing-work", "code", `${MODELS.strong}:high`, "--adapter", "agy-acp"]);
   assert.equal(frozen.status, 1, "new ACP bindings are frozen");
   assert.match(frozen.stderr, /frozen for new work/);
+  const frozenAdapter = cli(dir, ["adapter", "agy-acp"]);
+  assert.equal(frozenAdapter.status, 1, "the console adapter is frozen too");
+  assert.match(frozenAdapter.stderr, /frozen for new work/);
 
   const approveNoTickets = cli(dir, ["approve", "make-the-thing-work"]);
   assert.equal(approveNoTickets.status, 1);
