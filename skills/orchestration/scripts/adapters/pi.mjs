@@ -41,7 +41,7 @@ export function buildLaunch({ run, modelEntry, thinking, tools, prompt, sessions
   if (sessionsDir) ensureDir(sessionsDir);
   const base = buildWorkerArgv({ run, modelEntry, thinking, tools, prompt, sessionsDir, systemPrompts, attachments });
   const wrapped = wrapCommand({
-    command: command || process.env.PI_BIN || "pi",
+    command: process.env.ORCH_PI_BIN || command || process.env.PI_BIN || "pi",
     args: base,
     cwd: workdir,
     rwPaths: [sessionsDir, runDir],

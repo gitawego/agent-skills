@@ -49,8 +49,8 @@ Facts before code:
 
 - [x] Run a full campaign under Bun using the existing engine and fake workers:
       work → checks → review → integration → delivery.
-- [ ] Run a real pi work turn and review turn under Bun, including report
-      writing and git commits.
+- [x] Run a real pi work turn and review turn under Bun, including report
+      writing and git commits (`hello-bun2`: mimo work, deepseek review).
 - [ ] Create an agy ACP session, capture its transcript, resume it, and check
       whether `agy --conversation <id>` can open the same session.
 - [x] Build a Tauri AppImage with a Rust `portable-pty` terminal and verify it
@@ -143,7 +143,8 @@ Node, pi or the skill.
 - [ ] Run a real campaign with pi workers and a cold review.
 - [ ] If agy is installed/authenticated, run a Gemini ticket through ACP.
 - [ ] Approve delivery and clean up.
-- [ ] Verify the AppImage size target and first-run download integrity.
+- [x] Verify the AppImage size target and first-run download integrity
+      (133 MB AppImage; Bun 1.4.4 SHA-256 download; app-managed runtime boot).
 
 Exit: the acceptance script passes without a system Node, npm, pi or skill on
 `PATH`.
