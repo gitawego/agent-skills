@@ -3375,7 +3375,7 @@ async function uploadAttachments(input) {
   for (const file of input.files || []) {
     try {
       const data = await readDataUrl(file);
-      const res = await fetch("/api/attachments", {
+      const res = await fetch(new URL("/api/attachments", API_BASE), {
         method: "POST",
         headers: { "content-type": "application/json", "x-orch-token": token },
         body: JSON.stringify({ root: input.dataset.root, campaign: input.dataset.campaign, name: file.name, data }),
@@ -3396,7 +3396,9 @@ let folderState = { path: null, parent: null };
 
 async function openFolder(path) {
   try {
-    const res = await fetch(`/api/browse?path=${encodeURIComponent(path || "")}`, {
+    const browse = new URL("/api/browse", API_BASE);
+    browse.searchParams.set("path", path || "");
+    const res = await fetch(browse, {
       headers: { "x-orch-token": token },
     });
     const body = await res.json();
@@ -3420,7 +3422,7 @@ async function openFolder(path) {
 async function openSelectedFolder() {
   if (!folderState.path) return toast("Choose a folder first");
   try {
-    const res = await fetch("/api/projects", {
+    const res = await fetch(new URL("/api/projects", API_BASE), {
       method: "POST",
       headers: { "content-type": "application/json", "x-orch-token": token },
       body: JSON.stringify({ root: folderState.path }),

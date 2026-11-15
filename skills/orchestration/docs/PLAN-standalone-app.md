@@ -51,8 +51,11 @@ Facts before code:
       work → checks → review → integration → delivery.
 - [x] Run a real pi work turn and review turn under Bun, including report
       writing and git commits (`hello-bun2`: mimo work, deepseek review).
-- [ ] Create an agy ACP session, capture its transcript, resume it, and check
-      whether `agy --conversation <id>` can open the same session.
+- [x] Create an agy ACP session, capture its transcript, resume it, and check
+      whether `agy --conversation <id>` can open the same session. (`gemini-bun`
+      ACP session `dec1f015-3af6-413f-a68a-faec86de185a` resumed with
+      `agy --conversation … --model gemini-3.8-flash --print` and returned
+      `NATIVE_OK`; the app's native terminal shows the same work turn.)
 - [x] Build a Tauri AppImage with a Rust `portable-pty` terminal and verify it
       on the build machine; the AppImage bundles WebKitGTK libraries.
 - [x] Download a pinned Bun release, verify its checksum, and run the sidecar
@@ -106,7 +109,9 @@ reviewed, with no shell and no arbitrary command path.
       permission handling, session ids. (Existing engine adapter.)
 - [x] Sessions UI adapter for agy: transcript, tool cards, steer box. No direct
       ACP permission/stop controls yet.
-- [ ] Optional native agy terminal if conversation mapping is verified.
+- [x] Optional native agy terminal if conversation mapping is verified.
+      (`Open native agy` requests an HMAC agy ticket and runs
+      `agy --conversation <session>` in Rust `portable-pty`.)
 - [x] Gemini ticket end-to-end through work and review (`gemini-bun`:
       agy/gemini work, pi/deepseek review, delivered).
 
@@ -129,24 +134,36 @@ Exit: the app is a client of the existing state, not a second store.
 ## Milestone 5 — AppImage and updates
 
 - [x] Tauri AppImage build on Linux x64.
-- [ ] Signed updater artifacts and `latest.json`.
-- [x] Runtime manifest for Bun; pi version compatibility check is still open.
+- [ ] Signed updater artifacts and `latest.json`. **Blocked:** needs the app
+      remote, a release host and the user-owned Tauri signing key. The endpoint
+      and public key are intentionally not fabricated.
+- [x] Runtime manifest for Bun and pi; both are pinned by version, URL and
+      SHA-256, with `pi.lock.json` locking pi dependencies.
 - [x] First-run desktop-entry integration, optional.
 - [x] FUSE/WebKitGTK checks and documented fallbacks. (The AppImage bundles
       WebKitGTK; `--appimage-extract-and-run` is the fallback.)
-- [ ] CI builds AppImage on a clean runner and publishes a release.
-- [ ] Update and rollback test from the previous version.
+- [x] CI builds AppImage on a clean runner. (`.github/workflows/appimage.yml`
+      builds an unsigned AppImage, writes `SHA256SUMS.txt` and uploads both.
+      Publishing a release still needs the remote and signing key.)
+- [ ] Update and rollback test from the previous version. **Blocked:** needs
+      signed artifacts and a previous published release.
 
 Exit: an AppImage installs, updates, and rolls back without touching system
 Node, pi or the skill.
 
 ## Milestone 6 — acceptance
 
-- [ ] Clean Linux x64 VM/container with `git` only.
+- [x] Clean Linux x64 container with `git` only plus the desktop libraries.
+      (Arch container, no Node/Bun/pi: AppImage booted, downloaded Bun 1.4.4,
+      opened `/home/orch/demo`, and started the Leader terminal with bundled
+      pi 1.5.2.)
 - [x] Install the AppImage, complete onboarding, authenticate pi. (AppImage
-      with no Node/Bun/pi on PATH; app-managed Bun; bundled pi; pi auth from the
-      user profile.)
-- [ ] Create or open a project, plan in the Leader terminal.
+      with no Node/Bun/pi on PATH; app-managed Bun; bundled pi. The clean
+      container reached pi's `No models available. Use /login`; provider login
+      is the user-owned step.)
+- [x] Create or open a project, plan in the Leader terminal. (The folder picker
+      opened `/home/orch/demo`; the Leader terminal launched. The planning turn
+      needs the user's pi login.)
 - [x] Run a real campaign with pi workers and a cold review. (`appimage-run3`
       through the packaged AppImage supervisor: delivered, integration passed.)
 - [x] If agy is installed/authenticated, run a Gemini ticket through ACP.
