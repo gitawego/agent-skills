@@ -1451,7 +1451,29 @@ pre.log {
   .kanban-cards { min-height: 0; }
 }
 
-/* Sessions: one ticket list and one work surface. */
+/* Leader: a pi session loaded with the orchestration skill. */
+.leader-view { display: grid; gap: 1rem; }
+.leader-intro {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--rule);
+  padding-top: 0.8rem;
+}
+.leader-intro h1 { font: 500 2rem/1.1 var(--display); margin: 0.15rem 0 0.35rem; }
+.leader-intro .note { max-width: 62ch; margin: 0; color: var(--ink-2); }
+.leader-controls { display: flex; gap: 0.55rem; align-items: end; flex-wrap: wrap; }
+.leader-controls .field { display: grid; gap: 0.3rem; }
+.leader-controls .field > span { font: 500 0.62rem/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.leader-controls select { min-width: 18rem; }
+.leader-terminal { border: 1px solid var(--rule); background: var(--recess); }
+.leader-host { height: calc(100vh - 22rem); min-height: 28rem; }
+@media (max-width: 860px) {
+  .leader-terminal { display: none; }
+  .leader-controls select { min-width: 0; width: 100%; }
+}
 .sessions-workspace {
   display: grid;
   grid-template-columns: 15rem minmax(0, 1fr);

@@ -4,13 +4,14 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { SKILL_DIR, campaignSessionsDir, consoleStateDir, ensureDir, globalPanelFile, nowIso, projectStateDir, readJson, registryFile, writeJson } from "./util.mjs";
+import { SKILL_DIR, campaignSessionsDir, consoleStateDir, ensureDir, globalPanelFile, nowIso, projectStateDir, readJson, registryFile, stateHome, writeJson } from "./util.mjs";
 import { projectView, consoleView } from "./view.mjs";
 import { adaptersView, allModels, catalogsForRoot } from "./catalogs.mjs";
 import { enqueue } from "./commands.mjs";
 import { loadDispatch } from "./dispatch.mjs";
 import { readTranscript } from "./transcript.mjs";
 import { createTerminalHub } from "./terminal.mjs";
+import { ensureGitignore } from "./create.mjs";
 
 const UI = path.join(SKILL_DIR, "assets", "ui");
 const MIME = {
@@ -233,6 +234,32 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
       return;
     }
 
+    if (route === "/api/app/leader-ticket" && req.method === "POST") {
+      try {
+        const secret = process.env.ORCH_APP_SECRET;
+        if (!secret) throw new Error("this server was not started in app mode");
+        const body = await readBody(req);
+        const root = body.root;
+        if (!currentRoots().includes(root)) throw new Error("unknown project");
+        const payload = {
+          root,
+          campaign: "leader",
+          ticket: "00",
+          sessionId: "orch-app-leader",
+          sessionsDir: path.join(stateHome(), "orchestration", "leader", "sessions"),
+          workdir: root,
+          mode: "leader",
+          exp: Math.floor(Date.now() / 1000) + 120,
+        };
+        const body64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
+        const signature = createHmac("sha256", secret).update(body64).digest("hex");
+        json(res, 200, { ok: true, ticket: `${body64}.${signature}`, exp: payload.exp });
+      } catch (err) {
+        json(res, 400, { error: err.message });
+      }
+      return;
+    }
+
     if (route === "/api/app/terminal-ticket" && req.method === "POST") {
       try {
         const secret = process.env.ORCH_APP_SECRET;
@@ -362,6 +389,9 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
         const root = path.resolve(String(body.root || "").trim());
         if (!root || !fs.statSync(root).isDirectory()) throw new Error("path is not a directory");
         extraRoots.add(root);
+        ensureDir(path.join(root, ".orchestration"));
+        ensureDir(path.join(root, "orchestration"));
+        ensureGitignore(root);
         const file = registryFile();
         const registry = readJson(file, { version: 1, projects: [] });
         const projects = (registry.projects || []).filter((project) => project.path !== root);

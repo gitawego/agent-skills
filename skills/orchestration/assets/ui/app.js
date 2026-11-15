@@ -1,6 +1,6 @@
 /* Orchestration panel. No framework, no build step: state in, DOM out. */
 
-const VIEWS = ["fleet", "inbox", "acceptance", "settings"];
+const VIEWS = ["fleet", "leader", "inbox", "acceptance", "settings"];
 const CAMPAIGN_TABS = ["overview", "tickets", "sessions", "configure", "history"];
 const FLEET_STATUS = ["all", "running", "queued", "acceptance", "done"];
 const STAGES = [
@@ -88,6 +88,8 @@ let sessionTermMode = null;
 let sessionTakeoverTimer = null;
 let sessionAppId = null;
 let sessionAppCleanup = [];
+let terminalStatusId = "terminal-status";
+let leaderRoot = null;
 const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 let drafts = {};
 let dirtyViews = new Set();
@@ -887,10 +889,11 @@ function renderChrome() {
 }
 
 function render({ preserveScroll = false } = {}) {
-  if (sessionTerm && selected.root && selected.campaign && sessionTermKey && !sessionTermKey.startsWith(`${selected.root}|${selected.campaign}/`)) {
+  if (sessionTermMode !== "leader" && sessionTerm && selected.root && selected.campaign && sessionTermKey && !sessionTermKey.startsWith(`${selected.root}|${selected.campaign}/`)) {
     disposeTerminal();
   }
-  if (!(view === "campaign" && campaignTab === "sessions")) {
+  const terminalView = (view === "campaign" && campaignTab === "sessions") || view === "leader";
+  if (!terminalView) {
     if (sessionTerm || sessionSocket) disposeTerminal();
     sessionStatus = null;
     sessionTranscriptKey = null;
@@ -904,15 +907,18 @@ function render({ preserveScroll = false } = {}) {
     refreshSessionStatus();
     return;
   }
+  if (view === "leader" && sessionTerm) return;
   if (view === "fleet") {
     app.innerHTML = viewFleet();
     paintFleet();
-  } else if (view === "inbox") app.innerHTML = viewInbox(openItems());
+  } else if (view === "leader") app.innerHTML = viewLeader();
+  else if (view === "inbox") app.innerHTML = viewInbox(openItems());
   else if (view === "campaign") app.innerHTML = viewCampaign();
   else if (view === "acceptance") app.innerHTML = viewAcceptance(acceptanceItems());
   else if (view === "settings") app.innerHTML = viewSettings();
 
   if (view === "campaign" && campaignTab === "sessions") setTimeout(mountSessions, 0);
+  if (view === "leader") setTimeout(mountLeader, 0);
   markFresh();
   if (preserveScroll) {
     window.scrollTo(0, scroll);
@@ -988,6 +994,11 @@ function renderCrumbs() {
     crumbsEl.innerHTML = `<b>Console</b><span>·</span>this machine`;
     return;
   }
+  if (view === "leader") {
+    const projects = leaderProjects();
+    crumbsEl.innerHTML = `<b>Leader</b><span>·</span>${projects.length} project${projects.length === 1 ? "" : "s"}<span>·</span>pi with the orchestration skill`;
+    return;
+  }
   const c = current();
   if (!c) {
     crumbsEl.innerHTML = `<span>no campaign</span>`;
@@ -1001,6 +1012,8 @@ function renderCrumbs() {
 }
 
 function renderTabs() {
+  const leaderTab = tabsEl.querySelector('button[data-view="leader"]');
+  if (leaderTab) leaderTab.hidden = !window.__ORCH_APP__;
   tabsEl.querySelectorAll("button[data-view]").forEach((b) => {
     b.setAttribute("aria-selected", String(b.dataset.view === view));
   });
@@ -2065,7 +2078,7 @@ function terminalTheme() {
 }
 
 function setTerminalStatus(text, state = "") {
-  const el = document.getElementById("terminal-status");
+  const el = document.getElementById(terminalStatusId);
   if (!el) return;
   el.textContent = text;
   el.dataset.state = state;
@@ -2230,6 +2243,28 @@ async function connectTerminal(mode = null) {
   });
 }
 
+async function openAppTerminalTicket(term, issued, label) {
+  const id = await window.__TAURI__.core.invoke("pty_open", { ticket: issued.ticket });
+  sessionAppId = id;
+  const unlistenData = await window.__TAURI__.event.listen("pty:data", (event) => {
+    if (event.payload?.id === id) term.write(event.payload.data || "");
+  });
+  const unlistenExit = await window.__TAURI__.event.listen("pty:exit", (event) => {
+    if (event.payload?.id !== id) return;
+    setTerminalStatus("session exited", "ended");
+    sessionAppId = null;
+  });
+  sessionAppCleanup.push(unlistenData, unlistenExit);
+  term.onData((data) => {
+    if (sessionAppId) window.__TAURI__.core.invoke("pty_write", { id: sessionAppId, data }).catch(() => {});
+  });
+  term.onResize(({ cols, rows }) => {
+    if (sessionAppId) window.__TAURI__.core.invoke("pty_resize", { id: sessionAppId, cols, rows }).catch(() => {});
+  });
+  setTerminalStatus(label, "live");
+  setTimeout(fitTerminal, 30);
+}
+
 async function connectAppTerminal(term, c, ticket, mode) {
   setTerminalStatus("requesting terminal ticket…");
   try {
@@ -2238,27 +2273,22 @@ async function connectAppTerminal(term, c, ticket, mode) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ root: c.root, campaign: c.slug, ticket: ticket.id, mode }),
     });
-    const id = await window.__TAURI__.core.invoke("pty_open", { ticket: issued.ticket });
-    sessionAppId = id;
-    const unlistenData = await window.__TAURI__.event.listen("pty:data", (event) => {
-      if (event.payload?.id === id) term.write(event.payload.data || "");
-    });
-    const unlistenExit = await window.__TAURI__.event.listen("pty:exit", (event) => {
-      if (event.payload?.id !== id) return;
-      setTerminalStatus("session exited", "ended");
-      sessionAppId = null;
-    });
-    sessionAppCleanup.push(unlistenData, unlistenExit);
-    term.onData((data) => {
-      if (sessionAppId) window.__TAURI__.core.invoke("pty_write", { id: sessionAppId, data }).catch(() => {});
-    });
-    term.onResize(({ cols, rows }) => {
-      if (sessionAppId) window.__TAURI__.core.invoke("pty_resize", { id: sessionAppId, cols, rows }).catch(() => {});
-    });
-    setTerminalStatus(mode === "attach" ? "attached · you own this session" : "fork · read-only", "live");
-    setTimeout(fitTerminal, 30);
+    await openAppTerminalTicket(term, issued, mode === "attach" ? "attached · you own this session" : "fork · read-only");
   } catch (err) {
     setTerminalStatus(`terminal failed: ${err.message || err}`, "error");
+  }
+}
+
+async function connectLeaderTerminal(term, root) {
+  try {
+    const issued = await api("/api/app/leader-ticket", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ root }),
+    });
+    await openAppTerminalTicket(term, issued, "leader · pi with the orchestration skill");
+  } catch (err) {
+    setTerminalStatus(`leader failed: ${err.message || err}`, "error");
   }
 }
 
@@ -2362,6 +2392,105 @@ function copySessionCommand() {
   if (!commandText) return toast("No session to open");
   if (navigator.clipboard?.writeText) navigator.clipboard.writeText(commandText).then(() => toast("Copied"), () => copyFallback(commandText));
   else copyFallback(commandText);
+}
+
+function leaderProjects() {
+  return state?.projects || [];
+}
+
+function viewLeader() {
+  const projects = leaderProjects();
+  const root = leaderRoot || selected.root || projects[0]?.root || "";
+  leaderRoot = root;
+  const options = projects
+    .map((project) => `<option value="${esc(project.root)}" ${project.root === root ? "selected" : ""}>${esc(project.name)} · ${esc(project.root)}</option>`)
+    .join("");
+  return `<div class="leader-view">
+    <section class="leader-intro">
+      <div>
+        <div class="eyebrow">leader · pi</div>
+        <h1>Plan with the orchestrator</h1>
+        <p class="note">A pi session loaded with the orchestration skill. Use it to start a campaign, draft the ticket graph, approve the plan, and answer worker questions.</p>
+      </div>
+      <div class="leader-controls">
+        <label class="field"><span>Project</span>
+          <select data-role="leader-project" ${projects.length ? "" : "disabled"}>${options || `<option>No projects registered</option>`}</select>
+        </label>
+        <button class="btn primary" data-act="leader-connect" ${projects.length ? "" : "disabled"}>Open Leader terminal</button>
+        <button class="btn ghost" data-act="leader-copy">Copy command</button>
+      </div>
+    </section>
+    ${projects.length ? "" : `<div class="empty"><h2>No project yet.</h2><p>Use <b>Open repository…</b> in the rail, then return here.</p></div>`}
+    <section class="leader-terminal">
+      <header class="terminal-head">
+        <span id="leader-status">not connected</span>
+        <span class="actions"><button class="btn ghost" data-act="leader-connect">Connect</button></span>
+      </header>
+      <div class="terminal-host leader-host" id="terminal-host"></div>
+    </section>
+  </div>`;
+}
+
+function mountLeader() {
+  terminalStatusId = "leader-status";
+}
+
+async function connectLeader() {
+  if (!window.__ORCH_APP__ || !window.__TAURI__) {
+    toast("The Leader terminal is available in the desktop app");
+    return;
+  }
+  const root = leaderRoot || selected.root || leaderProjects()[0]?.root;
+  if (!root) {
+    toast("Open a project first");
+    return;
+  }
+  terminalStatusId = "leader-status";
+  const host = document.getElementById("terminal-host");
+  if (!host) return;
+  try {
+    await ensureXterm();
+  } catch (err) {
+    setTerminalStatus(err.message, "error");
+    return;
+  }
+  disposeTerminal();
+  host.innerHTML = "";
+  const term = new window.Terminal({
+    convertEol: true,
+    cursorBlink: true,
+    fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+    fontSize: 12.5,
+    lineHeight: 1.25,
+    scrollback: 5000,
+    theme: terminalTheme(),
+  });
+  const fit = new window.FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(host);
+  sessionTerm = term;
+  sessionFit = fit;
+  sessionTermMode = "leader";
+  sessionTermKey = `leader|${root}`;
+  setTimeout(fitTerminal, 30);
+  setTerminalStatus("starting leader…");
+  await connectLeaderTerminal(term, root);
+}
+
+async function copyLeaderCommand() {
+  const root = leaderRoot || selected.root || leaderProjects()[0]?.root;
+  if (!root) return toast("Open a project first");
+  let skill = "<path-to-orchestration-skill>";
+  if (window.__TAURI__) {
+    try {
+      skill = (await window.__TAURI__.core.invoke("runtime_status")).skill;
+    } catch {
+      /* fall back to the placeholder */
+    }
+  }
+  const command = `cd ${root} && pi --session-id orch-app-leader --skill ${skill}/SKILL.md`;
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(command).then(() => toast("Copied"), () => copyFallback(command));
+  else copyFallback(command);
 }
 
 function viewCampaign() {
@@ -3148,6 +3277,12 @@ document.addEventListener("change", (event) => {
     paintTickets();
     return;
   }
+  const leaderProject = event.target.closest('[data-role="leader-project"]');
+  if (leaderProject) {
+    leaderRoot = leaderProject.value;
+    if (sessionTermMode === "leader") disposeTerminal();
+    return;
+  }
   const fleetCampaignSelect = event.target.closest("[data-role='fleet-campaign']");
   if (fleetCampaignSelect) {
     const val = fleetCampaignSelect.value;
@@ -3219,6 +3354,10 @@ document.addEventListener("click", (event) => {
       history.replaceState(null, "", `#${view}`);
       return render();
     }
+    case "leader-connect":
+      return connectLeader();
+    case "leader-copy":
+      return copyLeaderCommand();
     case "copy": {
       const command = target.dataset.command || "";
       const done = () => toast("Copied");
