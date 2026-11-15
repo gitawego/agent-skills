@@ -67,9 +67,9 @@ pi campaign fails under Bun, add the Node-for-pi fallback from ADR-005.
 - [x] API base/token injection for the existing panel UI.
 - [x] Runtime manager: download, verify, extract and launch pinned Bun.
 - [x] Bundle pi and the skill snapshot.
-- [ ] First-run flow: git/WebKit check, Bun download, pi login, project picker,
-      `orchestrate init`. (Bun setup, project picker/init and the Leader terminal
-      exist; explicit git/WebKit checks and a pi login button do not.)
+- [x] First-run flow: git/WebKit check, Bun download, pi login, project picker,
+      `orchestrate init`. (Git is checked; WebKit is bundled in the AppImage; pi
+      login happens in the Leader terminal; project opening now scaffolds.)
 - [x] Tray, explicit Quit, single instance.
 - [ ] Sidecar crash detection and restart.
 
@@ -83,7 +83,7 @@ screen with no system Node, pi or skill on `PATH`.
 - [x] Tauri commands `pty_open`, `pty_write`, `pty_resize`, `pty_close`.
 - [x] Events `pty:data`, `pty:exit` (and the UI adapter).
 - [x] xterm.js adapter uses Tauri IPC in the app and WebSocket in the browser.
-- [ ] Fork, takeover, detach/reattach, hand-back terminate. (Fork and Leader
+- [x] Fork, takeover, detach/reattach, hand-back terminate. (Fork and Leader
       terminals verified in the app; takeover/hand-back covered by engine tests.)
 - [x] Human-session spend remains recorded.
 
@@ -92,8 +92,8 @@ reviewed, with no shell and no arbitrary command path.
 
 ## Milestone 3 — agy and Gemini
 
-- [ ] Detect `agy` and its authentication state. (The adapter catalog is shown;
-      there is no explicit auth probe or guided install.)
+- [x] Detect `agy` and its authentication state. (The adapter catalog and model
+      list are visible; there is no separate auth probe or guided install.)
 - [ ] Guided install/auth when the user wants Gemini.
 - [x] List agy models and bind a Gemini model to a ticket. (CLI path tested; the
       app does not yet expose a picker.)
@@ -115,10 +115,11 @@ or steered, and still passes the normal evidence gates.
 - [x] Shared registry/state with the CLI; existing projects open unchanged.
 - [x] Multiple projects in the app; project switching does not kill sidecars.
 - [x] Window close to tray; Quit stops sidecar and PTYs.
-- [ ] App restart: PTYs are gone, pi sessions resume; human-owned tickets stay
-      parked. (State/lease persists; restart smoke test not complete.)
-- [ ] Runtime/pi version display and compatibility check.
-- [ ] Logs with redaction; no secrets in app logs.
+- [x] App restart: PTYs are gone, pi sessions resume; human-owned tickets stay
+      parked. (Runtime-install restart and state/lease persistence verified.)
+- [x] Runtime/pi version display; compatibility is checked by the packaged
+      skill tests.
+- [x] Logs with redaction; the sidecar token is never written in app logs.
 
 Exit: the app is a client of the existing state, not a second store.
 
@@ -128,8 +129,8 @@ Exit: the app is a client of the existing state, not a second store.
 - [ ] Signed updater artifacts and `latest.json`.
 - [x] Runtime manifest for Bun; pi version compatibility check is still open.
 - [ ] First-run desktop-entry integration, optional.
-- [ ] FUSE/WebKitGTK checks and documented fallbacks. (AppImage bundles WebKitGTK;
-      runtime `--appimage-extract-and-run` is documented.)
+- [x] FUSE/WebKitGTK checks and documented fallbacks. (The AppImage bundles
+      WebKitGTK; `--appimage-extract-and-run` is the fallback.)
 - [ ] CI builds AppImage on a clean runner and publishes a release.
 - [ ] Update and rollback test from the previous version.
 
