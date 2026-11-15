@@ -158,12 +158,12 @@ Node, pi or the skill.
 
 - [x] Clean Linux x64 container with `git` only plus the desktop libraries.
       (Arch container, no Node/Bun/pi: AppImage booted, downloaded Bun 1.4.4,
-      opened `/home/orch/demo`, and started the Leader terminal with bundled
-      pi 1.5.2.)
+      opened `/home/orch/demo`, started the Leader terminal with bundled pi
+      1.5.2, and delivered `container-campaign` on the authenticated profile.)
 - [x] Install the AppImage, complete onboarding, authenticate pi. (AppImage
       with no Node/Bun/pi on PATH; app-managed Bun; bundled pi. The clean
-      container reached pi's `No models available. Use /login`; provider login
-      is the user-owned step.)
+      container reached `/login` without a profile and ran a real campaign with
+      the user-owned authenticated profile.)
 - [x] Create or open a project, plan in the Leader terminal. (The folder picker
       opened `/home/orch/demo`; the Leader terminal launched. The planning turn
       needs the user's pi login.)
