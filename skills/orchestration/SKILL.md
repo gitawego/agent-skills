@@ -29,6 +29,8 @@ Read the reference for a branch before acting on it:
 - [docs/ADR-001-ticket-sizing-and-context.md](docs/ADR-001-ticket-sizing-and-context.md): one-ticket default, dependency context, failure aggregation.
 - [docs/ADR-002-bounded-context-packets.md](docs/ADR-002-bounded-context-packets.md): subagent handoff packets and prompt budgets.
 - [docs/ADR-003-ticket-steering.md](docs/ADR-003-ticket-steering.md): steering a working ticket without losing its session.
+- [docs/ADR-004-pi-only-sessions-and-terminal.md](docs/ADR-004-pi-only-sessions-and-terminal.md): pi-only sessions, lease, transcript and embedded terminal.
+- [docs/ADR-005-standalone-tauri-app.md](docs/ADR-005-standalone-tauri-app.md): the standalone Tauri + Bun app.
 - [references/memory.md](references/memory.md): decisions, supersession, promotion, the context command, the close report.
 - [references/worker-prompt.md](references/worker-prompt.md): what a worker is told.
 

@@ -1,0 +1,241 @@
+# ADR-005: A standalone Tauri app for orchestration
+
+- **Status:** Accepted
+- **Date:** 2026-11-15
+- **Scope:** orchestration product shape
+- **Supersedes:** ADR-004's pi-only runtime restriction for explicit Gemini tickets
+- **Related:** [ADR-004](ADR-004-pi-only-sessions-and-terminal.md)
+
+## Context
+
+Orchestration started as an agent skill: a plan format, a supervisor, a CLI and
+a local panel. It now also has:
+
+- a long-running supervisor and local HTTP/SSE API;
+- a PTY terminal and session ownership with fork, takeover and hand-back;
+- a readable session transcript, human-session accounting and inline inbox
+  answers;
+- project registry, campaign state, model catalogs and a panel UI.
+
+A skill folder is still the right delivery mechanism for the agent contract,
+but it is no longer a good shape for the whole product. Installing it requires
+Node, `pi`, `PATH` changes and a skill clone. The panel is a local web app that
+the user must start and keep open.
+
+The product question is not "skill or app". It is which layer becomes the app
+and which layer remains an agent-facing contract.
+
+## Decision
+
+### 1. Product shape
+
+Build a standalone **Tauri v2** desktop application, distributed as a Linux
+x86_64 **AppImage only** for v1.
+
+The app is local-first and single-user. It does not listen beyond loopback.
+
+Three layers remain:
+
+```text
+orchestration-skill   agent-facing planning and approval contract
+orchestration-core    supervisor, state machine, CLI, local API
+orchestration-app     Tauri shell, sessions, terminal, onboarding
+```
+
+The app is a separate repository. This skill repository remains the source of
+the engine, UI and agent contract. The app pins a skill commit and vendors it
+at build time. This keeps the skill portable and keeps the app's Cargo, Bun and
+packaging dependencies out of the skill folder.
+
+### 2. Runtime stack
+
+```text
+Tauri shell (Rust)
+  ├── portable-pty terminal bridge
+  ├── single instance, tray, updater
+  ├── runtime manager (Bun download)
+  └── bundled frontend (Tauri assets)
+        │
+        ├── Bun sidecar: supervisor, API, SSE, transcripts
+        │     ├── bundled pi (default runtime)
+        │     └── detected agy (Gemini runtime, ACP)
+        │
+        └── Rust PTY for pi sessions
+```
+
+- **Bun** runs the supervisor, API and pi. The app uses the Bun runtime rather
+  than a compiled server: pi needs a runtime, and a compiled server cannot
+  double as a general Bun runtime.
+- **Bun is post-installed**, not bundled in the AppImage. The app downloads a
+  pinned Bun release from the official artifacts, verifies SHA-256, extracts it
+  into app data, and starts the sidecar with that binary. The system `PATH` is
+  untouched. First run requires network.
+- **pi is bundled** in the app resources. It runs under Bun. A full campaign
+  under Bun is the compatibility gate; if it fails, bundle Node only for pi
+  behind the same runtime interface.
+- **agy is detected, not bundled.** If installed and authenticated, its Gemini
+  models are available as a second ticket runtime. If missing, the app offers
+  a guided install and remains pi-only.
+- **ADR-004's pi-only rule is narrowed.** Pi remains the default runtime and the
+  only runtime for non-Gemini work. Agy is a supported second runtime only for
+  tickets explicitly bound to a Gemini model. The CLI's blanket ACP freeze is
+  relaxed for that explicit Gemini path; the app must provide the ACP session
+  view, and the CLI remains a supervisor for those tickets.
+- **Rust `portable-pty`** owns pi terminals. The packaged app does not ship
+  `node-pty`: a Bun-compiled binary cannot load its native `.node` file, and
+  Rust is already present.
+
+### 3. Session model
+
+Pi sessions use a PTY and xterm.js through Tauri IPC. Agy sessions use ACP.
+
+```text
+pi ticket   → Rust portable-pty → xterm.js
+agy ticket  → Bun ACP client    → transcript/composer + optional native TUI
+```
+
+The Sessions workspace is adapter-aware:
+
+- pi: transcript from the session JSONL, terminal via Tauri IPC;
+- agy: ACP transcript and tool cards, composer sends `session/prompt`,
+  permissions are handled through ACP;
+- "Open in agy" is optional and only ships if ACP session IDs map to resumable
+  agy conversations.
+
+Agy is the only path to its Gemini models. The app must not pretend agy is a
+pi model provider; ACP is an agent protocol, not a completion API.
+
+### 4. Terminal security
+
+The Bun server remains the authority on campaign and session ownership. The
+frontend cannot ask Rust to spawn arbitrary commands.
+
+1. Bun checks the ticket lease and session state.
+2. Bun issues a short-lived HMAC ticket:
+   `{root, campaign, ticket, sessionId, workdir, mode, exp}`.
+3. Rust verifies the HMAC and spawns only `pi` with fixed session arguments.
+4. Rust exposes only `pty_open`, `pty_write`, `pty_resize`, `pty_close`.
+5. One PTY per ticket; no shell; hand-back kills the PTY.
+
+The HMAC secret and API token are generated by Tauri at startup and passed to
+the Bun sidecar. They are never written to the project.
+
+### 5. State and compatibility
+
+- Campaign plan files and `.orchestration/` state remain authoritative.
+- The app and the CLI share the project registry and state.
+- Opening an existing project is idempotent; no v1 migration.
+- The app-private runtime lives under app data, not in the project:
+
+```text
+~/.local/share/orchestration-app/
+  runtime/bun/<version>/
+  runtime/pi-override/<version>/   # optional, newer pi without an app update
+  logs/
+  updates/
+```
+
+### 6. Lifecycle
+
+- Close to tray; the supervisor and PTYs continue.
+- Explicit **Quit** stops the sidecar and all PTYs.
+- Single instance; a second launch focuses the existing window.
+- If the Bun sidecar crashes, Tauri restarts it; state is on disk, PTYs die,
+  and pi sessions remain resumable.
+- The app never auto-starts at login in v1.
+
+### 7. Distribution and updates
+
+- Linux x86_64 AppImage only.
+- No `.deb`, Flathub, Snap or AUR in v1.
+- Tauri updater signs the AppImage and publishes `latest.json`.
+- The app update carries Tauri, Rust, the frontend, the skill snapshot and pi.
+- Bun is downloaded on first run and can be updated independently.
+- The AppImage lives in a user-writable location. Desktop-entry integration is
+  optional on first run.
+- The AppImage needs FUSE 2; `--appimage-extract-and-run` is the documented
+  fallback.
+- Tauri on Linux uses the system WebKitGTK. That dependency is checked at first
+  run and documented. The app is standalone in the "no Node, npm, pi, PATH or
+  skill clone" sense, not "no OS libraries".
+
+### 8. Onboarding
+
+A single first-run flow:
+
+1. check git and WebKitGTK;
+2. download and verify Bun;
+3. pi login;
+4. detect agy; offer install/authentication if the user wants Gemini;
+5. pick or create a project;
+6. run `orchestrate init` if needed;
+7. open the Leader terminal with the orchestration skill;
+8. start the first campaign.
+
+The Leader is a pi terminal inside the app. The app does not build a custom
+planner chat in v1.
+
+### 9. v1 scope
+
+In:
+
+- onboarding and runtime manager;
+- project picker, init, Leader terminal;
+- campaign board, ticket board, Sessions, inbox, acceptance;
+- pi PTY sessions and agy ACP sessions;
+- approval/rejection, raw logs, human-session spend;
+- tray, single instance, auto-update, AppImage packaging.
+
+Out:
+
+- team, remote and hosted access;
+- mobile;
+- Windows and macOS;
+- custom planner chat;
+- bundled agy;
+- `.deb`, Flathub, Snap, AUR;
+- auto-start at login;
+- multi-user credentials.
+
+## Consequences
+
+- The app becomes a second release channel and must track the skill's engine
+  and UI. A pinned skill commit and a compatibility test are required.
+- Supporting Gemini as a main model means two session backends. This is the
+  largest new UI cost.
+- Post-installing Bun removes ~78 MB from the AppImage but makes first run
+  network-dependent.
+- Tauri's Linux webview is a system dependency; the AppImage is not a fully
+  self-contained OS image.
+- Agy remains a third-party runtime with its own authentication, updates and
+  terms. The app detects it; it does not reimplement it.
+
+## Risks and spikes
+
+1. **Full pi campaign under Bun.** A model turn and a `bash` tool call pass;
+   work + review + report + git commit must pass before shipping.
+2. **Agy ACP session mapping.** Verify that ACP session IDs can be resumed and
+   optionally opened in agy's native CLI.
+3. **Tauri AppImage on a clean Linux machine.** Verify WebKitGTK/FUSE behavior
+   and the updater signature.
+4. **pi update compatibility.** A pinned pi in the app must be tested against
+   the skill's catalog/prompt contract.
+5. **Runtime download integrity.** Pin Bun versions and verify checksums; do
+   not run a remote shell installer.
+
+## Rejected options
+
+- **Remain only a skill.** The onboarding and session UI costs stay on the
+  user, and the product cannot offer a standalone install.
+- **Electron.** Bundles Chromium and Node, but the user chose Tauri and the
+  app already needs a system webview; the extra 100+ MB buys little.
+- **Compile the Bun server to a single binary.** Pi still needs a Bun runtime;
+  compiled Bun cannot load `node-pty`; the size/complexity do not pay off.
+- **Bundle agy.** Adds ~265 MB to every download for a capability many users
+  will not enable.
+- **Make agy a fake pi provider.** ACP is an agent protocol; a provider that
+  runs a whole agent per model turn breaks cost, tools and session ownership.
+- **Database as source of truth.** Git-backed campaign files are the product's
+  audit and portability.
+- **Remote-first app.** Auth, tenancy, remote terminals and a server-side
+  supervisor are a different product.

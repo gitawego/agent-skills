@@ -594,6 +594,9 @@ Key references:
 - [docs/ADR-001-ticket-sizing-and-context.md](docs/ADR-001-ticket-sizing-and-context.md) — one-ticket default, dependency context, failure aggregation
 - [docs/ADR-002-bounded-context-packets.md](docs/ADR-002-bounded-context-packets.md) — subagent handoff packets, prompt budgets, context telemetry
 - [docs/ADR-003-ticket-steering.md](docs/ADR-003-ticket-steering.md) — steering a working ticket without losing its session
+- [docs/ADR-004-pi-only-sessions-and-terminal.md](docs/ADR-004-pi-only-sessions-and-terminal.md) — pi-only sessions, lease, transcript, embedded terminal
+- [docs/ADR-005-standalone-tauri-app.md](docs/ADR-005-standalone-tauri-app.md) — the standalone Tauri + Bun app
+- [docs/PLAN-standalone-app.md](docs/PLAN-standalone-app.md) — the app implementation plan
 - [docs/SPEC-evidence-and-approval.md](docs/SPEC-evidence-and-approval.md) — evidence and one-decision approval spec
 
 ## When not to use it

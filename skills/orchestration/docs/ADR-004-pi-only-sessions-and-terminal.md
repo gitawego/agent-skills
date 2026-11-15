@@ -1,5 +1,9 @@
 # ADR-004: pi-only sessions and an embedded worker terminal
 
+> Superseded in part by [ADR-005](ADR-005-standalone-tauri-app.md): pi remains
+> the default runtime, but agy is allowed for explicit Gemini tickets in the
+> standalone app.
+
 - **Status:** Accepted
 - **Date:** 2026-11-15
 - **Scope:** `skills/orchestration`
