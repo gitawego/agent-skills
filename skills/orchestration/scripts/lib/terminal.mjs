@@ -212,13 +212,14 @@ export function createTerminalHub({ server, currentRoots, authorized, log = () =
               const after = usageTotals(info.sessionFile);
               return { tokens: Math.max(0, after.tokens - session.baseline.tokens), dollars: Math.max(0, after.dollars - session.baseline.dollars) };
             })()
-          : newSessionFiles(info.sessionsDir, session.openedAt, path.basename(info.sessionFile || "")).reduce(
-              (sum, file) => {
-                const next = usageTotals(file);
-                return { tokens: sum.tokens + next.tokens, dollars: sum.dollars + next.dollars };
-              },
-              { tokens: 0, dollars: 0 },
-            );
+          : (() => {
+              const files = newSessionFiles(info.sessionsDir, session.openedAt, path.basename(info.sessionFile || ""));
+              if (files.length > 1) {
+                log(`terminal ${info.campaign}/${info.ticket}: ${files.length} fork session files; usage not attributed`);
+                return { tokens: 0, dollars: 0 };
+              }
+              return files.length ? usageTotals(files[0]) : { tokens: 0, dollars: 0 };
+            })();
       if (usage.tokens || usage.dollars) {
         appendJsonl(path.join(projectStateDir(info.root), "campaigns", info.campaign, "human-sessions.jsonl"), {
           ticket: info.ticket,

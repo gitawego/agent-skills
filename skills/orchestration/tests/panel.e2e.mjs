@@ -767,6 +767,40 @@ tickets:
     assert.equal(sessionsPage.takeover, true, "a working ticket offers takeover");
     assert.equal(sessionsPage.raw, true, "the raw run log is disclosed");
     assert.match(sessionsPage.token, /node-pty|embedded terminal|read-only fork/, "the terminal reports its fallback state");
+
+    createItem(dir, "demo", {
+      kind: "question",
+      ticket: "01",
+      title: "Which order?",
+      question: { text: "Which section should land first?" },
+    });
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#campaign/demo/sessions` });
+    await sleep(900);
+    const question = await send("Runtime.evaluate", {
+      expression: `JSON.stringify({
+        card: document.querySelector(".session-question")?.innerText || "",
+        textarea: Boolean(document.getElementById("session-answer-text")),
+      })`,
+      returnByValue: true,
+    });
+    const questionPage = JSON.parse(question.result.result.value);
+    assert.match(questionPage.card, /Which section should land first/, "the session shows the worker question");
+    assert.equal(questionPage.textarea, true, "the question has an inline answer box");
+    await send("Runtime.evaluate", {
+      expression: `(() => {
+        document.getElementById("session-answer-text").value = "The header first";
+        document.querySelector('[data-act="session-answer"]').click();
+      })()`,
+    });
+    await sleep(500);
+    const commands = fs
+      .readFileSync(path.join(dir, ".orchestration", "commands.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const answer = commands.find((command) => command.type === "answer");
+    assert.ok(answer, "the inline answer is queued");
+    assert.equal(answer.text, "The header first");
     ws.close();
   } finally {
     browser.kill("SIGKILL");
