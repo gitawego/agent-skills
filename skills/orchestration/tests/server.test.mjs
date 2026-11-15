@@ -227,3 +227,43 @@ test("commands can be enqueued without a server, which is what the CLI does", ()
   enqueue(root, { type: "pause", campaign: "demo" });
   assert.ok(true);
 });
+
+test("the app issues a native agy ticket for the agy work run", async () => {
+  const root = fixture();
+  const stateFile = path.join(root, ".orchestration", "campaigns", "demo", "state.json");
+  fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+  fs.writeFileSync(
+    stateFile,
+    JSON.stringify({
+      campaign: "demo",
+      stage: "running",
+      tickets: {
+        "01": { stage: "working", run: "r-review", sessionId: "dec1f015-3af6-413f-a68a-faec86de185a", workdir: root },
+      },
+      runs: {
+        "r-work": { id: "r-work", ticket: "01", role: "work", adapter: "agy-acp", status: "done", sessionId: "dec1f015-3af6-413f-a68a-faec86de185a", model: "antigravity/gemini-3.8-flash" },
+        "r-review": { id: "r-review", ticket: "01", role: "review", adapter: "pi", status: "live", model: MODELS.backup },
+      },
+      slots: {},
+      spend: { tokens: 0, dollars: 0, byModel: {} },
+    }),
+  );
+  process.env.ORCH_APP_SECRET = "test-secret";
+  const panel = await startServer({ roots: [root], port: 0 });
+  try {
+    const res = await fetch(`http://127.0.0.1:${panel.port}/api/app/agy-ticket?token=${panel.token}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ root, campaign: "demo", ticket: "01" }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    const payload = JSON.parse(Buffer.from(body.ticket.split(".")[0], "base64url").toString());
+    assert.equal(payload.mode, "agy");
+    assert.equal(payload.sessionId, "dec1f015-3af6-413f-a68a-faec86de185a");
+    assert.equal(payload.campaign, "demo");
+  } finally {
+    delete process.env.ORCH_APP_SECRET;
+    panel.close();
+  }
+});

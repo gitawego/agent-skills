@@ -304,6 +304,7 @@ export function campaignView(root, slug) {
     const chain = effectiveKinds[ticket.data.kind]?.models || [];
     const adapter = workRun?.adapter || chain[0]?.adapter || runner.adapter;
     const sessionId = entry.sessionId || workRun?.sessionId || null;
+    const acpWorkRun = [...ticketRuns].reverse().find((candidate) => candidate.role === "work" && candidate.adapter === "agy-acp");
     const sessionFile = sessionFileFor(campaignSessionsDir(root, slug), sessionId);
     const sessionWorkdir = entry.workdir || workRun?.workdir || root;
     const childRuns = ticketRuns
@@ -336,6 +337,7 @@ export function campaignView(root, slug) {
         role: workRun?.role || null,
         live: workRun?.status === "live",
         model: entry.model || workRun?.model || null,
+        acpRunId: acpWorkRun?.id || null,
       },
       blockedBy: asArray(ticket.data.blocked_by).map((b) => String(b).padStart(2, "0")),
       touches: asArray(ticket.data.touches),

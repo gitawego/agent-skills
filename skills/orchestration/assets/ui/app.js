@@ -90,6 +90,8 @@ let sessionAppId = null;
 let sessionAppCleanup = [];
 let terminalStatusId = "terminal-status";
 let leaderRoot = null;
+let paletteRows = [];
+let paletteIndex = 0;
 const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 let drafts = {};
 let dirtyViews = new Set();
@@ -113,6 +115,13 @@ const acceptCount = document.getElementById("accept-count");
 const dispatchPill = document.getElementById("dispatch-pill");
 const signalEl = document.getElementById("signal");
 const footState = document.getElementById("foot-state");
+const scopeLabel = document.getElementById("scope-label");
+const scopeMeta = document.getElementById("scope-meta");
+const campaignCount = document.getElementById("campaign-count");
+const statusRuntime = document.getElementById("status-runtime");
+const paletteEl = document.getElementById("palette");
+const paletteInput = document.getElementById("palette-input");
+const paletteResultsEl = document.getElementById("palette-results");
 
 const esc = (value) =>
   String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -161,6 +170,15 @@ function copyFallback(text) {
     window.prompt("Copy this command", text);
   }
   area.remove();
+}
+
+function copyText(text, message = "Copied") {
+  if (!text) return;
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(() => toast(message), () => copyFallback(text));
+  } else {
+    copyFallback(text);
+  }
 }
 
 function formBusy() {
@@ -865,6 +883,140 @@ function viewAcceptance(items) {
 
 /* --- render --------------------------------------------------------------- */
 
+function goView(name) {
+  dirtyViews.clear();
+  view = name;
+  closeDrawer();
+  render();
+  syncFleetUrl();
+}
+
+function openCampaign(campaign) {
+  selected = { root: campaign.root, campaign: campaign.slug };
+  view = "campaign";
+  campaignTab = "overview";
+  dirtyViews.clear();
+  closeDrawer();
+  history.replaceState(null, "", `#campaign/${encodeURIComponent(campaign.slug)}/overview`);
+  render();
+}
+
+const PALETTE_ICONS = {
+  fleet: '<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" /><rect x="9" y="2.5" width="4.5" height="4.5" rx="1" /><rect x="2.5" y="9" width="4.5" height="4.5" rx="1" /><rect x="9" y="9" width="4.5" height="4.5" rx="1" /></svg>',
+  inbox: '<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8.5h3l1.2 1.8h2.6l1.2-1.8h3" /><path d="M3.4 3.5h9.2l1 5v4H2.4v-4Z" /></svg>',
+  acceptance: '<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" /><path d="m5.6 8.2 1.7 1.7 3.2-3.5" /></svg>',
+  leader: '<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10" rx="1.5" /><path d="m5 6 2 2-2 2M8.5 10h2.5" /></svg>',
+  settings: '<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 5h11M2.5 11h11" /><circle cx="6" cy="5" r="1.6" /><circle cx="10.5" cy="11" r="1.6" /></svg>',
+  plus: '<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>',
+  play: '<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5 12 8l-7 4.5Z" /></svg>',
+  pause: '<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4v8M10 4v8" /></svg>',
+  theme: '<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="4" /><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6" /></svg>',
+  campaign: '<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10v9H3Z" /><path d="M5 6h6M5 8.5h6M5 11h3" /></svg>',
+};
+
+function paletteIcon(name) {
+  return PALETTE_ICONS[name] || PALETTE_ICONS.campaign;
+}
+
+function paletteActions() {
+  const dispatch = state?.dispatch || { mode: "auto" };
+  const paused = dispatch.mode === "paused";
+  const actions = [
+    { id: "view:fleet", group: "Go to", label: "Fleet", hint: `${fleetRows().length} rows`, icon: "fleet", run: () => goView("fleet") },
+    { id: "view:inbox", group: "Go to", label: "Inbox", hint: `${openItems().length} open`, icon: "inbox", run: () => goView("inbox") },
+    { id: "view:acceptance", group: "Go to", label: "Acceptance", hint: `${acceptanceItems().length} waiting`, icon: "acceptance", run: () => goView("acceptance") },
+  ];
+  if (window.__ORCH_APP__) {
+    actions.push({ id: "view:leader", group: "Go to", label: "Leader", hint: "pi with the orchestration skill", icon: "leader", run: () => goView("leader") });
+  }
+  actions.push({ id: "view:settings", group: "Go to", label: "Settings", hint: "Console defaults", icon: "settings", run: () => goView("settings") });
+  actions.push(
+    { id: "action:repo", group: "Actions", label: "Open repository…", hint: "Add a project", icon: "plus", run: () => openFolder(null) },
+    { id: "action:start", group: "Actions", label: "Copy start command", hint: 'orchestrate start "<goal>"', icon: "play", run: () => copyText('orchestrate start "<goal>"', "Copied. Paste it in the Leader terminal.") },
+    { id: "action:dispatch", group: "Actions", label: paused ? "Resume dispatch" : "Pause dispatch", hint: paused ? dispatch.reason || "paused" : "new runs stop; live runs continue", icon: "pause", run: () => openDispatchModal() },
+    {
+      id: "action:theme",
+      group: "Actions",
+      label: `Switch to ${document.documentElement.dataset.theme === "light" ? "dark" : "light"} theme`,
+      hint: "Appearance",
+      icon: "theme",
+      run: () => {
+        const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+        localStorage.setItem("orch.theme", next);
+        document.documentElement.dataset.theme = next;
+        render();
+      },
+    },
+  );
+  for (const campaign of campaigns()) {
+    actions.push({
+      id: `campaign:${campaign.root}:${campaign.slug}`,
+      group: "Campaigns",
+      label: campaign.slug,
+      hint: `${campaign.project} · ${campaign.stage}`,
+      icon: "campaign",
+      run: () => openCampaign(campaign),
+    });
+  }
+  return actions;
+}
+
+function filteredPalette() {
+  const query = (paletteInput?.value || "").trim().toLowerCase();
+  const actions = paletteActions();
+  if (!query) return actions;
+  return actions.filter((action) => `${action.label} ${action.hint} ${action.group}`.toLowerCase().includes(query));
+}
+
+function renderPalette() {
+  if (!paletteResultsEl) return;
+  paletteRows = filteredPalette();
+  if (paletteIndex >= paletteRows.length) paletteIndex = 0;
+  if (paletteIndex < 0) paletteIndex = 0;
+  if (!paletteRows.length) {
+    paletteResultsEl.innerHTML = `<div class="palette-empty">No matches. Try “fleet”, “inbox” or a campaign name.</div>`;
+    return;
+  }
+  let html = "";
+  let group = "";
+  paletteRows.forEach((action, index) => {
+    if (action.group !== group) {
+      group = action.group;
+      html += `<div class="palette-group">${esc(group)}</div>`;
+    }
+    html += `<button class="palette-item${index === paletteIndex ? " active" : ""}" data-palette-index="${index}">
+      <span class="p-icon">${paletteIcon(action.icon)}</span>
+      <span class="p-label">${esc(action.label)}</span>
+      <span class="p-hint">${esc(action.hint || "")}</span>
+    </button>`;
+  });
+  paletteResultsEl.innerHTML = html;
+  const active = paletteResultsEl.querySelector(".palette-item.active");
+  if (active) active.scrollIntoView({ block: "nearest" });
+}
+
+function openPalette() {
+  if (!paletteEl) return;
+  paletteEl.hidden = false;
+  paletteIndex = 0;
+  if (paletteInput) paletteInput.value = "";
+  renderPalette();
+  setTimeout(() => paletteInput?.focus(), 0);
+}
+
+function closePalette() {
+  if (!paletteEl) return;
+  paletteEl.hidden = true;
+  paletteRows = [];
+}
+
+function runPalette(index) {
+  const action = paletteRows[index];
+  if (!action) return;
+  closePalette();
+  action.run();
+}
+
 function renderChrome() {
   ensureSelection();
   for (const key of [...dirtyViews]) if (key !== surface()) dirtyViews.delete(key);
@@ -874,6 +1026,11 @@ function renderChrome() {
   acceptCount.textContent = acceptance.length ? String(acceptance.length) : "";
   signalEl.classList.toggle("alert", items.length + acceptance.length > 0);
   footState.textContent = state ? `${campaigns().length} campaign${campaigns().length === 1 ? "" : "s"} · ${state.projects.length} project${state.projects.length === 1 ? "" : "s"}` : "local";
+  const scope = current();
+  if (scopeLabel) scopeLabel.textContent = selected.campaign ? selected.campaign : "All campaigns";
+  if (scopeMeta) scopeMeta.textContent = selected.campaign ? `${scope?.project || "campaign"} · ${scope?.stage || "—"}` : `${campaigns().length} campaign${campaigns().length === 1 ? "" : "s"}`;
+  if (campaignCount) campaignCount.textContent = String(campaigns().length);
+  if (statusRuntime) statusRuntime.textContent = runtimeLabel();
   const theme = document.documentElement.dataset.theme || "dark";
   document.querySelectorAll("[data-act='theme']").forEach((b) => {
     b.setAttribute("aria-pressed", String(b.dataset.theme === theme));
@@ -899,7 +1056,8 @@ function render({ preserveScroll = false } = {}) {
     sessionTranscriptKey = null;
     sessionTranscriptData = null;
   }
-  const scroll = preserveScroll ? window.scrollY : 0;
+  const viewEl = document.getElementById("app");
+  const scroll = preserveScroll ? viewEl?.scrollTop || 0 : 0;
   const fleetScroll = preserveScroll ? document.querySelector(".fleet-wrap")?.scrollLeft || 0 : 0;
   renderChrome();
   if (!state) return;
@@ -921,7 +1079,7 @@ function render({ preserveScroll = false } = {}) {
   if (view === "leader") setTimeout(mountLeader, 0);
   markFresh();
   if (preserveScroll) {
-    window.scrollTo(0, scroll);
+    if (viewEl) viewEl.scrollTop = scroll;
     const wrap = document.querySelector(".fleet-wrap");
     if (wrap) wrap.scrollLeft = fleetScroll;
   }
@@ -937,38 +1095,65 @@ function renderDispatch() {
     : "Dispatch is automatic. Click to pause new runs.";
 }
 
+function runtimeLabel() {
+  const runtime = window.__ORCH_RUNTIME__;
+  if (!runtime) return "web panel";
+  const pi = runtime.pi_version ? `pi ${runtime.pi_version}` : "pi";
+  return `${pi} · bun ${runtime.bun_version || "?"}`;
+}
+
 function renderRail() {
   const allList = campaigns();
-  if (!allList.length) {
-    campaignsEl.innerHTML = `<div class="hint" style="padding:6px">No campaigns yet.</div>`;
-    return;
-  }
   const totalTickets = allList.reduce((acc, c) => acc + (c.tickets?.length || 0), 0);
   const totalOpen = allList.reduce((acc, c) => acc + (c.tickets || []).filter((t) => t.stage === "working").length, 0);
   const totalWaiting = allList.reduce((acc, c) => acc + (c.inbox || []).filter((i) => i.status === "open").length, 0);
   const allLabel = `${totalTickets} tickets${totalOpen ? ` · ${totalOpen} running` : ""}${totalWaiting ? ` · ${totalWaiting} waiting` : ""}`;
   const isAll = !selected.campaign;
+  if (campaignCount) campaignCount.textContent = String(allList.length);
 
-  const allButton = `<button class="campaign-row" data-stage="" data-act="select-campaign" data-root="" data-campaign="" aria-current="${isAll}">
-    <span class="name">All campaigns</span>
-    <span class="state">${allList.length}</span>
-    <span class="sub">${esc(allLabel)}</span>
-  </button>`;
+  if (!allList.length) {
+    campaignsEl.innerHTML = `<div class="hint" style="padding:6px">No campaigns yet.</div>`;
+    return;
+  }
 
-  const rows = allList.map((c) => {
+  const groups = new Map();
+  for (const campaign of allList) {
+    const key = campaign.project || campaign.root;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(campaign);
+  }
+
+  const campaignRow = (c) => {
     const open = (c.tickets || []).filter((t) => t.stage === "working").length;
     const waiting = (c.inbox || []).filter((i) => i.status === "open").length;
     const draftCount = c.draft?.tickets || 0;
     const label = `${c.tickets.length} tickets${draftCount ? ` · ${draftCount} draft` : ""}${open ? ` · ${open} running` : ""}${waiting ? ` · ${waiting} waiting` : ""}`;
     const isCur = Boolean(selected.campaign && (!selected.root || c.root === selected.root) && c.slug === selected.campaign);
-    return `<button class="campaign-row" data-stage="${esc(c.stage)}" data-act="select-campaign" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" aria-current="${isCur}">
+    return `<button class="campaign-row" data-stage="${esc(c.stage)}" data-act="select-campaign" data-root="${esc(c.root)}" data-campaign="${esc(c.slug)}" aria-current="${isCur}" title="${esc(label)}">
+      <span class="campaign-dot" aria-hidden="true"></span>
       <span class="name">${esc(c.slug)}</span>
       <span class="state">${esc(c.stage)}${c.nextAction?.actor === "you" ? " · you" : ""}</span>
       <span class="sub">${esc(label)}</span>
     </button>`;
-  });
+  };
 
-  campaignsEl.innerHTML = [allButton, ...rows].join("");
+  const allButton = `<button class="campaign-row campaign-all" data-stage="" data-act="select-campaign" data-root="" data-campaign="" aria-current="${isAll}" title="${esc(allLabel)}">
+    <span class="campaign-dot" aria-hidden="true"></span>
+    <span class="name">All campaigns</span>
+    <span class="state">${allList.length}</span>
+    <span class="sub">${esc(allLabel)}</span>
+  </button>`;
+
+  const projectGroups = [...groups.entries()]
+    .map(
+      ([project, list]) => `<div class="campaign-group">
+        <div class="campaign-group-head"><span>${esc(project)}</span><span>${list.length}</span></div>
+        ${list.map(campaignRow).join("")}
+      </div>`,
+    )
+    .join("");
+
+  campaignsEl.innerHTML = `${allButton}${projectGroups}`;
 }
 
 function renderCrumbs() {
@@ -1978,7 +2163,7 @@ function campaignSessions(c) {
           <header class="terminal-head">
             <span id="terminal-status">${acp ? "agy ACP session" : owner ? "terminal detached" : "read-only fork"}</span>
             <span class="actions">
-              ${acp ? "" : `<button class="btn ghost" data-act="session-reconnect">Connect</button>`}
+              ${acp ? (window.__ORCH_APP__ ? `<button class="btn ghost" data-act="acp-native">Open native agy</button>` : "") : `<button class="btn ghost" data-act="session-reconnect">Connect</button>`}
             </span>
           </header>
           <div class="terminal-host" id="terminal-host">
@@ -2048,7 +2233,7 @@ async function loadTranscript() {
   const box = document.getElementById("session-transcript");
   if (!box) return;
   if (ticket?.session?.adapter === "agy-acp") {
-    const run = ticket.run?.id;
+    const run = ticket.session?.acpRunId || ticket.run?.id;
     if (!run) {
       sessionTranscriptKey = null;
       sessionTranscriptData = null;
@@ -2318,6 +2503,59 @@ async function connectAppTerminal(term, c, ticket, mode) {
   }
 }
 
+async function connectAgyTerminal(term, c, ticket) {
+  try {
+    const issued = await api("/api/app/agy-ticket", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ root: c.root, campaign: c.slug, ticket: ticket.id }),
+    });
+    await openAppTerminalTicket(term, issued, "agy · native conversation");
+  } catch (err) {
+    setTerminalStatus(`agy failed: ${err.message || err}`, "error");
+  }
+}
+
+async function connectAgyNative() {
+  if (!window.__ORCH_APP__ || !window.__TAURI__) {
+    toast("The native agy terminal is available in the desktop app");
+    return;
+  }
+  const c = current();
+  const ticket = c?.tickets.find((t) => t.id === sessionTicket);
+  if (!c || !ticket) return;
+  terminalStatusId = "terminal-status";
+  const host = document.getElementById("terminal-host");
+  if (!host) return;
+  try {
+    await ensureXterm();
+  } catch (err) {
+    setTerminalStatus(err.message, "error");
+    return;
+  }
+  disposeTerminal();
+  host.innerHTML = "";
+  const term = new window.Terminal({
+    convertEol: true,
+    cursorBlink: true,
+    fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+    fontSize: 12.5,
+    lineHeight: 1.25,
+    scrollback: 5000,
+    theme: terminalTheme(),
+  });
+  const fit = new window.FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(host);
+  sessionTerm = term;
+  sessionFit = fit;
+  sessionTermMode = "agy";
+  sessionTermKey = `${c.root}|${c.slug}/${ticket.id}/agy`;
+  setTimeout(fitTerminal, 30);
+  setTerminalStatus("opening native agy conversation…");
+  await connectAgyTerminal(term, c, ticket);
+}
+
 async function connectLeaderTerminal(term, root) {
   try {
     const issued = await api("/api/app/leader-ticket", {
@@ -2479,7 +2717,7 @@ function viewLeader() {
         <span id="leader-status">not connected</span>
         <span class="actions"><button class="btn ghost" data-act="leader-connect">Connect</button></span>
       </header>
-      <div class="terminal-host leader-host" id="terminal-host"></div>
+      <div class="terminal-host leader-host" id="terminal-host"><div class="terminal-placeholder">Open the Leader to start a pi session loaded with the orchestration skill.</div></div>
     </section>
   </div>`;
 }
@@ -2690,6 +2928,24 @@ function viewSettings() {
         .join("")}
     </div>
     <div class="actions"><button class="btn primary" data-act="save-settings">Save settings</button><button class="btn" data-act="refresh-catalog" data-scope="console">Refresh catalog</button></div>
+  </section>
+
+  <section class="settings-block">
+    <header><h2 class="page">Appearance</h2><span class="hint">this window only</span></header>
+    <div class="appearance-row">
+      <span class="appearance-label">Theme</span>
+      <div class="segmented" role="group" aria-label="Theme">
+        <button data-act="theme" data-theme="dark">dark</button>
+        <button data-act="theme" data-theme="light">light</button>
+      </div>
+      <span class="appearance-label">Text size</span>
+      <div class="segmented" role="group" aria-label="Text size">
+        <button data-act="text-size" data-size="15">S</button>
+        <button data-act="text-size" data-size="16">M</button>
+        <button data-act="text-size" data-size="18">L</button>
+      </div>
+    </div>
+    <p class="note">${window.__ORCH_RUNTIME__ ? `App runtime · ${esc(runtimeLabel())}` : "Browser panel · runtime information appears in the desktop app."}</p>
   </section>`;
 }
 
@@ -3418,13 +3674,7 @@ document.addEventListener("click", (event) => {
       return;
     }
     case "copy": {
-      const command = target.dataset.command || "";
-      const done = () => toast("Copied");
-      if (navigator.clipboard?.writeText) {
-        navigator.clipboard.writeText(command).then(done).catch(() => copyFallback(command));
-      } else {
-        copyFallback(command);
-      }
+      copyText(target.dataset.command || "");
       return;
     }
     case "campaign-tab": {
@@ -3459,6 +3709,8 @@ document.addEventListener("click", (event) => {
       }
       return command(selected.root, { type: "answer", campaign: selected.campaign, item, text });
     }
+    case "acp-native":
+      return connectAgyNative();
     case "acp-steer": {
       const text = String(document.getElementById("acp-message")?.value || "").trim();
       if (!text) {
@@ -3653,6 +3905,8 @@ document.addEventListener("click", (event) => {
       document.documentElement.style.fontSize = `${target.dataset.size}px`;
       render();
       return;
+    case "palette-open":
+      return openPalette();
     case "browse-repo":
       return openFolder(null);
     case "browse-into":
@@ -3670,11 +3924,50 @@ document.addEventListener("click", (event) => {
 tabsEl.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-view]");
   if (!button) return;
-  dirtyViews.clear();
-  view = button.dataset.view;
-  closeDrawer();
-  render();
-  syncFleetUrl();
+  goView(button.dataset.view);
+});
+
+paletteEl?.addEventListener("click", (event) => {
+  if (event.target === paletteEl) closePalette();
+});
+paletteResultsEl?.addEventListener("click", (event) => {
+  const row = event.target.closest("[data-palette-index]");
+  if (!row) return;
+  runPalette(Number(row.dataset.paletteIndex));
+});
+paletteInput?.addEventListener("input", () => {
+  paletteIndex = 0;
+  renderPalette();
+});
+
+document.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    openPalette();
+    return;
+  }
+  if (!paletteEl || paletteEl.hidden) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closePalette();
+    return;
+  }
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    paletteIndex = Math.min(paletteRows.length - 1, paletteIndex + 1);
+    renderPalette();
+    return;
+  }
+  if (event.key === "ArrowUp") {
+    event.preventDefault();
+    paletteIndex = Math.max(0, paletteIndex - 1);
+    renderPalette();
+    return;
+  }
+  if (event.key === "Enter") {
+    event.preventDefault();
+    runPalette(paletteIndex);
+  }
 });
 
 document.addEventListener("keydown", (event) => {

@@ -80,3 +80,59 @@ test("a delivered campaign names the branch, the PR choice and cleanup", () => {
   assert.match(merged.text, /Merged into main/);
   assert.match(merged.command, /cleanup demo --dry-run/);
 });
+
+test("a ticket session points at the latest agy work run, not the pi review", async () => {
+  const { campaignView } = await import("../scripts/lib/view.mjs");
+  const { sandbox, project, writeConsole, writeCampaign, writeTicket, commitAll } = await import("./helpers.mjs");
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const box = sandbox();
+  const dir = project(path.join(box, "repo"));
+  writeConsole();
+  writeCampaign(
+    dir,
+    "gemini-demo",
+    {
+      campaign: "gemini-demo",
+      stage: "running",
+      autonomy: "supervised",
+      plan_gate: "human",
+      landing: "branch",
+      base: "main",
+      checks: [],
+      budget: { tokens: null, dollars: null },
+      max_autoship_lines: 200,
+      kinds: {},
+    },
+    "## Goal\n\nShip.\n\n## Acceptance criteria\n\n- [ ] Works.\n",
+  );
+  writeTicket(dir, "gemini-demo", "01-gemini.md", { id: "01", kind: "code", touches: ["**"] }, "## What to build\n\nIt.\n\n## Acceptance criteria\n\n- [ ] Works.");
+  commitAll(dir);
+  const stateFile = path.join(dir, ".orchestration", "campaigns", "gemini-demo", "state.json");
+  fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+  fs.writeFileSync(
+    stateFile,
+    JSON.stringify({
+      campaign: "gemini-demo",
+      stage: "running",
+      tickets: {
+        "01": {
+          stage: "working",
+          run: "r-review",
+          sessionId: "ses_gemini",
+          workdir: dir,
+        },
+      },
+      runs: {
+        "r-work": { id: "r-work", ticket: "01", role: "work", adapter: "agy-acp", status: "done", model: "antigravity/gemini-3.8-flash" },
+        "r-review": { id: "r-review", ticket: "01", role: "review", adapter: "pi", status: "live", model: "opencode-go/deepseek-v4.1-flash" },
+      },
+      slots: {},
+      spend: { tokens: 0, dollars: 0, byModel: {} },
+    }),
+  );
+  const view = campaignView(dir, "gemini-demo");
+  const ticket = view.tickets.find((candidate) => candidate.id === "01");
+  assert.equal(ticket.session.adapter, "agy-acp");
+  assert.equal(ticket.session.acpRunId, "r-work");
+});

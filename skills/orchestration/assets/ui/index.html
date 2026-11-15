@@ -9,51 +9,116 @@
     <link rel="stylesheet" href="/styles.css" />
     <link
       rel="icon"
-      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%2314181b'/><path d='M3 5h10M3 8h10M3 11h6' stroke='%23e9ebe7' stroke-width='1'/></svg>"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%23ff6f4d'/><path d='M4 5h8M4 8h8M4 11h5' stroke='%230a0c11' stroke-width='1.4' stroke-linecap='round'/></svg>"
     />
   </head>
   <body>
     <div class="shell">
-      <div class="rail-signal" id="signal" aria-hidden="true"><span id="signalCount"></span></div>
-
-      <aside class="rail">
-        <div class="wordmark">orchestration</div>
-        <div class="rail-label">Campaigns</div>
-        <nav class="campaign-list" id="campaigns" aria-label="Campaigns"></nav>
-        <button class="rail-new" data-act="copy" data-command='orchestrate start "<goal>"' title="Campaigns start in your agent session">Start in your agent</button>
-        <button class="rail-new" id="browse-repo" data-act="browse-repo">Open repository…</button>
-        <div class="rail-foot">
-          <span id="foot-state">local</span>
-          <span class="themetoggle" title="Theme">
-            <button data-act="theme" data-theme="dark">dark</button>
-            <button data-act="theme" data-theme="light">light</button>
-          </span>
-          <span class="textsize" title="Text size">
-            <button data-act="text-size" data-size="15">S</button>
-            <button data-act="text-size" data-size="16">M</button>
-            <button data-act="text-size" data-size="18">L</button>
-          </span>
+      <header class="appbar">
+        <div class="app-identity">
+          <span class="app-mark" aria-hidden="true">O</span>
+          <span class="app-title">Orchestration</span>
         </div>
-      </aside>
 
-      <div class="main">
-        <header class="topbar">
-          <div class="crumbs" id="crumbs"></div>
-          <nav class="tabs" id="nav" aria-label="Views">
-            <button data-view="fleet">Fleet</button>
-            <button data-view="leader" class="app-only" hidden>Leader</button>
-            <button data-view="inbox">Inbox <b id="tab-count"></b></button>
-            <button data-view="acceptance">Acceptance <b id="accept-count"></b></button>
-            <button data-view="settings">Settings</button>
-          </nav>
+        <button class="scope-button" data-act="palette-open" title="Switch campaign or project">
+          <span class="scope-copy">
+            <span class="scope-label" id="scope-label">All campaigns</span>
+            <span class="scope-meta" id="scope-meta">workspace</span>
+          </span>
+          <span class="scope-chevron" aria-hidden="true">⌄</span>
+        </button>
+
+        <button class="palette-trigger" data-act="palette-open" aria-label="Search or jump">
+          <svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.25" /><path d="m10.4 10.4 3 3" /></svg>
+          <span class="palette-trigger-text">Search or jump…</span>
+          <kbd class="palette-kbd">Ctrl K</kbd>
+        </button>
+
+        <div class="appbar-actions">
           <button class="dispatch-pill" id="dispatch-pill" data-act="dispatch-open" title="Console-wide dispatch switch">Dispatch auto</button>
-          <div class="link"><span class="dot" id="conn"></span><span id="connText">connecting</span></div>
-        </header>
+          <span class="link" title="Event stream"><span class="dot" id="conn"></span><span id="connText">connecting</span></span>
+        </div>
 
-        <main class="view" id="app"></main>
+        <div class="rail-signal" id="signal" aria-hidden="true"><span id="signalCount"></span></div>
+      </header>
+
+      <div class="app-body">
+        <aside class="rail">
+          <nav class="sidenav" id="nav" aria-label="Views">
+            <div class="nav-group">
+              <span class="nav-label">Workspace</span>
+              <button data-view="fleet">
+                <svg class="nav-glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" /><rect x="9" y="2.5" width="4.5" height="4.5" rx="1" /><rect x="2.5" y="9" width="4.5" height="4.5" rx="1" /><rect x="9" y="9" width="4.5" height="4.5" rx="1" /></svg>
+                <span>Fleet</span>
+              </button>
+              <button data-view="inbox">
+                <svg class="nav-glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8.5h3l1.2 1.8h2.6l1.2-1.8h3" /><path d="M3.4 3.5h9.2l1 5v4H2.4v-4Z" /></svg>
+                <span>Inbox</span>
+                <b id="tab-count"></b>
+              </button>
+              <button data-view="acceptance">
+                <svg class="nav-glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" /><path d="m5.6 8.2 1.7 1.7 3.2-3.5" /></svg>
+                <span>Acceptance</span>
+                <b id="accept-count"></b>
+              </button>
+            </div>
+
+            <div class="nav-group">
+              <span class="nav-label">Agent</span>
+              <button data-view="leader" class="app-only" hidden>
+                <svg class="nav-glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10" rx="1.5" /><path d="m5 6 2 2-2 2M8.5 10h2.5" /></svg>
+                <span>Leader</span>
+              </button>
+              <button data-view="settings">
+                <svg class="nav-glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 5h11M2.5 11h11" /><circle cx="6" cy="5" r="1.6" /><circle cx="10.5" cy="11" r="1.6" /></svg>
+                <span>Settings</span>
+              </button>
+            </div>
+          </nav>
+
+          <div class="campaign-section">
+            <div class="campaign-section-head">
+              <span class="nav-label">Campaigns</span>
+              <span class="nav-count" id="campaign-count"></span>
+            </div>
+            <nav class="campaign-list" id="campaigns" aria-label="Campaigns"></nav>
+          </div>
+
+          <div class="rail-actions">
+            <button class="rail-action" id="browse-repo" data-act="browse-repo">
+              <svg class="nav-glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>
+              <span>Open repository…</span>
+            </button>
+            <button class="rail-action" data-act="copy" data-command='orchestrate start "<goal>"' title="Campaigns start in your agent session">
+              <svg class="nav-glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5 12 8l-7 4.5Z" /></svg>
+              <span>Start in your agent</span>
+            </button>
+          </div>
+        </aside>
+
+        <div class="workspace">
+          <header class="topbar">
+            <div class="crumbs" id="crumbs"></div>
+            <div class="topbar-actions">
+              <button class="icon-btn" data-act="palette-open" title="Search or jump (Ctrl K)" aria-label="Search or jump">
+                <svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.25" /><path d="m10.4 10.4 3 3" /></svg>
+              </button>
+            </div>
+          </header>
+
+          <main class="view" id="app"></main>
+        </div>
+
+        <aside class="drawer" id="drawer" hidden></aside>
       </div>
 
-      <aside class="drawer" id="drawer" hidden></aside>
+      <footer class="statusbar">
+        <span class="status-item" id="foot-state">local</span>
+        <span class="status-sep"></span>
+        <span class="status-item">files and .orchestration are authoritative</span>
+        <span class="status-spacer"></span>
+        <span class="status-item mono" id="status-runtime">web panel</span>
+      </footer>
     </div>
 
     <div class="modal" id="folder-picker" hidden>
@@ -100,6 +165,22 @@
           <span class="hint" id="dispatch-note"></span>
           <button class="btn primary" id="dispatch-apply" data-act="dispatch-apply">Pause dispatch</button>
         </footer>
+      </div>
+    </div>
+
+    <div class="palette" id="palette" hidden>
+      <div class="palette-panel" role="dialog" aria-modal="true" aria-label="Command palette">
+        <div class="palette-input-row">
+          <svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.25" /><path d="m10.4 10.4 3 3" /></svg>
+          <input id="palette-input" type="text" placeholder="Search views, campaigns, actions…" autocomplete="off" spellcheck="false" />
+          <kbd>esc</kbd>
+        </div>
+        <div class="palette-results" id="palette-results"></div>
+        <div class="palette-foot">
+          <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+          <span><kbd>↵</kbd> open</span>
+          <span><kbd>esc</kbd> close</span>
+        </div>
       </div>
     </div>
     <script src="/app.js"></script>

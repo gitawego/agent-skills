@@ -4,11 +4,12 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { SKILL_DIR, campaignSessionsDir, consoleStateDir, ensureDir, globalPanelFile, nowIso, projectStateDir, readJson, registryFile, stateHome, writeJson } from "./util.mjs";
+import { SKILL_DIR, campaignSessionsDir, consoleStateDir, ensureDir, exists, globalPanelFile, nowIso, projectStateDir, readJson, registryFile, stateHome, writeJson } from "./util.mjs";
 import { projectView, consoleView } from "./view.mjs";
 import { adaptersView, allModels, catalogsForRoot } from "./catalogs.mjs";
 import { enqueue } from "./commands.mjs";
 import { loadDispatch } from "./dispatch.mjs";
+import { loadState } from "./state.mjs";
 import { readTranscript } from "./transcript.mjs";
 import { readAcpTranscript } from "./acp-transcript.mjs";
 import { createTerminalHub } from "./terminal.mjs";
@@ -232,6 +233,47 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
         clearInterval(beat);
         clients.delete(res);
       });
+      return;
+    }
+
+    if (route === "/api/app/agy-ticket" && req.method === "POST") {
+      try {
+        const secret = process.env.ORCH_APP_SECRET;
+        if (!secret) throw new Error("this server was not started in app mode");
+        const body = await readBody(req);
+        const root = body.root;
+        const campaign = String(body.campaign || "");
+        const ticketId = String(body.ticket || "");
+        if (!currentRoots().includes(root)) throw new Error("unknown project");
+        if (!/^[a-z0-9][a-z0-9-]*$/.test(campaign) || !/^\d{2}$/.test(ticketId)) throw new Error("unknown campaign or ticket");
+        const state = loadState(root, campaign);
+        const entry = state.tickets[ticketId];
+        if (!entry) throw new Error("unknown ticket");
+        const run = entry.run ? state.runs[entry.run] : null;
+        const work = Object.values(state.runs || {})
+          .filter((candidate) => candidate.ticket === ticketId && candidate.role === "work" && candidate.adapter === "agy-acp")
+          .sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)))[0] || (run?.adapter === "agy-acp" ? run : null);
+        if (!work) throw new Error("this ticket is not a native agy session");
+        const sessionId = entry.sessionId || work.sessionId;
+        if (!sessionId) throw new Error("the agy session id is missing");
+        const recorded = entry.workdir || work.workdir || root;
+        const workdir = exists(recorded) ? recorded : root;
+        const payload = {
+          root,
+          campaign,
+          ticket: ticketId,
+          sessionId,
+          sessionsDir: "",
+          workdir,
+          mode: "agy",
+          exp: Math.floor(Date.now() / 1000) + 120,
+        };
+        const body64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
+        const signature = createHmac("sha256", secret).update(body64).digest("hex");
+        json(res, 200, { ok: true, ticket: `${body64}.${signature}`, exp: payload.exp });
+      } catch (err) {
+        json(res, 400, { error: err.message });
+      }
       return;
     }
 
