@@ -1899,6 +1899,8 @@ function sessionTickets(c) {
 
 function sessionState(ticket) {
   if (ticket.owner === "human") return { label: "human", family: "person" };
+  if (ticket.session?.adapter === "agy-acp") return { label: "gemini", family: "active" };
+  if (ticket.session?.adapter && ticket.session.adapter !== "pi") return { label: "legacy", family: "idle" };
   if (ticket.session?.live) return { label: "live", family: "active" };
   if (ticket.session?.exists) return { label: "idle", family: "done" };
   return { label: "no session", family: "idle" };
@@ -1923,14 +1925,16 @@ function campaignSessions(c) {
   const sessionId = chosen?.session?.id || "";
   const owner = chosen?.owner === "human";
   const live = Boolean(chosen?.session?.live);
+  const adapter = chosen?.session?.adapter || null;
+  const acp = adapter === "agy-acp";
+  const legacy = adapter && adapter !== "pi" && adapter !== "agy-acp";
   const hasSession = Boolean(chosen?.session?.exists);
-  const legacy = chosen?.session?.adapter && chosen.session.adapter !== "pi";
   const question = (c.inbox || []).find(
     (item) => item.status === "open" && item.ticket === chosen?.id && (item.kind === "question" || item.kind === "needs_answer"),
   );
   return `<div class="sessions-workspace" data-session-ticket="${esc(chosen?.id || "")}">
     <aside class="session-list" aria-label="Ticket sessions">
-      <header><span class="eyebrow">sessions</span><span class="hint">${tickets.filter((ticket) => ticket.session?.exists).length}/${c.tickets.length} with history</span></header>
+      <header><span class="eyebrow">sessions</span><span class="hint">${tickets.filter((ticket) => ticket.session?.exists || ticket.session?.adapter === "agy-acp").length}/${c.tickets.length} with history</span></header>
       <div class="session-list-body">${c.tickets.map((ticket) => sessionRow(c, ticket, ticket.id === chosen?.id)).join("")}</div>
     </aside>
     <section class="session-room">
@@ -1945,15 +1949,16 @@ function campaignSessions(c) {
           </div>
         </div>
         <div class="actions session-actions">
-          ${hasSession && !legacy ? `<button class="btn ghost" data-act="session-fork">Fork</button>` : ""}
-          ${owner && !live ? `<button class="btn" data-act="session-attach">Attach</button>` : ""}
-          ${!owner && chosen?.session?.id && !["done", "dropped"].includes(chosen.stage) && !legacy ? `<button class="btn signal" data-act="session-takeover">Stop and take over</button>` : ""}
-          ${owner && !live ? `<button class="btn primary" data-act="session-handback">Hand back</button>` : ""}
-          ${hasSession ? `<button class="btn ghost" data-act="session-copy">Copy command</button>` : ""}
+          ${hasSession && !legacy && !acp ? `<button class="btn ghost" data-act="session-fork">Fork</button>` : ""}
+          ${owner && !live && !acp ? `<button class="btn" data-act="session-attach">Attach</button>` : ""}
+          ${!owner && chosen?.session?.id && !["done", "dropped"].includes(chosen.stage) && !legacy && !acp ? `<button class="btn signal" data-act="session-takeover">Stop and take over</button>` : ""}
+          ${owner && !live && !acp ? `<button class="btn primary" data-act="session-handback">Hand back</button>` : ""}
+          ${hasSession && !acp ? `<button class="btn ghost" data-act="session-copy">Copy command</button>` : ""}
         </div>
       </header>
       ${legacy ? `<div class="session-unavailable">Legacy ACP session. Use the agent or CLI; the pi terminal is not available.</div>` : ""}
-      ${!hasSession ? `<div class="session-unavailable">This ticket has no pi session yet. It gets one after the first work run.</div>` : ""}
+      ${acp ? `<div class="session-unavailable">Gemini ticket through agy ACP. Read the ACP transcript here; steer it from the Leader terminal.</div>` : ""}
+      ${!hasSession && !acp ? `<div class="session-unavailable">This ticket has no pi session yet. It gets one after the first work run.</div>` : ""}
       ${question ? `<div class="session-question">
         <span class="eyebrow">needs you</span>
         <p>${esc(question.question?.text || question.title || "The worker needs an answer.")}</p>
@@ -1967,13 +1972,13 @@ function campaignSessions(c) {
         </section>
         <section class="terminal-shell">
           <header class="terminal-head">
-            <span id="terminal-status">${owner ? "terminal detached" : "read-only fork"}</span>
+            <span id="terminal-status">${acp ? "agy ACP session" : owner ? "terminal detached" : "read-only fork"}</span>
             <span class="actions">
-              <button class="btn ghost" data-act="session-reconnect">Connect</button>
+              ${acp ? "" : `<button class="btn ghost" data-act="session-reconnect">Connect</button>`}
             </span>
           </header>
           <div class="terminal-host" id="terminal-host">
-            ${hasSession && !legacy ? `<div class="terminal-placeholder">Choose <b>Fork</b> for a read-only copy, or take over to type in this session.</div>` : ""}
+            ${acp ? `<div class="terminal-placeholder">No pi PTY for a Gemini ticket. The ACP transcript is on the left.</div>` : hasSession && !legacy ? `<div class="terminal-placeholder">Choose <b>Fork</b> for a read-only copy, or take over to type in this session.</div>` : ""}
           </div>
         </section>
       </div>
@@ -1981,7 +1986,7 @@ function campaignSessions(c) {
         <summary>Raw run log</summary>
         <div class="session-raw-box" id="session-raw-log"><button class="btn ghost" data-act="session-raw">Load the latest run log</button></div>
       </details>
-      ${owner ? `<div class="handback-bar">
+      ${owner && !acp ? `<div class="handback-bar">
         <textarea id="handback-note" rows="2" placeholder="What changed? Hand-back note for the supervisor…"></textarea>
         <span class="hint">Hand back writes a report, runs the checks, then the normal review and integration.</span>
       </div>` : ""}
@@ -1993,6 +1998,12 @@ function transcriptMessage(message) {
   const role = message.role;
   if (role === "system") return "";
   const text = String(message.text || "");
+  if (role === "thinking") {
+    return `<details class="thread-tool-result"><summary><span class="thread-role">thinking</span></summary><pre>${esc(text)}</pre></details>`;
+  }
+  if (role === "tool") {
+    return `<div class="thread-message" data-role="assistant"><span class="thread-role">tool</span><div class="thread-text">${esc(text)}</div></div>`;
+  }
   if (role === "toolResult") {
     return `<details class="thread-tool-result">
       <summary><span class="thread-role">${esc(message.toolName || "tool")}</span> result</summary>
@@ -2013,7 +2024,7 @@ function transcriptMessage(message) {
     .join("");
   if (!text && !tools) return "";
   return `<div class="thread-message" data-role="assistant">
-    <span class="thread-role">assistant</span>
+    <span class="thread-role">${esc(role === "plan" ? "plan" : "assistant")}</span>
     ${text ? `<div class="thread-text">${esc(text)}</div>` : ""}
     ${tools}
   </div>`;
@@ -2032,6 +2043,30 @@ async function loadTranscript() {
   const ticket = c?.tickets.find((t) => t.id === sessionTicket);
   const box = document.getElementById("session-transcript");
   if (!box) return;
+  if (ticket?.session?.adapter === "agy-acp") {
+    const run = ticket.run?.id;
+    if (!run) {
+      sessionTranscriptKey = null;
+      sessionTranscriptData = null;
+      box.innerHTML = `<p class="hint">No ACP run yet. The transcript appears after the first Gemini turn.</p>`;
+      return;
+    }
+    const key = `acp:${c.root}/${c.slug}/${ticket.id}/${run}`;
+    if (key === sessionTranscriptKey) {
+      if (sessionTranscriptData) renderTranscript(sessionTranscriptData);
+      return;
+    }
+    sessionTranscriptKey = key;
+    try {
+      const data = await api(`/api/acp-transcript?project=${encodeURIComponent(c.root)}&campaign=${encodeURIComponent(c.slug)}&run=${encodeURIComponent(run)}`);
+      sessionTranscriptData = data;
+      renderTranscript(data);
+    } catch (err) {
+      sessionTranscriptData = null;
+      box.innerHTML = `<p class="hint">${esc(err.message)}</p>`;
+    }
+    return;
+  }
   if (!ticket?.session?.id || !ticket.session.exists) {
     sessionTranscriptKey = null;
     sessionTranscriptData = null;

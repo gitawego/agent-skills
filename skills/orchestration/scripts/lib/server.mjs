@@ -10,6 +10,7 @@ import { adaptersView, allModels, catalogsForRoot } from "./catalogs.mjs";
 import { enqueue } from "./commands.mjs";
 import { loadDispatch } from "./dispatch.mjs";
 import { readTranscript } from "./transcript.mjs";
+import { readAcpTranscript } from "./acp-transcript.mjs";
 import { createTerminalHub } from "./terminal.mjs";
 import { ensureGitignore } from "./create.mjs";
 
@@ -300,6 +301,23 @@ export function startServer({ roots = [], getRoots = null, port = 4173, bind = "
         String(url.searchParams.get("ticket") || ""),
       );
       json(res, 200, info);
+      return;
+    }
+
+    if (route === "/api/acp-transcript") {
+      const root = url.searchParams.get("project");
+      const campaign = String(url.searchParams.get("campaign") || "");
+      const run = String(url.searchParams.get("run") || "");
+      if (!currentRoots().includes(root) || !campaign || !run) {
+        json(res, 400, { error: "unknown project, campaign or run" });
+        return;
+      }
+      const transcript = readAcpTranscript({ root, campaign, run });
+      if (!transcript) {
+        json(res, 404, { error: "ACP run not found" });
+        return;
+      }
+      json(res, 200, { ok: true, ...transcript });
       return;
     }
 
