@@ -128,7 +128,7 @@ Exit: the app is a client of the existing state, not a second store.
 - [x] Tauri AppImage build on Linux x64.
 - [ ] Signed updater artifacts and `latest.json`.
 - [x] Runtime manifest for Bun; pi version compatibility check is still open.
-- [ ] First-run desktop-entry integration, optional.
+- [x] First-run desktop-entry integration, optional.
 - [x] FUSE/WebKitGTK checks and documented fallbacks. (The AppImage bundles
       WebKitGTK; `--appimage-extract-and-run` is the fallback.)
 - [ ] CI builds AppImage on a clean runner and publishes a release.
