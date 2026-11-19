@@ -1,6 +1,6 @@
 /* Orchestration panel. No framework, no build step: state in, DOM out. */
 
-const VIEWS = ["fleet", "leader", "inbox", "acceptance", "settings"];
+const VIEWS = ["fleet", "sessions", "leader", "inbox", "acceptance", "settings"];
 const CAMPAIGN_TABS = ["overview", "tickets", "sessions", "configure", "history"];
 const FLEET_STATUS = ["all", "running", "queued", "acceptance", "done"];
 const STAGES = [
@@ -33,7 +33,16 @@ if (params.get("token")) {
   history.replaceState(null, "", location.pathname + location.hash);
 }
 
-const textSize = Number(localStorage.getItem("orch.textSize") || 0);
+const storedTextSize = Number(localStorage.getItem("orch.textSize") || 0);
+/* 15px was the old minimum and reads too small on high-DPI screens. */
+const textSize = storedTextSize === 15 ? 18 : storedTextSize || 18;
+if (storedTextSize === 15) {
+  try {
+    localStorage.setItem("orch.textSize", "18");
+  } catch {
+    /* storage can be blocked */
+  }
+}
 if (textSize) document.documentElement.style.fontSize = `${textSize}px`;
 
 const forced = params.get("theme");
@@ -113,6 +122,7 @@ const crumbsEl = document.getElementById("crumbs");
 const tabsEl = document.getElementById("nav");
 const tabCount = document.getElementById("tab-count");
 const acceptCount = document.getElementById("accept-count");
+const sessionCount = document.getElementById("session-count");
 const dispatchPill = document.getElementById("dispatch-pill");
 const signalEl = document.getElementById("signal");
 const footState = document.getElementById("foot-state");
@@ -919,6 +929,7 @@ const PALETTE_ICONS = {
   inbox: '<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8.5h3l1.2 1.8h2.6l1.2-1.8h3" /><path d="M3.4 3.5h9.2l1 5v4H2.4v-4Z" /></svg>',
   acceptance: '<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" /><path d="m5.6 8.2 1.7 1.7 3.2-3.5" /></svg>',
   leader: '<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10" rx="1.5" /><path d="m5 6 2 2-2 2M8.5 10h2.5" /></svg>',
+  sessions: '<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10v7H7l-3 2.5v-2.5H3Z" /><path d="M5.5 6h5M5.5 8.2h3.5" /></svg>',
   settings: '<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 5h11M2.5 11h11" /><circle cx="6" cy="5" r="1.6" /><circle cx="10.5" cy="11" r="1.6" /></svg>',
   plus: '<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>',
   play: '<svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5 12 8l-7 4.5Z" /></svg>',
@@ -938,6 +949,7 @@ function paletteActions() {
     { id: "view:fleet", group: "Go to", label: "Fleet", hint: `${fleetRows().length} rows`, icon: "fleet", run: () => goView("fleet") },
     { id: "view:inbox", group: "Go to", label: "Inbox", hint: `${openItems().length} open`, icon: "inbox", run: () => goView("inbox") },
     { id: "view:acceptance", group: "Go to", label: "Acceptance", hint: `${acceptanceItems().length} waiting`, icon: "acceptance", run: () => goView("acceptance") },
+    { id: "view:sessions", group: "Go to", label: "Worker sessions", hint: `${allSessionRows().length} sessions`, icon: "sessions", keywords: "workers sessions leader chat pi", run: () => goView("sessions") },
   ];
   if (window.__ORCH_APP__) {
     actions.push({ id: "view:leader", group: "Go to", label: "Leader", hint: "pi with the orchestration skill", icon: "leader", run: () => goView("leader") });
@@ -978,7 +990,11 @@ function filteredPalette() {
   const query = (paletteInput?.value || "").trim().toLowerCase();
   const actions = paletteActions();
   if (!query) return actions;
-  return actions.filter((action) => `${action.label} ${action.hint} ${action.group}`.toLowerCase().includes(query));
+  const tokens = query.split(/\s+/).filter(Boolean);
+  return actions.filter((action) => {
+    const haystack = `${action.label} ${action.hint} ${action.group} ${action.keywords || ""}`.toLowerCase();
+    return tokens.every((token) => haystack.includes(token));
+  });
 }
 
 function renderPalette() {
@@ -1039,6 +1055,7 @@ function renderChrome() {
   acceptCount.textContent = acceptance.length ? String(acceptance.length) : "";
   signalEl.classList.toggle("alert", items.length + acceptance.length > 0);
   footState.textContent = state ? `${campaigns().length} campaign${campaigns().length === 1 ? "" : "s"} · ${state.projects.length} project${state.projects.length === 1 ? "" : "s"}` : "local";
+  if (sessionCount) sessionCount.textContent = String(campaigns().reduce((total, campaign) => total + sessionTickets(campaign).length, 0));
   const scope = current();
   if (scopeLabel) scopeLabel.textContent = selected.campaign ? selected.campaign : "All campaigns";
   if (scopeMeta) scopeMeta.textContent = selected.campaign ? `${scope?.project || "campaign"} · ${scope?.stage || "—"}` : `${campaigns().length} campaign${campaigns().length === 1 ? "" : "s"}`;
@@ -1048,7 +1065,13 @@ function renderChrome() {
   document.querySelectorAll("[data-act='theme']").forEach((b) => {
     b.setAttribute("aria-pressed", String(b.dataset.theme === theme));
   });
-  const size = Number(localStorage.getItem("orch.textSize") || 0);
+  const themeToggle = document.querySelector("[data-act='theme-toggle']");
+  if (themeToggle) {
+    const next = theme === "light" ? "dark" : "light";
+    themeToggle.title = `Switch to ${next} theme`;
+    themeToggle.setAttribute("aria-label", `Switch to ${next} theme`);
+  }
+  const size = Number(localStorage.getItem("orch.textSize") || 18);
   document.querySelectorAll("[data-act='text-size']").forEach((b) => {
     b.setAttribute("aria-pressed", String(Number(b.dataset.size) === size));
   });
@@ -1084,6 +1107,7 @@ function render({ preserveScroll = false } = {}) {
     app.innerHTML = viewFleet();
     paintFleet();
   } else if (view === "leader") app.innerHTML = viewLeader();
+  else if (view === "sessions") app.innerHTML = viewSessions();
   else if (view === "inbox") app.innerHTML = viewInbox(openItems());
   else if (view === "campaign") app.innerHTML = viewCampaign();
   else if (view === "acceptance") app.innerHTML = viewAcceptance(acceptanceItems());
@@ -1191,6 +1215,11 @@ function renderCrumbs() {
   }
   if (view === "settings") {
     crumbsEl.innerHTML = `<b>Console</b><span>·</span>this machine`;
+    return;
+  }
+  if (view === "sessions") {
+    const rows = allSessionRows();
+    crumbsEl.innerHTML = `<b>Sessions</b><span>·</span>${rows.length} worker session${rows.length === 1 ? "" : "s"}<span>·</span>Leader chat`;
     return;
   }
   if (view === "leader") {
@@ -2430,7 +2459,7 @@ async function connectTerminal(mode = null) {
     convertEol: true,
     cursorBlink: true,
     fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
-    fontSize: 12.5,
+    fontSize: 15,
     lineHeight: 1.25,
     scrollback: 5000,
     theme: terminalTheme(),
@@ -2559,7 +2588,7 @@ async function connectAgyNative() {
     convertEol: true,
     cursorBlink: true,
     fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
-    fontSize: 12.5,
+    fontSize: 15,
     lineHeight: 1.25,
     scrollback: 5000,
     theme: terminalTheme(),
@@ -2758,6 +2787,85 @@ function copySessionCommand() {
   else copyFallback(commandText);
 }
 
+function allSessionRows() {
+  const rows = [];
+  for (const campaign of campaigns()) {
+    for (const ticket of sessionTickets(campaign)) rows.push({ campaign, ticket });
+  }
+  return rows.sort(
+    (a, b) =>
+      Number(Boolean(b.ticket.session?.live)) - Number(Boolean(a.ticket.session?.live)) ||
+      a.campaign.slug.localeCompare(b.campaign.slug) ||
+      a.ticket.id.localeCompare(b.ticket.id),
+  );
+}
+
+function viewSessions() {
+  const projects = leaderProjects();
+  const root = leaderRoot || selected.root || projects[0]?.root || "";
+  leaderRoot = root;
+  const rows = allSessionRows();
+  const appMode = Boolean(window.__ORCH_APP__);
+  const options = projects
+    .map((project) => `<option value="${esc(project.root)}" ${project.root === root ? "selected" : ""}>${esc(project.name)} · ${esc(project.root)}</option>`)
+    .join("");
+  const leader = `<section class="sessions-leader">
+    <div>
+      <div class="eyebrow">leader · pi</div>
+      <h2>Plan in a Leader chat</h2>
+      <p class="note">One pi session loaded with the orchestration skill. Start a campaign, draft the ticket graph, approve the plan, and answer workers from here.</p>
+      ${appMode ? "" : `<p class="hint">The Leader chat opens in the desktop app. Worker sessions are below.</p>`}
+    </div>
+    <div class="sessions-leader-actions">
+      <label class="field"><span>Project</span>
+        <select data-role="leader-project" ${projects.length ? "" : "disabled"}>${options || `<option>No projects registered</option>`}</select>
+      </label>
+      <button class="btn primary" data-act="open-leader" ${appMode && projects.length ? "" : "disabled"}>Open Leader chat</button>
+    </div>
+  </section>`;
+  const body = rows.length
+    ? `<div class="fleet-wrap"><table class="ticket-table session-table">
+        <thead><tr><th>Project</th><th>Campaign</th><th>Ticket</th><th>State</th><th>Model</th><th></th></tr></thead>
+        <tbody>${rows
+          .map(({ campaign, ticket }) => {
+            const state = sessionState(ticket);
+            return `<tr>
+              <td class="mono" data-label="Project">${esc(campaign.project)}</td>
+              <td class="mono" data-label="Campaign">${esc(campaign.slug)}</td>
+              <td data-label="Ticket"><span class="mono">${esc(ticket.id)}</span> ${esc(ticket.title)}</td>
+              <td data-label="State"><span class="session-pill" data-family="${esc(state.family)}">${esc(state.label)}</span></td>
+              <td class="mono" data-label="Model">${esc(ticket.model || ticket.session?.model || "—")}</td>
+              <td class="num"><button class="btn ghost" data-act="open-session" data-root="${esc(campaign.root)}" data-campaign="${esc(campaign.slug)}" data-ticket="${esc(ticket.id)}">Open</button></td>
+            </tr>`;
+          })
+          .join("")}</tbody>
+      </table></div>`
+    : `<div class="empty">
+        <h2>No worker sessions yet.</h2>
+        <p>A ticket gets a session after its first work run. Start a campaign from the <b>Leader chat</b>, then return here.</p>
+        ${appMode ? `<button class="btn primary" data-act="open-leader">Open Leader chat</button>` : ""}
+      </div>`;
+  return `<div class="sessions-view">
+    <div>
+      <h1 class="page">Sessions</h1>
+      <p class="lede">The Leader plans; each ticket run gets its own worker session. Both are one click away.</p>
+    </div>
+    ${leader}
+    <section class="sessions-worker">
+      <div class="sessions-head">
+        <div><div class="eyebrow">workers</div><h2>Worker sessions</h2></div>
+        <span class="hint">${rows.length} session${rows.length === 1 ? "" : "s"} across ${campaigns().length} campaign${campaigns().length === 1 ? "" : "s"}</span>
+      </div>
+      ${body}
+    </section>
+  </div>`;
+}
+
+function openLeader() {
+  goView("leader");
+  setTimeout(() => connectLeader(), 80);
+}
+
 function leaderProjects() {
   return state?.projects || [];
 }
@@ -2830,7 +2938,7 @@ async function connectLeader() {
     convertEol: true,
     cursorBlink: true,
     fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
-    fontSize: 12.5,
+    fontSize: 15,
     lineHeight: 1.25,
     scrollback: 5000,
     theme: terminalTheme(),
@@ -3020,9 +3128,9 @@ function viewSettings() {
       </div>
       <span class="appearance-label">Text size</span>
       <div class="segmented" role="group" aria-label="Text size">
-        <button data-act="text-size" data-size="15">S</button>
-        <button data-act="text-size" data-size="16">M</button>
-        <button data-act="text-size" data-size="18">L</button>
+        <button data-act="text-size" data-size="16">S</button>
+        <button data-act="text-size" data-size="18">M</button>
+        <button data-act="text-size" data-size="21">L</button>
       </div>
     </div>
     <p class="note">${window.__ORCH_RUNTIME__ ? `App runtime · ${esc(runtimeLabel())}` : "Browser panel · runtime information appears in the desktop app."}</p>
@@ -3794,6 +3902,19 @@ document.addEventListener("click", (event) => {
     }
     case "leader-connect":
       return connectLeader();
+    case "open-leader":
+      return openLeader();
+    case "open-session": {
+      const found = campaignOf(root, campaign);
+      if (!found) return toast("That campaign is no longer loaded");
+      selected = { root: found.root, campaign: found.slug };
+      sessionTicket = ticket;
+      campaignTab = "sessions";
+      view = "campaign";
+      closeDrawer();
+      history.replaceState(null, "", `#campaign/${encodeURIComponent(found.slug)}/sessions`);
+      return render();
+    }
     case "leader-copy":
       return copyLeaderCommand();
     case "agy-login": {
@@ -4036,6 +4157,17 @@ document.addEventListener("click", (event) => {
       document.documentElement.dataset.theme = target.dataset.theme;
       render();
       return;
+    case "theme-toggle": {
+      const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+      try {
+        localStorage.setItem("orch.theme", next);
+      } catch {
+        /* storage can be blocked; the theme still changes for this view */
+      }
+      document.documentElement.dataset.theme = next;
+      render();
+      return;
+    }
     case "text-size":
       localStorage.setItem("orch.textSize", target.dataset.size);
       document.documentElement.style.fontSize = `${target.dataset.size}px`;

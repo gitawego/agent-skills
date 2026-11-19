@@ -1537,6 +1537,20 @@ const commands = {
       }
     };
     const token = process.env.ORCH_APP_TOKEN || randomBytes(24).toString("hex");
+    /* Tauri dev serves the frontend from http://127.0.0.1:1430 instead of the
+       packaged tauri://localhost origin. Accept that loopback origin too, or
+       every cross-origin fetch in `tauri dev` fails as "Load failed". */
+    const cors = new Set(["tauri://localhost", "http://tauri.localhost"]);
+    try {
+      const devUrl = new URL(JSON.parse(process.env.TAURI_CONFIG || "{}")?.build?.devUrl || "");
+      if (["127.0.0.1", "localhost", "::1"].includes(devUrl.hostname)) {
+        cors.add(devUrl.origin);
+        const alternate = devUrl.hostname === "localhost" ? "127.0.0.1" : devUrl.hostname === "127.0.0.1" ? "localhost" : null;
+        if (alternate) cors.add(`${devUrl.protocol}//${alternate}${devUrl.port ? `:${devUrl.port}` : ""}`);
+      }
+    } catch {
+      /* not a Tauri dev session */
+    }
     const panel = await startServer({
       roots: rootsNow(),
       getRoots: rootsNow,
@@ -1544,7 +1558,7 @@ const commands = {
       bind: "127.0.0.1",
       token,
       publish: false,
-      cors: ["tauri://localhost", "http://tauri.localhost"],
+      cors: [...cors],
       onCommand: tickAll,
       log: (line) => console.error(String(line).replace(/token=[^&\s]+/g, "token=<redacted>")),
     });

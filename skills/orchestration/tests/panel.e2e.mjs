@@ -129,6 +129,28 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     assert.equal(page.search, true, "the searchable model picker is rendered");
     assert.match(page.spend, /metered-ok|subscription-only/);
     assert.match(page.sandbox, /auto|bwrap|none/);
+    const theme = await send("Runtime.evaluate", {
+      expression: `JSON.stringify((() => {
+        const button = document.querySelector("[data-act='theme-toggle']");
+        if (!button) return { button: false };
+        const sun = document.querySelector(".theme-icon-sun");
+        const moon = document.querySelector(".theme-icon-moon");
+        const before = document.documentElement.dataset.theme;
+        const sunBefore = getComputedStyle(sun).display !== "none";
+        button.click();
+        const after = document.documentElement.dataset.theme;
+        const moonAfter = getComputedStyle(moon).display !== "none";
+        button.click();
+        return { button: true, before, after, sunBefore, moonAfter, restored: document.documentElement.dataset.theme };
+      })())`,
+      returnByValue: true,
+    });
+    const themePage = JSON.parse(theme.result.result.value);
+    assert.equal(themePage.button, true, "the topbar has a theme toggle");
+    assert.notEqual(themePage.after, themePage.before, "the theme toggle changes the theme");
+    assert.equal(themePage.sunBefore, true, "dark mode shows the sun action");
+    assert.equal(themePage.moonAfter, true, "light mode shows the moon action");
+    assert.equal(themePage.restored, themePage.before, "the theme toggle is reversible");
     const search = await send("Runtime.evaluate", {
       expression: `(() => {
         const input = document.querySelector('[data-role="model-search"]');
@@ -151,13 +173,44 @@ test("the panel renders adapter controls in a browser", { skip: !chromePath() },
     await send("Runtime.evaluate", { expression: `document.getElementById("browse-repo").click()`, returnByValue: true });
     await sleep(1200);
     const folder = await send("Runtime.evaluate", {
-      expression: `JSON.stringify({ open: !document.getElementById("folder-picker").hidden, path: document.getElementById("browse-path").textContent, entries: document.querySelectorAll("#browse-list button").length })`,
+      expression: `JSON.stringify({ open: !document.getElementById("folder-picker").hidden, visible: (() => { const el = document.getElementById("folder-picker"); const rect = el.getBoundingClientRect(); return getComputedStyle(el).position === "fixed" && rect.width >= innerWidth - 2 && rect.height >= innerHeight - 2; })(), path: document.getElementById("browse-path").textContent, entries: document.querySelectorAll("#browse-list button").length })`,
       returnByValue: true,
     });
     const picker = JSON.parse(folder.result.result.value);
     assert.equal(picker.open, true, "the folder picker opens");
+    assert.equal(picker.visible, true, "the folder picker covers the viewport");
     assert.ok(picker.path.length > 0, "the picker shows a path");
     assert.ok(picker.entries > 0, "the picker lists directories");
+
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#sessions` });
+    await sleep(1500);
+    const sessionsView = await send("Runtime.evaluate", {
+      expression: `JSON.stringify({ worker: document.body.innerText.includes("Worker sessions"), leader: document.body.innerText.includes("Plan in a Leader chat"), empty: document.body.innerText.includes("No worker sessions yet") })`,
+      returnByValue: true,
+    });
+    const sessionsHome = JSON.parse(sessionsView.result.result.value);
+    assert.equal(sessionsHome.worker, true, "Sessions has a worker sessions section");
+    assert.equal(sessionsHome.leader, true, "Sessions points at the Leader chat");
+    assert.equal(sessionsHome.empty, true, "an empty sessions page explains where sessions come from");
+
+    await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}#leader` });
+    await sleep(1200);
+    const leaderLayout = await send("Runtime.evaluate", {
+      expression: `JSON.stringify((() => {
+        const field = document.querySelector(".leader-controls .field");
+        if (!field) return { field: false };
+        const label = field.querySelector("span");
+        const select = field.querySelector("select");
+        const l = label.getBoundingClientRect();
+        const s = select.getBoundingClientRect();
+        return { field: true, labelAbove: l.bottom <= s.top + 1, leftAligned: Math.abs(l.left - s.left) <= 2 };
+      })())`,
+      returnByValue: true,
+    });
+    const leaderPage = JSON.parse(leaderLayout.result.result.value);
+    assert.equal(leaderPage.field, true, "the Leader project control is rendered");
+    assert.equal(leaderPage.labelAbove, true, "the project label sits above the select");
+    assert.equal(leaderPage.leftAligned, true, "the project label starts at the select edge");
 
     await send("Page.navigate", { url: `http://127.0.0.1:${panel.port}/?token=${panel.token}` });
     await sleep(1500);

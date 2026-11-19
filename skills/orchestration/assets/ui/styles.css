@@ -8,15 +8,15 @@
   --paper: #eef0f3;
   --surface: #f7f8fa;
   --recess: #e6e9ef;
-  --ink: #10141b;
-  --ink-2: #333d4b;
-  --muted: #637084;
-  --rule: #d1d7e0;
-  --rule-soft: #e1e5ec;
-  --signal: #c2412a;
+  --ink: #0d1117;
+  --ink-2: #2a3442;
+  --muted: #4d5a6d;
+  --rule: #c5ccd6;
+  --rule-soft: #dde2e9;
+  --signal: #b43722;
   --ok: #2f6f52;
   --warn: #8f5f0a;
-  --sel: rgba(16, 20, 27, 0.05);
+  --sel: rgba(16, 20, 27, 0.07);
   --display: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
   --ui: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -25,38 +25,38 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
   --paper: #0b0e14;
-  --surface: #111620;
+  --surface: #121824;
   --recess: #07090d;
-  --ink: #e8ecf4;
-  --ink-2: #aab4c4;
-  --muted: #788596;
-  --rule: #202837;
-  --rule-soft: #171e2a;
+  --ink: #f1f4f9;
+  --ink-2: #c3ccda;
+  --muted: #9aa7b8;
+  --rule: #2a3446;
+  --rule-soft: #1d2635;
   --signal: #ff7a59;
-  --ok: #58c68c;
-  --warn: #dba34a;
-  --sel: rgba(232, 236, 244, 0.05);
+  --ok: #6bd49a;
+  --warn: #e3b25c;
+  --sel: rgba(232, 236, 244, 0.08);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
     --paper: #0b0e14;
-    --surface: #111620;
+    --surface: #121824;
     --recess: #07090d;
-    --ink: #e8ecf4;
-    --ink-2: #aab4c4;
-    --muted: #788596;
-    --rule: #202837;
-    --rule-soft: #171e2a;
+    --ink: #f1f4f9;
+    --ink-2: #c3ccda;
+    --muted: #9aa7b8;
+    --rule: #2a3446;
+    --rule-soft: #1d2635;
     --signal: #ff7a59;
-    --ok: #58c68c;
-    --warn: #dba34a;
-    --sel: rgba(232, 236, 244, 0.05);
+    --ok: #6bd49a;
+    --warn: #e3b25c;
+    --sel: rgba(232, 236, 244, 0.08);
   }
 }
 
 html {
-  font-size: 15px;
+  font-size: 18px;
 }
 
 * { box-sizing: border-box; }
@@ -78,7 +78,7 @@ a:hover { text-decoration-color: var(--ink); }
 
 .shell {
   display: grid;
-  grid-template-rows: 46px minmax(0, 1fr) 26px;
+  grid-template-rows: 54px minmax(0, 1fr) 30px;
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
@@ -115,7 +115,7 @@ a:hover { text-decoration-color: var(--ink); }
   gap: 0.5rem;
   min-width: 0;
   max-width: 17rem;
-  height: 30px;
+  height: 36px;
   padding: 0 0.35rem 0 0.6rem;
   border: 1px solid var(--rule);
   border-radius: 6px;
@@ -132,7 +132,7 @@ a:hover { text-decoration-color: var(--ink); }
 .palette-trigger {
   flex: 1 1 22rem;
   max-width: 30rem;
-  height: 30px;
+  height: 36px;
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -318,6 +318,10 @@ a:hover { text-decoration-color: var(--ink); }
   cursor: pointer;
 }
 .icon-btn:hover { background: var(--sel); color: var(--ink); }
+.theme-toggle .glyph { width: 16px; height: 16px; }
+.theme-icon-moon { display: none; }
+:root[data-theme="light"] .theme-icon-sun { display: none; }
+:root[data-theme="light"] .theme-icon-moon { display: block; }
 
 .view {
   overflow-y: auto;
@@ -356,6 +360,79 @@ a:hover { text-decoration-color: var(--ink); }
 .dot.live { background: var(--ok); animation: breathe 2.4s ease-in-out infinite; }
 .dot.dead { background: var(--signal); }
 @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* --- modals ---------------------------------------------------------------- */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(4, 6, 9, 0.5);
+  backdrop-filter: blur(2px);
+}
+.modal[hidden] { display: none; }
+.modal-card {
+  width: min(46rem, 100%);
+  max-height: min(36rem, 90vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 9px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+.modal-card header {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1rem 1.1rem 0.7rem;
+  border-bottom: 1px solid var(--rule);
+}
+.modal-card h2 { margin: 0.1rem 0 0; font-size: 1.35rem; }
+.modal-card footer {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.8rem 1.1rem;
+  border-top: 1px solid var(--rule);
+}
+.browse-path {
+  flex: 0 0 auto;
+  padding: 0.65rem 1.1rem;
+  font: 0.74rem/1.3 var(--mono);
+  color: var(--muted);
+  border-bottom: 1px solid var(--rule);
+  word-break: break-all;
+}
+.browse-list {
+  flex: 1 1 auto;
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem;
+  overflow: auto;
+  min-height: 8rem;
+}
+.browse-list li { margin: 0; }
+.browse-list button {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  padding: 0.48rem 0.6rem;
+  border-radius: 5px;
+  font: 0.78rem/1.2 var(--mono);
+  cursor: pointer;
+}
+.browse-list button:hover, .browse-list button:focus { background: var(--sel); }
 
 /* --- command palette ------------------------------------------------------- */
 
@@ -1554,14 +1631,48 @@ pre.log {
 .leader-intro h1 { font: 600 1.32rem/1.2 var(--ui); letter-spacing: -0.018em; margin: 0.15rem 0 0.35rem; }
 .leader-intro .note { max-width: 62ch; margin: 0; color: var(--ink-2); }
 .leader-controls { display: flex; gap: 0.55rem; align-items: end; flex-wrap: wrap; }
-.leader-controls .field { display: grid; gap: 0.3rem; }
-.leader-controls .field > span { font: 500 0.62rem/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.leader-controls .field,
+.sessions-leader-actions .field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.3rem;
+  align-items: start;
+  padding: 0;
+}
+.leader-controls .field > span,
+.sessions-leader-actions .field > span { font: 500 0.62rem/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
 .leader-controls select { min-width: 18rem; }
 .leader-terminal { border: 1px solid var(--rule); background: var(--recess); }
 .leader-host { height: calc(100vh - 22rem); min-height: 28rem; }
 @media (max-width: 860px) {
   .leader-terminal { display: none; }
   .leader-controls select { min-width: 0; width: 100%; }
+}
+.sessions-view { display: grid; gap: 1.15rem; padding-bottom: 2rem; }
+.sessions-view .lede { margin: 0; }
+.sessions-leader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1rem 1.4rem;
+  align-items: end;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+}
+.sessions-leader h2 { margin: 0.14rem 0 0.3rem; font: 500 1.35rem/1.15 var(--display); }
+.sessions-leader .note { max-width: 64ch; margin: 0; color: var(--ink-2); }
+.sessions-leader-actions { display: flex; align-items: end; justify-content: flex-end; gap: 0.5rem; flex-wrap: wrap; }
+.sessions-leader-actions select { min-width: 18rem; }
+.sessions-worker { border-top: 1px solid var(--rule); padding-top: 1rem; }
+.sessions-head { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; margin-bottom: 0.55rem; }
+.sessions-head h2 { margin: 0.15rem 0 0; font: 500 1.35rem/1.15 var(--display); }
+.session-table tbody tr:hover { background: var(--sel); }
+.session-table td:last-child { text-align: right; }
+.session-table .btn { padding: 0.26rem 0.55rem; font-size: 0.72rem; }
+@media (max-width: 900px) {
+  .sessions-leader { grid-template-columns: 1fr; }
+  .sessions-leader-actions { justify-content: flex-start; }
+  .sessions-leader-actions select { min-width: 0; width: 100%; }
 }
 .sessions-workspace {
   display: grid;
@@ -1979,7 +2090,7 @@ td { padding: 0.32rem 0.45rem 0.32rem 0; }
 }
 
 @media (max-width: 860px) {
-  .shell { grid-template-rows: auto minmax(0, 1fr) 26px; }
+  .shell { grid-template-rows: auto minmax(0, 1fr) 30px; }
   .appbar { flex-wrap: wrap; padding: 0.4rem 0.55rem; height: auto; row-gap: 0.35rem; }
   .app-title, .scope-meta { display: none; }
   .palette-trigger { order: 6; flex-basis: 100%; max-width: none; }
@@ -2031,3 +2142,71 @@ td { padding: 0.32rem 0.45rem 0.32rem 0; }
 .acp-permission-head b { font: 500 0.78rem/1.2 var(--ui); }
 .acp-permission code { display: block; margin: 0.3rem 0; font: 0.66rem/1.4 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
 .acp-permission .actions { margin-top: 0.35rem; }
+
+/* --- readability floor ------------------------------------------------------ */
+/* The density pass shrank labels to 8-10 CSS pixels. These are the floor
+   values; the S/M/L control still scales the whole interface from 16 to 21px. */
+
+.scope-meta,
+.palette-kbd,
+.nav-label,
+.nav-count,
+.sidenav button b,
+.campaign-group-head,
+.statusbar,
+.link,
+.palette-group,
+.palette-foot {
+  font-size: 0.7rem;
+}
+.campaign-row .name { font-size: 0.84rem; }
+.scope-label { font-size: 0.8rem; }
+.palette-trigger { font-size: 0.82rem; }
+.campaign-row .sub,
+.campaign-row .state { font-size: 0.7rem; }
+.rail-action { font-size: 0.8rem; }
+.crumbs { font-size: 0.76rem; }
+h1.page { font-size: 0.72rem; }
+h2.page { font-size: 0.82rem; }
+.lede { font-size: 0.98rem; }
+.hint { font-size: 0.8rem; }
+.note { font-size: 0.86rem; }
+.eyebrow { font-size: 0.7rem; }
+.btn { font-size: 0.84rem; }
+input[type="text"],
+input[type="number"],
+input[type="search"],
+select,
+textarea { font-size: 0.9rem; }
+.item-head { font-size: 0.72rem; }
+.item h2 { font-size: 1.12rem; }
+.item .q { font-size: 1rem; }
+.item .brief { font-size: 0.9rem; }
+.drawer h2 { font-size: 0.72rem; }
+.drawer .doc { font-size: 0.92rem; }
+.drawer .meta { font-size: 0.76rem; }
+table,
+.fleet-table,
+.ticket-table { font-size: 0.86rem; }
+th { font-size: 0.7rem; }
+.fleet-filters input,
+.fleet-filters select { font-size: 0.8rem; }
+.fleet-tabs button { font-size: 0.76rem; }
+.fleet-row .id,
+.fleet-row .where,
+.fleet-row .queue,
+.fleet-row .mono { font-size: 0.76rem; }
+.fleet-row .badge { font-size: 0.68rem; }
+.campaign-subnav button { font-size: 0.74rem; }
+.campaign-location-line,
+.campaign-meta { font-size: 0.74rem; }
+.doc-block h2 { font-size: 0.7rem; }
+.quality-chip { font-size: 0.66rem; }
+.appearance-label { font-size: 0.7rem; }
+.segmented button { font-size: 0.78rem; }
+.leader-controls .field > span,
+.sessions-leader-actions .field > span { font-size: 0.7rem; }
+.session-row-top .mono { font-size: 0.72rem; }
+.session-row-title { font-size: 0.88rem; }
+.session-row-meta { font-size: 0.7rem; }
+.session-pill { font-size: 0.64rem; }
